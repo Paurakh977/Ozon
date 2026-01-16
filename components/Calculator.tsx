@@ -99,12 +99,12 @@ export function Calculator() {
       const safeId = `E${id.replace(/-/g, "")}`;
 
       // 2. Clear All Associated Expressions
-      // We delete everything related to this ID before re-adding
       const cleanupList = [
           id, 
           `curve-${safeId}`, `shade-${safeId}`, 
           `val-${safeId}`, `func-${safeId}`, `label-${safeId}`,
-          `funcD-${safeId}` // Function definition for derivatives
+          `funcD-${safeId}`,
+          `plot-orig-${safeId}`, `plot-deriv-${safeId}`
       ];
       cleanupList.forEach(eid => Calc.removeExpression({ id: eid }));
 
@@ -112,134 +112,264 @@ export function Calculator() {
 
       // 3. Clean LaTeX
       let clean = rawLatex
-          // Standard Cleanup
           .replace(/\\!/g, "").replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
           .replace(/\\limits/g, "")
-          
-          // Derivatives Notation Cleanup
           .replace(/\\differentialD/g, "d")     
           .replace(/\\mathrm\{d\}/g, "d")       
           .replace(/\\mathrm\{([a-zA-Z])\}/g, "$1") 
           .replace(/\\dfrac/g, "\\frac")
           .replace(/\\operatorname\{([a-zA-Z]+)\}/g, "\\$1")
-          
-          // Fix Evaluation Bar: \bigm|_{x=2} -> |_{x=2}
           .replace(/\\bigm\|/g, "|")
-          .replace(/\\left\|/g, "|").replace(/\\right\./g, "")
-          
-          // General
+          .replace(/\\left\|/g, "|")
+          .replace(/\\right\|/g, "|")
+          .replace(/\\right\./g, "")
           .replace(/\\lvert/g, "|").replace(/\\rvert/g, "|")
+          // Ensure standard functions have backslashes (e.g. "sin" -> "\sin") if user typed manually
+          .replace(/(^|[^\\a-zA-Z])(sin|cos|tan|sec|csc|cot|ln|log|exp)(?![a-zA-Z])/g, "$1\\$2")
           .trim();
 
       setDebugInfo(clean);
 
-      // --- LOGIC BRANCHES ---
+      // --- Helper: Parse Substript/Superscript Bounds ---
+      // Returns { min, max, end } where min/max are the contents of _{...} and ^{...}
+      const parseBounds = (startIdx: number, str: string) => {
+          let i = startIdx;
+          let min = "", max = "";
+          
+          const parseGroup = () => {
+             if (i >= str.length) return "";
+             if (str[i] === "{") {
+                let depth = 1; 
+                i++;
+                let start = i;
+                while(i < str.length && depth > 0) {
+                    if (str[i] === '{') depth++;
+                    if (str[i] === '}') depth--;
+                    i++;
+                }
+                return str.substring(start, i-1);
+             }
+             // Single char (approximate for simple latex)
+             const start = i;
+             // Advance until next special char or space - simplified: just 1 char
+             // But if it's a command like \infty? 
+             if (str[i] === '\\') {
+                 i++;
+                 while(i < str.length && /[a-zA-Z]/.test(str[i])) i++;
+                 return str.substring(start, i);
+             }
+             return str[i++]; 
+          };
+    
+          // Order of _ and ^ doesn't matter, try to pick both
+          for(let step=0; step<2; step++) {
+              // skip spaces
+              while(i < str.length && str[i] === ' ') i++;
+              
+              if (i < str.length && str[i] === '_') {
+                  i++;
+                  min = parseGroup();
+              } else if (i < str.length && str[i] === '^') {
+                  i++; 
+                  max = parseGroup();
+              } else {
+                  break; 
+              }
+          }
+          return { min, max, end: i };
+      };
 
-      // BRANCH A: Derivative at a Point (e.g. d/dx x^2 |_{x=2})
-      // Regex detects: \frac{d}{dx} (body) |_{x=(val)}
-      // It captures the body (group 2) and the value (group 4)
-      const derivPointRegex = /\\frac\{d\}\{d([a-zA-Z])\}\s*(.+?)\s*\|_\{([a-zA-Z])=([^{}]+)\}/;
-      const derivMatch = clean.match(derivPointRegex);
+      // --- BRANCH A: Summation ---
+      if (clean.startsWith("\\sum")) {
+          const bounds = parseBounds(4, clean);
+          // If we successfully parsed bounds, use them
+          if (bounds.min && bounds.max) {
+             Calc.setExpression({
+                 id: `val-${safeId}`,
+                 latex: `S_{${safeId}} = ${clean}`,
+                 secret: true
+             });
+             Calc.setExpression({
+                id: `label-${safeId}`,
+                latex: `(0,0)`,
+                label: `Sum = \${S_{${safeId}}}`,
+                showLabel: true,
+                hidden: true,
+                color: "#000"
+             });
+             return;
+          }
+      }
 
+      // --- BRANCH B: Definite/Indefinite Integral ---
+      if (clean.startsWith("\\int")) {
+          const bounds = parseBounds(4, clean);
+          const rest = clean.substring(bounds.end).trim();
+          
+          // Regex to split body and variable (look for 'd' + var at end)
+          // e.g. "sin x dx" -> var=x, body="sin x"
+          const varMatch = rest.match(/d([a-zA-Z])$/);
+
+          if (varMatch) {
+              const variable = varMatch[1];
+              const body = rest.substring(0, rest.lastIndexOf('d' + variable)).trim();
+
+              if (bounds.min && bounds.max) {
+                 // Definite
+                 Calc.setExpression({
+                    id: `val-${safeId}`,
+                    latex: `I_{${safeId}} = ${clean}`,
+                    secret: true
+                 });
+                 // To plot, replace variable with x
+                 const plotBody = variable === 'x' ? body : body.split(variable).join("x");
+                 Calc.setExpression({
+                     id: `curve-${safeId}`,
+                     latex: `y = ${plotBody}`,
+                     lineStyle: window.Desmos.Styles.DASHED,
+                     color: "#2d70b3"
+                 });
+  
+                 const shadeLatex = `0 \\le y \\le ${plotBody} \\left\\{ ${bounds.min} \\le x \\le ${bounds.max} \\right\\}`;
+                 Calc.setExpression({
+                      id: `shade-${safeId}`,
+                      latex: shadeLatex,
+                      color: "#2d70b3",
+                      fillOpacity: 0.3,
+                      lines: false
+                 });
+  
+                 Calc.setExpression({
+                     id: `label-${safeId}`,
+                     latex: `((${bounds.min} + ${bounds.max})/2, 0)`,
+                     label: `Area = \${I_{${safeId}}}`,
+                     showLabel: true,
+                     hidden: true,
+                     color: "#000"
+                 });
+                 return;
+              } else {
+                  // Indefinite (if no bounds or partial bounds, treat as indefinite)
+                  
+                  // 1. Plot Original Function (Dashed/Secondary)
+                  const plotOriginal = variable === 'x' ? body : body.split(variable).join("x");
+                  Calc.setExpression({
+                      id: `curve-${safeId}`,
+                      latex: `y = ${plotOriginal}`,
+                      lineStyle: window.Desmos.Styles.DASHED,
+                      color: "#999999"
+                  });
+
+                  // 2. Plot Antiderivative
+                  const bodyWithT = body.split(variable).join("t");
+                  Calc.setExpression({ 
+                      id, 
+                      latex: `y = \\int_{0}^{x} ${bodyWithT} dt`, 
+                      color: "#2d70b3" 
+                  });
+                  return;
+              }
+          }
+      }
+
+      // --- BRANCH C: Derivative (Symbolic & Numeric) ---
+      // Pattern: \frac{d}{dx} ... |_{x=val} or \frac{d^n}{dx^n} ...
+      const derivRegex = /^\\frac\{d(\^\{?([0-9]+)\}?)?\}\{d([a-zA-Z])(\^\{?([0-9]+)\}?)?\}\s*(.+)$/;
+      const derivMatch = clean.match(derivRegex);
+      
       if (derivMatch) {
-          const variable = derivMatch[1]; // x
-          const body = derivMatch[2];     // x^2
-          const targetVal = derivMatch[4]; // 2
+         const order = derivMatch[2] ? parseInt(derivMatch[2]) : 1;
+         const variable = derivMatch[3];
+         let content = derivMatch[6];
+         
+         let isEvaluation = false;
+         let targetVal = "";
+         let body = content;
 
-          // Step 1: Define the function hiddenly: f(x) = x^2
-          Calc.setExpression({
-              id: `funcD-${safeId}`,
-              latex: `f_{${safeId}}(${variable}) = ${body}`,
-              secret: true
-          });
+         // Check for Evaluation Bar |_{x=...} at the end
+         const barIndex = content.lastIndexOf("|_{");
+         if (barIndex !== -1 && content.trim().endsWith("}")) {
+             const possibleBody = content.substring(0, barIndex).trim();
+             const evalPart = content.substring(barIndex + 3, content.length - 1); 
+             const parts = evalPart.split("=");
+             if (parts.length === 2 && parts[0].trim() === variable) {
+                 isEvaluation = true;
+                 targetVal = parts[1].trim();
+                 body = possibleBody;
+             }
+         }
 
-          // Step 2: Calculate the derivative value: V = f'(2)
-          Calc.setExpression({
-              id: `val-${safeId}`,
-              latex: `V_{${safeId}} = \\frac{d}{d${variable}} f_{${safeId}}(${targetVal})`,
-              secret: true
-          });
+         // 1. Define the Function Secretly
+         Calc.setExpression({
+            id: `funcD-${safeId}`,
+            latex: `f_{${safeId}}(${variable}) = ${body}`,
+            secret: true
+         });
 
-          // Step 3: Display Label at (0,0) or (targetVal, 0)
-          Calc.setExpression({
-              id: `label-${safeId}`,
-              latex: `(0,0)`, // Keeping it at origin for visibility
-              label: `f'(${targetVal}) = \${V_{${safeId}}}`,
-              showLabel: true,
-              hidden: true, // Hide the dot
-              color: "#000000"
-          });
-          return;
+         // 2. Plot Original Function (Dashed/Secondary)
+         // Map variable to x for plotting if needed, but f(x) works if defined as f(t)
+         // But Desmos `y = ...` expects x usually.
+         Calc.setExpression({
+             id: `plot-orig-${safeId}`,
+             latex: `y = f_{${safeId}}(x)`,
+             lineStyle: window.Desmos.Styles.DASHED, // Dashed to distinguish from derivative
+             color: "#999999", // Grayish
+             label: "f(x)"
+         });
+
+         // 3. Plot Derivative Function (Solid/Primary)
+         {
+             let derivNotation = "";
+             if (order <= 3) {
+                 let primes = "";
+                 for(let k=0; k<order; k++) primes += "'";
+                 derivNotation = `f_{${safeId}}${primes}(x)`;
+             } else {
+                 derivNotation = `\\frac{d^${order}}{dx^${order}} f_{${safeId}}(x)`; 
+             }
+             
+             Calc.setExpression({
+                 id: `plot-deriv-${safeId}`,
+                 latex: `y = ${derivNotation}`,
+                 color: "#2d70b3", // Main blue
+                 label: `f${order > 1 ? `^(${order})` : "'"}(x)`
+             });
+         }
+
+         // 4. If Evaluation, Show Point and Label
+         if (isEvaluation) {
+             let valLatex = "";
+             let labelStr = "";
+             
+             if (order <= 3) {
+                 let primes = "";
+                 for(let k=0; k<order; k++) primes += "'";
+                 valLatex = `f_{${safeId}}${primes}(${targetVal})`;
+                 labelStr = `f${primes}(${targetVal})`;
+             } else {
+                 valLatex = `\\frac{d^${order}}{d${variable}^${order}} f_{${safeId}}(${targetVal})`;
+                 labelStr = `f^(${order})(${targetVal})`;
+             }
+
+             Calc.setExpression({
+                id: `val-${safeId}`,
+                latex: `V_{${safeId}} = ${valLatex}`,
+                secret: true
+             });
+    
+             Calc.setExpression({
+                id: `label-${safeId}`,
+                latex: `(0,0)`, // Or maybe (${targetVal}, V_{safeId})? Keeping at origin/corner per user preference usually
+                label: `${labelStr} = \${V_{${safeId}}}`,
+                showLabel: true,
+                hidden: true,
+                color: "#000000"
+             });
+         }
+         return;
       }
 
-      // BRANCH B: Definite Integral (e.g. \int_0^1 x^2 dx)
-      const defIntegralRegex = /^\\int_(\{([^{}]+)\}|(.))\^(\{([^{}]+)\}|(.))\s*(.+?)\s*d([a-zA-Z])$/;
-      const defMatch = clean.match(defIntegralRegex);
-
-      if (defMatch) {
-          const min = defMatch[2] || defMatch[3];
-          const max = defMatch[5] || defMatch[6];
-          const body = defMatch[7];
-          const variable = defMatch[8];
-
-          // 1. Calculate Value: I = \int_a^b ...
-          Calc.setExpression({
-              id: `val-${safeId}`,
-              latex: `I_{${safeId}} = ${clean}`,
-              secret: true
-          });
-
-          // 2. Plot Curve (Dashed)
-          const plotBody = variable === 'x' ? body : body.split(variable).join("x");
-          Calc.setExpression({
-               id: `curve-${safeId}`,
-               latex: `y = ${plotBody}`,
-               lineStyle: window.Desmos.Styles.DASHED,
-               color: "#2d70b3"
-          });
-
-          // 3. Shade Area
-          const shadeLatex = `0 \\le y \\le ${plotBody} \\left\\{ ${min} \\le x \\le ${max} \\right\\}`;
-          Calc.setExpression({
-               id: `shade-${safeId}`,
-               latex: shadeLatex,
-               color: "#2d70b3",
-               fillOpacity: 0.3,
-               lines: false
-          });
-
-          // 4. Show Label at the midpoint of the integral
-          // We use a Point ((min+max)/2, 0) to anchor the label
-          Calc.setExpression({
-              id: `label-${safeId}`,
-              latex: `((${min} + ${max})/2, 0)`,
-              label: `Area = \${I_{${safeId}}}`,
-              showLabel: true,
-              hidden: true, // Hide dot
-              color: "#000"
-          });
-          return;
-      }
-
-      // BRANCH C: Indefinite Integral
-      const indefRegex = /^\\int\s*(.+?)\s*d([a-zA-Z])$/;
-      const indefMatch = clean.match(indefRegex);
-      if (indefMatch && !clean.includes("_")) {
-          const body = indefMatch[1];
-          const variable = indefMatch[2];
-          // Plot Accumulator: y = \int_0^x f(t) dt
-          const bodyWithT = body.split(variable).join("t");
-          Calc.setExpression({ 
-              id, 
-              latex: `y = \\int_{0}^{${variable}} ${bodyWithT} dt`, 
-              color: "#2d70b3" 
-          });
-          return;
-      }
-
-      // BRANCH D: Standard Input
-      // Fix: Remove trailing 'dx' if user typed it manually for a function (e.g. "sin x dx")
-      // but NOT if it's "d/dx"
+      // --- BRANCH D: Standard ---
       let finalLatex = clean;
       if (!finalLatex.includes("int") && !finalLatex.includes("frac") && finalLatex.endsWith("dx")) {
            finalLatex = finalLatex.replace(/d[x-z]$/, "");
@@ -249,7 +379,7 @@ export function Calculator() {
           id: id, 
           latex: finalLatex, 
           color: "#2d70b3",
-          showLabel: true // If it evaluates to a constant (e.g. "1+1"), show label
+          showLabel: true 
       });
   };
 
