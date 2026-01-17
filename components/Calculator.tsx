@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useTheme } from "next-themes";
-import { Moon, Sun, Plus, Trash2, Calculator as CalcIcon, Terminal } from "lucide-react";
+import { Moon, Sun, Plus, Trash2, Calculator as CalcIcon, Terminal, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import "mathlive";
 
 declare global {
@@ -35,6 +35,7 @@ export function Calculator() {
     ]);
     const [debugInfo, setDebugInfo] = useState<string>("Ready");
     const [libLoaded, setLibLoaded] = useState(false);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
 
     // 1. MathLive Configuration
     useEffect(() => {
@@ -466,33 +467,39 @@ export function Calculator() {
 
     return (
         <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
-            <header className="h-14 border-b flex items-center justify-between px-4 bg-card z-20 shadow-sm shrink-0">
-                <h1 className="font-bold text-xl flex items-center gap-2">
-                    <CalcIcon className="text-primary" />
-                    <span className="font-serif italic">ƒ</span>(x) Engine
-                </h1>
+            <header className="h-12 border-b flex items-center justify-between px-4 bg-card z-20 shadow-sm shrink-0">
+                <div className="flex items-center gap-3">
+                    <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1.5 rounded-md hover:bg-muted transition-colors text-muted-foreground hover:text-foreground">
+                        {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
+                    </button>
+                    <h1 className="font-bold text-lg flex items-center gap-2">
+                        <CalcIcon className="text-primary h-5 w-5" />
+                        <span className="font-serif italic font-medium">ƒ</span>(x) Engine
+                    </h1>
+                </div>
                 <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="p-2 rounded-full hover:bg-accent transition-colors">
-                    {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
+                    {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
                 </button>
             </header>
 
             <div className="flex-1 flex overflow-hidden">
-                <div className="w-96 flex flex-col border-r bg-card z-10 shadow-lg">
-                    <div className="p-4 flex-1 overflow-y-auto space-y-4">
+                <div className={`flex flex-col border-r bg-card z-10 shadow-lg transition-all duration-300 ease-in-out relative ${sidebarOpen ? 'w-[400px] translate-x-0' : 'w-0 border-r-0 -translate-x-full opacity-0 overflow-hidden'}`}>
+                    <div className="p-3 flex-1 overflow-y-auto space-y-2">
                         {expressions.map((expr, i) => (
-                            <div key={expr.id} className="group relative flex items-start gap-3 bg-muted/30 p-3 rounded-xl border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all">
-                                <div className="mt-3 text-xs font-mono opacity-40 select-none w-4 text-center">{i + 1}</div>
-                                <div className="flex-1 min-w-0 overflow-x-auto pb-1">
+                            <div key={expr.id} className="group relative flex items-start gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all">
+                                <div className="mt-2.5 text-[10px] font-mono opacity-30 select-none w-4 text-center">{i + 1}</div>
+                                <div className="flex-1 min-w-0 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                                     {/* @ts-ignore */}
                                     <math-field
                                         smart-fence="on"
                                         onInput={(e: any) => handleInput(expr.id, e.target.value)}
                                         value={expr.latex}
                                         style={{
-                                            width: '100%',
+                                            minWidth: '100%',
+                                            width: 'fit-content',
                                             backgroundColor: 'transparent',
                                             outline: 'none',
-                                            fontSize: '1.2rem',
+                                            fontSize: '0.95rem',
                                             '--caret-color': theme === 'dark' ? '#fff' : '#000',
                                             color: theme === 'dark' ? '#fff' : '#000'
                                         }}
@@ -501,31 +508,31 @@ export function Calculator() {
                                     </math-field>
                                 </div>
                                 {expr.result && (
-                                    <div className="flex items-center justify-center px-3 py-1 bg-primary/10 text-primary font-mono text-sm rounded-md select-all whitespace-nowrap">
+                                    <div className="flex items-center justify-center px-2 py-0.5 bg-primary/10 text-primary font-mono text-xs rounded select-all whitespace-nowrap self-center">
                                         = {expr.result}
                                     </div>
                                 )}
-                                <button onClick={() => removeExpr(expr.id)} className="mt-2 opacity-0 group-hover:opacity-100 p-1.5 text-muted-foreground hover:text-red-500 transition-all">
-                                    <Trash2 size={16} />
+                                <button onClick={() => removeExpr(expr.id)} className="mt-1 opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-all">
+                                    <Trash2 size={14} />
                                 </button>
                             </div>
                         ))}
                     </div>
 
-                    <div className="p-4 border-t bg-muted/10 space-y-4">
-                        <button onClick={addExpr} className="w-full py-2.5 border-2 border-dashed border-border rounded-xl flex items-center justify-center gap-2 text-muted-foreground hover:text-primary transition-all">
-                            <Plus size={16} /> Add Expression
+                    <div className="p-3 border-t bg-muted/10 space-y-2">
+                        <button onClick={addExpr} className="w-full py-2 border border-dashed border-border rounded-lg flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-primary transition-all hover:bg-muted/50 hover:border-primary/30">
+                            <Plus size={14} /> Add Expression
                         </button>
-                        <div className="font-mono text-[10px] bg-black/5 dark:bg-white/5 p-3 rounded">
-                            <div className="flex items-center gap-2 font-bold mb-1 opacity-70">
-                                <Terminal size={12} /> Parser Output
+                        <div className="font-mono text-[10px] bg-black/5 dark:bg-white/5 p-2 rounded flex justify-between items-center opacity-50 hover:opacity-100 transition-opacity">
+                            <div className="flex items-center gap-2 font-bold whitespace-nowrap">
+                                <Terminal size={10} /> Output
                             </div>
-                            <div className="truncate opacity-50">{debugInfo}</div>
+                            <div className="truncate max-w-[200px] text-right">{debugInfo}</div>
                         </div>
                     </div>
                 </div>
 
-                <div className="flex-1 relative bg-white dark:bg-black">
+                <div className="flex-1 relative bg-white dark:bg-black transition-all">
                     <div ref={calculatorRef} className="absolute inset-0 w-full h-full" />
                 </div>
             </div>
