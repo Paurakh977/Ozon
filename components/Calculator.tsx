@@ -22,11 +22,13 @@ declare global {
 interface MathExpression {
     id: string;
     latex: string;
+    result?: string;
 }
 
 export function Calculator() {
     const calculatorRef = useRef<HTMLDivElement>(null);
     const calculatorInstance = useRef<any>(null);
+    const helpersRef = useRef<{ [key: string]: any }>({});
     const { theme, setTheme, resolvedTheme } = useTheme();
     const [expressions, setExpressions] = useState<MathExpression[]>([
         { id: "1", latex: "" },
@@ -108,12 +110,22 @@ export function Calculator() {
         ];
         cleanupList.forEach(eid => Calc.removeExpression({ id: eid }));
 
-        if (!rawLatex.trim()) return;
+        // Cleanup old helper if exists
+        if (helpersRef.current[safeId]) {
+            // Desmos helpers don't have a clear destroy method, 
+            // but we drop the reference and hopefully the engine cleans up listeners
+            delete helpersRef.current[safeId];
+        }
+
+        if (!rawLatex.trim()) {
+            setExpressions(prev => prev.map(e => e.id === id ? { ...e, result: undefined } : e));
+            return;
+        }
 
         // 3. Minimal Cleaning
         // We only normalize things that Desmos strictly hates.
-        // STOP stripping \left| and \right| so absolute values work!
         let clean = rawLatex
+            .replace(/\\bigm/g, "") // Fix for \bigm| issue
             .replace(/\\!/g, "")
             .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
             .replace(/\\limits/g, "")
@@ -121,6 +133,9 @@ export function Calculator() {
             .replace(/\\mathrm\{d\}/g, "d")
             .replace(/\\dfrac/g, "\\frac")
             .trim();
+
+        // Fix Logarithm bases: \log_5 10 -> \log_{5} 10
+        clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
         // Ensure standard functions have backslashes if missing
         const funcs = ["sin", "cos", "tan", "sec", "csc", "cot", "ln", "log", "exp"];
@@ -185,25 +200,54 @@ export function Calculator() {
             }
         };
 
+        // --- 4. Result Calculation (Universal Helper) ---
+        // We look for a numeric value for ALL expressions.
+        try {
+            const helper = Calc.HelperExpression({ latex: clean });
+            helpersRef.current[safeId] = helper;
+
+            helper.observe('numericValue', () => {
+                const val = helper.numericValue;
+                setExpressions(prev => prev.map(e => {
+                    if (e.id === id) {
+                        // Only show result if it's a finite number
+                        // Checks: not NaN, not undefined
+                        if (val !== undefined && !isNaN(val) && isFinite(val)) {
+                            // Round to reasonable decimals for display
+                            // Desmos usually does this, but we get raw number
+                            // Let's format nicely:
+                            const display = Math.abs(val) < 1e-10 ? "0" :
+                                Math.abs(val) > 1e10 ? val.toExponential(4) :
+                                    parseFloat(val.toFixed(6)).toString();
+                            return { ...e, result: display };
+                        } else {
+                            return { ...e, result: undefined };
+                        }
+                    }
+                    return e;
+                }));
+            });
+        } catch (e) {
+            console.warn("Helper creation failed", e);
+        }
+
         try { // Safe block for custom parsers
 
             // --- BRANCH A: Summation ---
             if (clean.startsWith("\\sum")) {
                 const bounds = parseBounds(4, clean);
                 if (bounds.min && bounds.max) {
+                    // Just plotting help here if needed? 
+                    // Desmos plots sums fine if set as y = ... but usually Sum is a scalar.
+                    // We already handled value via Helper.
+                    // If we want to show it on graph (as a line y=val), we can:
                     Calc.setExpression({
                         id: `val-${safeId}`,
-                        latex: `S_{${safeId}} = ${clean}`,
-                        secret: true
+                        latex: `y = ${clean}`, // Plot the constant line? Or just rely on sidebar.
+                        color: "#2d70b3",
+                        lineStyle: window.Desmos.Styles.DASHED
                     });
-                    Calc.setExpression({
-                        id: `label-${safeId}`,
-                        latex: `(0,0)`,
-                        label: `Sum = \${S_{${safeId}}}`,
-                        showLabel: true,
-                        hidden: true,
-                        color: "#000"
-                    });
+                    // Removed Label Logic
                     return;
                 }
             }
@@ -219,14 +263,9 @@ export function Calculator() {
                     const body = rest.substring(0, rest.lastIndexOf('d' + rawVariable)).trim();
 
                     if (bounds.min && bounds.max) {
-                        // Definite
+                        // Definite: Visual Shading
                         const plotBody = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
 
-                        Calc.setExpression({
-                            id: `val-${safeId}`,
-                            latex: `I_{${safeId}} = ${clean}`,
-                            secret: true
-                        });
                         Calc.setExpression({
                             id: `curve-${safeId}`,
                             latex: `y = ${plotBody}`,
@@ -241,14 +280,8 @@ export function Calculator() {
                             fillOpacity: 0.3,
                             lines: false
                         });
-                        Calc.setExpression({
-                            id: `label-${safeId}`,
-                            latex: `((${bounds.min} + ${bounds.max})/2, 0)`,
-                            label: `Area = \${I_{${safeId}}}`,
-                            showLabel: true,
-                            hidden: true,
-                            color: "#000"
-                        });
+                        // Removed Label Logic
+                        // Value handled by Universal Helper
                         return;
                     } else {
                         // Indefinite
@@ -296,11 +329,16 @@ export function Calculator() {
                         }
                     }
 
+                    // For visuals: Plot the derivative function
                     Calc.setExpression({
                         id: `funcD-${safeId}`,
                         latex: `f_{${safeId}}(${variable}) = ${body}`,
                         secret: true
                     });
+
+                    // Only plot the curve if it's NOT a specific evaluation (or we can plot the point?)
+                    // If it is evaluation, user usually just wants the number (handled by helper)
+                    // But we might want to see the function being derived?
                     Calc.setExpression({
                         id: `plot-orig-${safeId}`,
                         latex: `y = f_{${safeId}}(x)`,
@@ -318,39 +356,28 @@ export function Calculator() {
                         derivNotation = `\\frac{d^${order}}{dx^${order}} f_{${safeId}}(x)`;
                     }
 
-                    Calc.setExpression({
-                        id: `plot-deriv-${safeId}`,
-                        latex: `y = ${derivNotation}`,
-                        color: "#2d70b3",
-                        label: `f${order > 1 ? `^(${order})` : "'"}(x)`
-                    });
-
-                    if (isEvaluation) {
-                        let valLatex = "";
-                        let labelStr = "";
-                        if (order <= 3) {
-                            let primes = "";
-                            for (let k = 0; k < order; k++) primes += "'";
-                            valLatex = `f_{${safeId}}${primes}(${targetVal})`;
-                            labelStr = `f${primes}(${targetVal})`;
-                        } else {
-                            valLatex = `\\frac{d^${order}}{d${variable}^${order}} f_{${safeId}}(${targetVal})`;
-                            labelStr = `f^(${order})(${targetVal})`;
-                        }
+                    if (!isEvaluation) {
                         Calc.setExpression({
-                            id: `val-${safeId}`,
-                            latex: `V_{${safeId}} = ${valLatex}`,
-                            secret: true
+                            id: `plot-deriv-${safeId}`,
+                            latex: `y = ${derivNotation}`,
+                            color: "#2d70b3",
+                            label: `f${order > 1 ? `^(${order})` : "'"}(x)`
                         });
+                    } else {
+                        // It's an evaluation. Visuals?
+                        // Maybe show the point on the derivative curve?
+                        // Latex: (target, value)
+                        // But we don't have value sync here easily w/o helper.
+                        // Let's just create the derivative curve hidden or dashed?
                         Calc.setExpression({
-                            id: `label-${safeId}`,
-                            latex: `(0,0)`,
-                            label: `${labelStr} = \${V_{${safeId}}}`,
-                            showLabel: true,
-                            hidden: true,
-                            color: "#000000"
+                            id: `plot-deriv-${safeId}`,
+                            latex: `y = ${derivNotation}`,
+                            color: "#2d70b3",
+                            lineStyle: window.Desmos.Styles.DOTTED
                         });
                     }
+
+                    // Removed Label Logic
                     return;
                 }
             }
@@ -388,6 +415,12 @@ export function Calculator() {
         if (calculatorInstance.current) {
             // Re-generate safe ID to clean up correctly
             const safeId = `E${id.replace(/-/g, "")}`;
+
+            // Cleanup helper
+            if (helpersRef.current[safeId]) {
+                delete helpersRef.current[safeId];
+            }
+
             calculatorInstance.current.removeExpression({ id });
             calculatorInstance.current.removeExpression({ id: `curve-${safeId}` });
             calculatorInstance.current.removeExpression({ id: `shade-${safeId}` });
@@ -395,7 +428,8 @@ export function Calculator() {
             calculatorInstance.current.removeExpression({ id: `func-${safeId}` });
             calculatorInstance.current.removeExpression({ id: `label-${safeId}` });
             calculatorInstance.current.removeExpression({ id: `funcD-${safeId}` });
-            calculatorInstance.current.removeExpression({ id: `val-${safeId}` });
+            calculatorInstance.current.removeExpression({ id: `plot-orig-${safeId}` });
+            calculatorInstance.current.removeExpression({ id: `plot-deriv-${safeId}` });
         }
     };
 
@@ -436,6 +470,11 @@ export function Calculator() {
                                         {expr.latex}
                                     </math-field>
                                 </div>
+                                {expr.result && (
+                                    <div className="flex items-center justify-center px-3 py-1 bg-primary/10 text-primary font-mono text-sm rounded-md select-all whitespace-nowrap">
+                                        = {expr.result}
+                                    </div>
+                                )}
                                 <button onClick={() => removeExpr(expr.id)} className="mt-2 opacity-0 group-hover:opacity-100 p-1.5 text-muted-foreground hover:text-red-500 transition-all">
                                     <Trash2 size={16} />
                                 </button>
