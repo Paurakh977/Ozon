@@ -143,6 +143,12 @@ math-field {
   /* General mathfield styling */
   --caret-color: var(--mathfield-text-color, currentColor);
   color: var(--mathfield-text-color, inherit);
+  font-size: 1.1rem;
+
+  /* Selection styling */
+  --selection-background-color: hsl(var(--primary) / 0.2);
+  --selection-color: var(--mathfield-text-color, currentColor);
+  --contains-highlight-background-color: hsl(var(--primary) / 0.1);
 }
 
 /* Light mode specific math-field styling */
@@ -151,6 +157,7 @@ math-field {
   --smart-fence-color: #1a1a1a;
   --smart-fence-opacity: 1;
   color: #1a1a1a;
+  --mathfield-text-color: #1a1a1a;
 }
 
 /* Dark mode specific math-field styling */
@@ -159,4 +166,5 @@ math-field {
   --smart-fence-color: #ffffff;
   --smart-fence-opacity: 1;
   color: #ffffff;
+  --mathfield-text-color: #ffffff;
 }

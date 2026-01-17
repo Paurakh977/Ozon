@@ -315,22 +315,39 @@ export function Calculator() {
 
                     if (bounds.min && bounds.max) {
                         // Definite: Visual Shading
-                        const plotBody = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
+                        // Clean up the body for plotting - remove LaTeX formatting that Desmos doesn't need
+                        let plotBody = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
 
-                        Calc.setExpression({
-                            id: `curve-${safeId}`,
-                            latex: `y = ${plotBody}`,
-                            lineStyle: window.Desmos.Styles.DASHED,
-                            color: "#2d70b3"
-                        });
-                        const shadeLatex = `0 \\le y \\le ${plotBody} \\left\\{ ${bounds.min} \\le x \\le ${bounds.max} \\right\\}`;
-                        Calc.setExpression({
-                            id: `shade-${safeId}`,
-                            latex: shadeLatex,
-                            color: "#2d70b3",
-                            fillOpacity: 0.3,
-                            lines: false
-                        });
+                        // Remove \left and \right delimiters as they can cause parsing issues
+                        plotBody = plotBody
+                            .replace(/\\left\s*/g, "")
+                            .replace(/\\right\s*/g, "")
+                            .replace(/\\bigl\s*/g, "")
+                            .replace(/\\bigr\s*/g, "")
+                            .replace(/\\Bigl\s*/g, "")
+                            .replace(/\\Bigr\s*/g, "")
+                            .trim();
+
+                        // Only plot if we have a valid body
+                        if (plotBody) {
+                            Calc.setExpression({
+                                id: `curve-${safeId}`,
+                                latex: `y = ${plotBody}`,
+                                lineStyle: window.Desmos.Styles.DASHED,
+                                color: "#2d70b3"
+                            });
+
+                            // Shade the area between the curve and the x-axis (works for both positive and negative regions)
+                            // Using min(0, f(x)) ≤ y ≤ max(0, f(x)) to capture both cases
+                            const shadeLatex = `\\min(0, ${plotBody}) \\le y \\le \\max(0, ${plotBody}) \\left\\{ ${bounds.min} \\le x \\le ${bounds.max} \\right\\}`;
+                            Calc.setExpression({
+                                id: `shade-${safeId}`,
+                                latex: shadeLatex,
+                                color: "#2d70b3",
+                                fillOpacity: 0.3,
+                                lines: false
+                            });
+                        }
 
                         // Create the value expression for Desmos
                         Calc.setExpression({
@@ -344,7 +361,12 @@ export function Calculator() {
                         handled = true;
                     } else {
                         // Indefinite
-                        const plotOriginal = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
+                        let plotOriginal = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
+                        plotOriginal = plotOriginal
+                            .replace(/\\left\s*/g, "")
+                            .replace(/\\right\s*/g, "")
+                            .trim();
+
                         Calc.setExpression({
                             id: `curve-${safeId}`,
                             latex: `y = ${plotOriginal}`,
@@ -564,7 +586,7 @@ export function Calculator() {
                     <div className="p-3 flex-1 overflow-y-auto space-y-2">
                         {expressions.map((expr, i) => (
                             <div key={expr.id} className="group relative flex items-start gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all">
-                                <div className="mt-2.5 text-[10px] font-mono opacity-30 select-none w-4 text-center">{i + 1}</div>
+                                <div className="mt-2 text-xs font-mono opacity-30 select-none w-4 text-center">{i + 1}</div>
                                 <div className="flex-1 min-w-0 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                                     {/* @ts-ignore */}
                                     <math-field
@@ -576,10 +598,12 @@ export function Calculator() {
                                             width: 'fit-content',
                                             backgroundColor: 'transparent',
                                             outline: 'none',
-                                            fontSize: '0.95rem',
+                                            fontSize: '1.1rem',
                                             '--caret-color': resolvedTheme === 'dark' ? '#fff' : '#1a1a1a',
                                             '--smart-fence-color': resolvedTheme === 'dark' ? '#fff' : '#1a1a1a',
                                             '--smart-fence-opacity': '1',
+                                            '--selection-background-color': resolvedTheme === 'dark' ? 'rgba(120, 100, 255, 0.3)' : 'rgba(80, 70, 229, 0.2)',
+                                            '--selection-color': resolvedTheme === 'dark' ? '#fff' : '#1a1a1a',
                                             color: resolvedTheme === 'dark' ? '#fff' : '#1a1a1a'
                                         } as React.CSSProperties}
                                     >
@@ -587,7 +611,7 @@ export function Calculator() {
                                     </math-field>
                                 </div>
                                 {expr.result && (
-                                    <div className="flex items-center justify-center px-2 py-0.5 bg-primary/10 text-primary font-mono text-xs rounded select-all whitespace-nowrap self-center">
+                                    <div className="flex items-center justify-center px-2 py-0.5 bg-primary/10 text-primary font-mono text-sm rounded select-all whitespace-nowrap self-center">
                                         = {expr.result}
                                     </div>
                                 )}
