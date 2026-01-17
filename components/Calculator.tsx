@@ -199,37 +199,9 @@ export function Calculator() {
                 return { min: "", max: "", end: startIdx };
             }
         };
-
-        // --- 4. Result Calculation (Universal Helper) ---
-        // We look for a numeric value for ALL expressions.
-        try {
-            const helper = Calc.HelperExpression({ latex: clean });
-            helpersRef.current[safeId] = helper;
-
-            helper.observe('numericValue', () => {
-                const val = helper.numericValue;
-                setExpressions(prev => prev.map(e => {
-                    if (e.id === id) {
-                        // Only show result if it's a finite number
-                        // Checks: not NaN, not undefined
-                        if (val !== undefined && !isNaN(val) && isFinite(val)) {
-                            // Round to reasonable decimals for display
-                            // Desmos usually does this, but we get raw number
-                            // Let's format nicely:
-                            const display = Math.abs(val) < 1e-10 ? "0" :
-                                Math.abs(val) > 1e10 ? val.toExponential(4) :
-                                    parseFloat(val.toFixed(6)).toString();
-                            return { ...e, result: display };
-                        } else {
-                            return { ...e, result: undefined };
-                        }
-                    }
-                    return e;
-                }));
-            });
-        } catch (e) {
-            console.warn("Helper creation failed", e);
-        }
+        // Flag to track if we handled the expression with a custom parser
+        let handled = false;
+        let helperLatex = clean;
 
         try { // Safe block for custom parsers
 
@@ -243,17 +215,18 @@ export function Calculator() {
                     // If we want to show it on graph (as a line y=val), we can:
                     Calc.setExpression({
                         id: `val-${safeId}`,
-                        latex: `y = ${clean}`, // Plot the constant line? Or just rely on sidebar.
-                        color: "#2d70b3",
-                        lineStyle: window.Desmos.Styles.DASHED
+                        latex: `S_{${safeId}} = ${clean}`,
+                        secret: true
                     });
-                    // Removed Label Logic
-                    return;
+
+                    // Update helper to listen to the calculated sum variable
+                    helperLatex = `S_{${safeId}}`;
+                    handled = true;
                 }
             }
 
             // --- BRANCH B: Definite/Indefinite Integral ---
-            if (clean.startsWith("\\int")) {
+            if (!handled && clean.startsWith("\\int")) {
                 const bounds = parseBounds(4, clean);
                 const rest = clean.substring(bounds.end).trim();
                 const varMatch = rest.match(/d(\\[a-zA-Z]+|[a-zA-Z])$/);
@@ -280,9 +253,17 @@ export function Calculator() {
                             fillOpacity: 0.3,
                             lines: false
                         });
-                        // Removed Label Logic
-                        // Value handled by Universal Helper
-                        return;
+
+                        // Create the value expression for Desmos
+                        Calc.setExpression({
+                            id: `val-${safeId}`,
+                            latex: `I_{${safeId}} = ${clean}`,
+                            secret: true
+                        });
+
+                        // Update helper to listen to the calculated integral variable
+                        helperLatex = `I_{${safeId}}`;
+                        handled = true;
                     } else {
                         // Indefinite
                         const plotOriginal = rawVariable === 'x' ? body : body.split(rawVariable).join("x");
@@ -298,13 +279,13 @@ export function Calculator() {
                             latex: `y = \\int_{0}^{x} ${bodyWithT} dt`,
                             color: "#2d70b3"
                         });
-                        return;
+                        handled = true;
                     }
                 }
             }
 
             // --- BRANCH C: Derivative (Symbolic & Numeric) ---
-            if (clean.startsWith("\\frac")) {
+            if (!handled && clean.startsWith("\\frac")) {
                 const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
                 const derivMatch = clean.match(derivRegex);
 
@@ -375,10 +356,26 @@ export function Calculator() {
                             color: "#2d70b3",
                             lineStyle: window.Desmos.Styles.DOTTED
                         });
-                    }
 
-                    // Removed Label Logic
-                    return;
+                        // Handle Value Calculation
+                        let valLatex = "";
+                        if (order <= 3) {
+                            let primes = "";
+                            for (let k = 0; k < order; k++) primes += "'";
+                            valLatex = `f_{${safeId}}${primes}(${targetVal})`;
+                        } else {
+                            valLatex = `\\frac{d^${order}}{d${variable}^${order}} f_{${safeId}}(${targetVal})`;
+                        }
+                        Calc.setExpression({
+                            id: `val-${safeId}`,
+                            latex: `V_{${safeId}} = ${valLatex}`,
+                            secret: true
+                        });
+
+                        // Configure helper to listen to this result
+                        helperLatex = `V_{${safeId}}`;
+                    }
+                    handled = true;
                 }
             }
 
@@ -387,17 +384,49 @@ export function Calculator() {
         }
 
         // --- BRANCH D: Standard (Fallback) ---
-        let finalLatex = clean;
-        if (!finalLatex.startsWith("\\int") && !finalLatex.startsWith("\\frac") && finalLatex.endsWith("dx")) {
-            finalLatex = finalLatex.replace(/d[x-z]$/, "");
+        if (!handled) {
+            let finalLatex = clean;
+            if (!finalLatex.startsWith("\\int") && !finalLatex.startsWith("\\frac") && finalLatex.endsWith("dx")) {
+                finalLatex = finalLatex.replace(/d[x-z]$/, "");
+            }
+
+            Calc.setExpression({
+                id: id,
+                latex: finalLatex,
+                color: "#2d70b3",
+                showLabel: true
+            });
         }
 
-        Calc.setExpression({
-            id: id,
-            latex: finalLatex,
-            color: "#2d70b3",
-            showLabel: true
-        });
+        // --- 4. Result Calculation (Universal Helper) ---
+        try {
+            const helper = Calc.HelperExpression({ latex: helperLatex });
+            helpersRef.current[safeId] = helper;
+
+            helper.observe('numericValue', () => {
+                const val = helper.numericValue;
+                setExpressions(prev => prev.map(e => {
+                    if (e.id === id) {
+                        // Only show result if it's a finite number
+                        // Checks: not NaN, not undefined
+                        if (val !== undefined && !isNaN(val) && isFinite(val)) {
+                            // Round to reasonable decimals for display
+                            // Desmos usually does this, but we get raw number
+                            // Let's format nicely:
+                            const display = Math.abs(val) < 1e-10 ? "0" :
+                                Math.abs(val) > 1e10 ? val.toExponential(4) :
+                                    parseFloat(val.toFixed(6)).toString();
+                            return { ...e, result: display };
+                        } else {
+                            return { ...e, result: undefined };
+                        }
+                    }
+                    return e;
+                }));
+            });
+        } catch (e) {
+            console.warn("Helper creation failed", e);
+        }
     };
 
     const handleInput = (id: string, value: string) => {
@@ -453,9 +482,10 @@ export function Calculator() {
                         {expressions.map((expr, i) => (
                             <div key={expr.id} className="group relative flex items-start gap-3 bg-muted/30 p-3 rounded-xl border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all">
                                 <div className="mt-3 text-xs font-mono opacity-40 select-none w-4 text-center">{i + 1}</div>
-                                <div className="flex-1 min-w-0">
+                                <div className="flex-1 min-w-0 overflow-x-auto pb-1">
                                     {/* @ts-ignore */}
                                     <math-field
+                                        smart-fence="on"
                                         onInput={(e: any) => handleInput(expr.id, e.target.value)}
                                         value={expr.latex}
                                         style={{
