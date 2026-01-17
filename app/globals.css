@@ -43,6 +43,11 @@
     --mafs-fg: #000;
     --mafs-grid-stroke: #e5e7eb;
     /* tailwind gray-200 */
+
+    /* MathLive Light Mode */
+    --mathfield-text-color: #1a1a1a;
+    --smart-fence-color: #1a1a1a;
+    --smart-fence-opacity: 1;
   }
 
   .dark {
@@ -83,6 +88,11 @@
     --mafs-fg: #fff;
     --mafs-grid-stroke: #27272a;
     /* tailwind zinc-800 */
+
+    /* MathLive Dark Mode */
+    --mathfield-text-color: #ffffff;
+    --smart-fence-color: #ffffff;
+    --smart-fence-opacity: 1;
   }
 }
 
@@ -122,4 +132,31 @@
 
 .glass-card {
   @apply bg-card/60 backdrop-blur-md border border-border/50 shadow-sm;
+}
+
+/* MathLive Math Field Styling */
+math-field {
+  /* Ensure smart fence (absolute value bars) are fully visible */
+  --smart-fence-color: var(--mathfield-text-color, currentColor);
+  --smart-fence-opacity: 1;
+
+  /* General mathfield styling */
+  --caret-color: var(--mathfield-text-color, currentColor);
+  color: var(--mathfield-text-color, inherit);
+}
+
+/* Light mode specific math-field styling */
+:root math-field,
+[data-theme="light"] math-field {
+  --smart-fence-color: #1a1a1a;
+  --smart-fence-opacity: 1;
+  color: #1a1a1a;
+}
+
+/* Dark mode specific math-field styling */
+.dark math-field,
+[data-theme="dark"] math-field {
+  --smart-fence-color: #ffffff;
+  --smart-fence-opacity: 1;
+  color: #ffffff;
 }

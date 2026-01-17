@@ -138,6 +138,83 @@ export function Calculator() {
         // Fix Logarithm bases: \log_5 10 -> \log_{5} 10
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
+        // ========================================
+        // ABSOLUTE VALUE NORMALIZATION (Comprehensive)
+        // ========================================
+        // Desmos recognizes: \left|...\right| or just |...|
+        // We normalize all variants to \left|...\right| for consistency
+
+        // 1. Handle \mathrm{\abs}(...) or \mathrm{abs}(...) -> \left|...\right|
+        //    Also handles \operatorname{abs}(...)
+        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\\left\(([^)]*?)\\right\)/g, "\\left|$1\\right|");
+        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\(([^)]*?)\)/g, "\\left|$1\\right|");
+        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\{([^}]*?)\}/g, "\\left|$1\\right|");
+        clean = clean.replace(/\\operatorname\{abs\}\s*\\left\(([^)]*?)\\right\)/g, "\\left|$1\\right|");
+        clean = clean.replace(/\\operatorname\{abs\}\s*\(([^)]*?)\)/g, "\\left|$1\\right|");
+
+        // 2. Handle \left\vert ... \right\vert -> \left| ... \right|
+        clean = clean.replace(/\\left\\vert\s*/g, "\\left|");
+        clean = clean.replace(/\\right\\vert\s*/g, "\\right|");
+
+        // 3. Handle \lvert ... \rvert -> \left| ... \right|
+        clean = clean.replace(/\\lvert\s*/g, "\\left|");
+        clean = clean.replace(/\\rvert\s*/g, "\\right|");
+
+        // 4. Handle standalone \vert ... \vert -> \left| ... \right|
+        //    Be careful to match paired \vert commands
+        clean = clean.replace(/\\vert\s*([^\\]*?)\\vert/g, "\\left|$1\\right|");
+
+        // 5. Handle \abs{...} command -> \left| ... \right|
+        clean = clean.replace(/\\abs\s*\{([^}]*)\}/g, "\\left|$1\\right|");
+
+        // 6. Handle simple |...| (unescaped vertical bars)
+        //    First pass already handled \left| and \right|
+        //    Now handle remaining standalone |content| pairs
+        //    We need to be careful not to double-process
+        //    Strategy: Only convert |...| if not preceded by \left or \right
+        const convertSimplePipes = (str: string): string => {
+            let result = '';
+            let i = 0;
+            while (i < str.length) {
+                // Check if this is a standalone | (not \left| or \right|)
+                if (str[i] === '|') {
+                    // Check if preceded by \left or \right
+                    const before = str.substring(Math.max(0, i - 6), i);
+                    if (before.endsWith('\\left') || before.endsWith('\\right')) {
+                        result += str[i];
+                        i++;
+                        continue;
+                    }
+                    // Find matching closing |
+                    let j = i + 1;
+                    let depth = 1;
+                    while (j < str.length && depth > 0) {
+                        if (str[j] === '|') {
+                            const beforeJ = str.substring(Math.max(0, j - 6), j);
+                            if (!beforeJ.endsWith('\\left') && !beforeJ.endsWith('\\right')) {
+                                depth--;
+                            }
+                        }
+                        if (depth > 0) j++;
+                    }
+                    if (depth === 0) {
+                        // Found matching pair
+                        const content = str.substring(i + 1, j);
+                        result += '\\left|' + content + '\\right|';
+                        i = j + 1;
+                    } else {
+                        result += str[i];
+                        i++;
+                    }
+                } else {
+                    result += str[i];
+                    i++;
+                }
+            }
+            return result;
+        };
+        clean = convertSimplePipes(clean);
+
         // Ensure standard functions have backslashes if missing
         const funcs = ["sin", "cos", "tan", "sec", "csc", "cot", "ln", "log", "exp"];
         funcs.forEach(f => {
@@ -500,9 +577,11 @@ export function Calculator() {
                                             backgroundColor: 'transparent',
                                             outline: 'none',
                                             fontSize: '0.95rem',
-                                            '--caret-color': theme === 'dark' ? '#fff' : '#000',
-                                            color: theme === 'dark' ? '#fff' : '#000'
-                                        }}
+                                            '--caret-color': resolvedTheme === 'dark' ? '#fff' : '#1a1a1a',
+                                            '--smart-fence-color': resolvedTheme === 'dark' ? '#fff' : '#1a1a1a',
+                                            '--smart-fence-opacity': '1',
+                                            color: resolvedTheme === 'dark' ? '#fff' : '#1a1a1a'
+                                        } as React.CSSProperties}
                                     >
                                         {expr.latex}
                                     </math-field>
