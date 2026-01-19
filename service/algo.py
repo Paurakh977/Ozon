@@ -644,6 +644,56 @@ def main():
     for t in hard_tests:
         solve(t)
     
+    print(f"\n{Fore.WHITE}--- Extreme/Challenging Tests ---")
+    extreme_tests = [
+        # Inverse trig functions
+        "atan(x)",           # Domain: Reals, Range: (-π/2, π/2)
+        "asin(x)",           # Domain: [-1, 1], Range: [-π/2, π/2]
+        "acos(x)",           # Domain: [-1, 1], Range: [0, π]
+        
+        # Hyperbolic functions  
+        "sinh(x)",           # Domain: Reals, Range: (-∞, ∞)
+        "cosh(x)",           # Domain: Reals, Range: [1, ∞)
+        "tanh(x)",           # Domain: Reals, Range: (-1, 1)
+        
+        # Complex compositions
+        "sin(x**2)",         # Domain: Reals, Range: [-1, 1]
+        "exp(-abs(x))",      # Domain: Reals, Range: (0, 1]
+        "x/(1+x**2)",        # Domain: Reals, Range: [-0.5, 0.5]
+        "x**2/(1+x**4)",     # Domain: Reals, Range: [0, 0.5]
+        "sin(x)*cos(x)",     # Domain: Reals, Range: [-0.5, 0.5] (= sin(2x)/2)
+        
+        # Rational functions
+        "(x-1)/(x+1)",       # Domain: Reals\{-1}, Range: (-∞,1)∪(1,∞)
+        "x/(x**2-1)",        # Domain: Reals\{-1,1}, Range: (-∞, ∞)
+        "(x**2+1)/(x**2-1)", # Domain: Reals\{-1,1}, Range: (-∞,-1)∪(1,∞)
+        
+        # Powers and roots
+        "x**(1/3)",          # Cube root: Domain: Reals, Range: Reals (Python supports)
+        "abs(x)**(1/2)",     # Domain: Reals, Range: [0, ∞)
+        "x**4 - x**2",       # Domain: Reals, Range: [-0.25, ∞)
+        
+        # Exponential variations
+        "exp(1/x)",          # Domain: Reals\{0}, Range: (0, ∞)
+        "exp(-1/x**2)",      # Domain: Reals\{0}, Range: (0, 1]
+        "x*exp(-x**2)",      # Domain: Reals, Range: [-0.429, 0.429] approx
+        
+        # Logarithmic
+        "log(x**2+1)",       # Domain: Reals, Range: [0, ∞)
+        "log(1+x**2)/x**2",  # Domain: Reals\{0}, Range: (0, 1]
+        
+        # Mixed trig
+        "sin(x) + cos(x)",   # Domain: Reals, Range: [-√2, √2]
+        "sin(x)**2",         # Domain: Reals, Range: [0, 1]
+        "sin(x)**2 + cos(x)**2",  # Domain: Reals, Range: {1} (constant!)
+        
+        # Oscillating with decay/growth
+        "sin(x)/x**2",       # Domain: Reals\{0}, Range: approximately bounded
+        "exp(-x)*sin(x)",    # Domain: Reals, Range: bounded
+    ]
+    for t in extreme_tests:
+        solve(t)
+    
     # while True:
     #     u = input("Enter function: ")
     #     solve(u)
