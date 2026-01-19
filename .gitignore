@@ -42,3 +42,43 @@ next-env.d.ts
 
 # python .venv
 .venv/
+
+# === Rust / Cargo ===
+target/
+**/*.rs.bk
+
+# === Cargo lockfile ===
+# Keep Cargo.lock for binaries, ignore for libraries
+# Cargo.lock
+
+# === Environment files ===
+.env
+
+# === Logs ===
+*.log
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+
+# === IDEs / Editors ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# === Rustfmt / Clippy ===
+rustfmt.toml.bak
+
+# === Build artifacts ===
+*.rlib
+*.rmeta
+
+# === Coverage / profiling ===
+coverage/
+*.profraw
+*.profdata
+
+# === Temporary files ===
+tmp/
