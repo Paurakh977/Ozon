@@ -1,7 +1,7 @@
 
 import React from "react";
 import { Plus, Trash2, Terminal } from "lucide-react";
-import { MathExpression } from "../types";
+import { MathExpression } from "../components/calculator/types";
 
 interface SidebarProps {
     expressions: MathExpression[];

@@ -5,10 +5,10 @@ import React, { useState } from "react";
 import { useTheme } from "next-themes";
 import { useGraphEngine } from "./calculator/hooks/useGraphEngine";
 import { useExpressionLogic } from "./calculator/hooks/useExpressionLogic";
-import { Header } from "./calculator/ui/Header";
-import { Sidebar } from "./calculator/ui/Sidebar";
-import { GraphArea } from "./calculator/ui/GraphArea";
-import { GraphLegend } from "./calculator/ui/GraphLegend";
+import { Header } from "../ui/Header";
+import { Sidebar } from "../ui/Sidebar";
+import { GraphArea } from "../ui/GraphArea";
+import { GraphLegend } from "../ui/GraphLegend";
 
 export function Calculator() {
     const { theme, setTheme, resolvedTheme } = useTheme();

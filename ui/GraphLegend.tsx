@@ -1,7 +1,7 @@
 
 import React from "react";
 import { Calculator as CalcIcon, PanelLeftClose } from "lucide-react";
-import { MathExpression } from "../types";
+import { MathExpression } from "../components/calculator/types";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../utils/symbolic-math";
 
 interface GraphLegendProps {

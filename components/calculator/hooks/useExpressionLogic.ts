@@ -1,8 +1,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { MathExpression } from "../types";
-import { getRandomColor } from "../utils/colors";
-import { computeSymbolicDerivative, computeSymbolicIntegral } from "../utils/symbolic-math";
+import { getRandomColor } from "../../../utils/colors";
+import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
 
 export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<any>) => {
     const helpersRef = useRef<{ [key: string]: any }>({});
