@@ -8,9 +8,74 @@ interface GraphLegendProps {
     expressions: MathExpression[];
     legendOpen: boolean;
     setLegendOpen: (open: boolean) => void;
+    resolvedTheme?: string;
 }
 
-export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpen, setLegendOpen }) => {
+// Helper function to invert colors for dark mode (Desmos-style)
+const invertColorForDarkMode = (color: string, isDark: boolean): string => {
+    if (!isDark) return color;
+    
+    // Convert hex to RGB
+    const hex = color.replace('#', '');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    
+    // Convert to HSL
+    const rNorm = r / 255;
+    const gNorm = g / 255;
+    const bNorm = b / 255;
+    
+    const max = Math.max(rNorm, gNorm, bNorm);
+    const min = Math.min(rNorm, gNorm, bNorm);
+    let h = 0, s = 0;
+    const l = (max + min) / 2;
+    
+    if (max !== min) {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        switch (max) {
+            case rNorm: h = ((gNorm - bNorm) / d + (gNorm < bNorm ? 6 : 0)) / 6; break;
+            case gNorm: h = ((bNorm - rNorm) / d + 2) / 6; break;
+            case bNorm: h = ((rNorm - gNorm) / d + 4) / 6; break;
+        }
+    }
+    
+    // Adjust for dark mode - increase lightness and saturation for visibility
+    let newL = l;
+    let newS = s;
+    
+    // For dark colors, brighten them significantly
+    if (l < 0.5) {
+        newL = 0.4 + (l * 0.8); // Map 0-0.5 to 0.4-0.8
+    } else {
+        newL = 0.5 + (l * 0.4); // Map 0.5-1 to 0.7-0.9
+    }
+    
+    // Increase saturation slightly
+    newS = Math.min(1, s * 1.2);
+    
+    // Convert back to RGB
+    const hue2rgb = (p: number, q: number, t: number) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+    };
+    
+    const q = newL < 0.5 ? newL * (1 + newS) : newL + newS - newL * newS;
+    const p = 2 * newL - q;
+    const newR = Math.round(hue2rgb(p, q, h + 1/3) * 255);
+    const newG = Math.round(hue2rgb(p, q, h) * 255);
+    const newB = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    
+    return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
+};
+
+export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpen, setLegendOpen, resolvedTheme }) => {
+    const isDark = resolvedTheme === 'dark';
 
     const getLegendData = (rawLatex: string) => {
         let clean = rawLatex
@@ -29,7 +94,8 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
         // ==========================================
         //      DERIVATIVE PARSING WITH SYMBOLIC RESULT
         // ==========================================
-        const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
+        // Updated regex to handle spaces like "d x" instead of "dx" and various derivative notations
+        const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d\s*(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
         const derivMatch = clean.match(derivRegex);
         if (derivMatch) {
             const order = derivMatch[2] ? parseInt(derivMatch[2]) : 1;
@@ -37,10 +103,15 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
 
             // Extract the function being derived
             let content = derivMatch[6];
+            
+            // Handle evaluation point notation: |_{x=...} or \bigm|_{x=...}
             const barIndex = content.lastIndexOf("|_{");
             if (barIndex !== -1 && content.trim().endsWith("}")) {
                 content = content.substring(0, barIndex).trim();
             }
+            
+            // Also handle \placeholder{} that might be in evaluation expressions
+            content = content.replace(/\\placeholder\{[^}]*\}/g, '').trim();
 
             // Clean up parent label
             let parentLabel = content
@@ -189,10 +260,12 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                 <div className="p-3 pt-2 overflow-y-auto space-y-4">
                     {expressions.filter(e => e.latex.trim()).map((expr, i) => {
                         const items = getLegendData(expr.latex);
+                        // Apply color inversion for dark mode to match Desmos graph colors
+                        const displayColor = invertColorForDarkMode(expr.color, isDark);
                         return (
                             <div key={expr.id} className="flex flex-col gap-1.5">
                                 <div className="flex items-center gap-2 font-medium opacity-90 text-[10px] uppercase tracking-wider text-muted-foreground">
-                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: expr.color }}></div>
+                                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: displayColor }}></div>
                                     <span>Expr {i + 1}</span>
                                 </div>
                                 <div className="grid grid-cols-[24px_1fr] gap-x-2 gap-y-2 items-center pl-1">
@@ -200,13 +273,13 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                                         <React.Fragment key={idx}>
                                             <div className="flex items-center justify-center">
                                                 {item.type === 'dotted' && (
-                                                    <div className="w-full border-t-[3px] border-dotted" style={{ borderColor: expr.color }}></div>
+                                                    <div className="w-full border-t-[3px] border-dotted" style={{ borderColor: displayColor }}></div>
                                                 )}
                                                 {item.type === 'solid' && (
-                                                    <div className="w-full h-0.5" style={{ backgroundColor: expr.color }}></div>
+                                                    <div className="w-full h-0.5" style={{ backgroundColor: displayColor }}></div>
                                                 )}
                                                 {item.type === 'area' && (
-                                                    <div className="w-full h-3 rounded-[2px] opacity-40 border border-transparent" style={{ backgroundColor: expr.color }}></div>
+                                                    <div className="w-full h-3 rounded-[2px] opacity-40 border border-transparent" style={{ backgroundColor: displayColor }}></div>
                                                 )}
                                             </div>
                                             <div className="min-w-0">

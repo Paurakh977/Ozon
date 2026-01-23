@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useRef, useCallback, useEffect } from "react";
 import { Plus, Trash2, Terminal } from "lucide-react";
 import { MathExpression } from "../components/calculator/types";
 
@@ -22,6 +22,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
     debugInfo,
     resolvedTheme
 }) => {
+    const mathFieldRefs = useRef<Map<string, HTMLElement>>(new Map());
+    
+    // Handle focus management for virtual keyboard
+    const handleMathFieldRef = useCallback((id: string, el: HTMLElement | null) => {
+        if (el) {
+            mathFieldRefs.current.set(id, el);
+            
+            // Add focus event handler to ensure proper keyboard behavior
+            el.addEventListener('focus', () => {
+                // Ensure the math field is properly focused when clicked
+                if (el && typeof (el as any).focus === 'function') {
+                    (el as any).focus();
+                }
+            });
+            
+            // Handle virtual keyboard toggle - ensure focus stays in field
+            el.addEventListener('virtual-keyboard-toggle', (e: any) => {
+                // When virtual keyboard is toggled, ensure the field retains focus
+                setTimeout(() => {
+                    if (el && typeof (el as any).focus === 'function') {
+                        (el as any).focus();
+                    }
+                }, 0);
+            });
+        } else {
+            mathFieldRefs.current.delete(id);
+        }
+    }, []);
+    
     return (
         <div className="p-3 flex-1 overflow-y-auto space-y-2">
             {expressions.map((expr, i) => (
@@ -39,8 +68,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="flex-1 min-w-0 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                         {/* @ts-ignore */}
                         <math-field
+                            ref={(el: HTMLElement | null) => handleMathFieldRef(expr.id, el)}
                             smart-fence="on"
+                            virtual-keyboard-mode="onfocus"
                             onInput={(e: any) => handleInput(expr.id, e.target.value)}
+                            onFocus={(e: any) => {
+                                // Ensure cursor is active when focused
+                                const target = e.target;
+                                if (target && typeof target.focus === 'function') {
+                                    // Small delay to ensure proper activation
+                                    requestAnimationFrame(() => {
+                                        target.focus();
+                                    });
+                                }
+                            }}
+                            onClick={(e: any) => {
+                                // Ensure clicking the field activates cursor
+                                const target = e.currentTarget;
+                                if (target && typeof target.focus === 'function') {
+                                    target.focus();
+                                }
+                            }}
                             value={expr.latex}
                             style={{
                                 minWidth: '100%',

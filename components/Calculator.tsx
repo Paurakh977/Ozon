@@ -56,6 +56,7 @@ export function Calculator() {
                         expressions={expressions}
                         legendOpen={legendOpen}
                         setLegendOpen={setLegendOpen}
+                        resolvedTheme={resolvedTheme}
                     />
                 </GraphArea>
             </div>

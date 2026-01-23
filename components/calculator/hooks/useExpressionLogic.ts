@@ -292,13 +292,17 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
             // --- BRANCH C: Derivative (Symbolic & Numeric) ---
             if (!handled && clean.startsWith("\\frac")) {
-                const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
+                // Updated regex to handle spaces like "d x" instead of "dx" and various derivative notations
+                const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d\s*(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
                 const derivMatch = clean.match(derivRegex);
 
                 if (derivMatch) {
                     const order = derivMatch[2] ? parseInt(derivMatch[2]) : 1;
                     const variable = derivMatch[3];
                     let content = derivMatch[6];
+                    
+                    // Clean up placeholder notation that might be present
+                    content = content.replace(/\\placeholder\{[^}]*\}/g, '').trim();
 
                     let isEvaluation = false;
                     let targetVal = "";

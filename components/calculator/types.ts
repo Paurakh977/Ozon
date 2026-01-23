@@ -8,9 +8,11 @@ declare global {
     namespace JSX {
         interface IntrinsicElements {
             'math-field': React.DetailedHTMLProps<React.HTMLAttributes<HTMLElement>, HTMLElement> & {
-                'virtual-keyboard-mode'?: string;
+                'virtual-keyboard-mode'?: 'auto' | 'manual' | 'onfocus' | 'off';
                 'read-only'?: boolean;
                 'smart-fence'?: string;
+                ref?: React.Ref<HTMLElement>;
+                value?: string;
             };
         }
     }
