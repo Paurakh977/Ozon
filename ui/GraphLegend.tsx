@@ -12,6 +12,7 @@ interface GraphLegendProps {
 }
 
 // Helper function to invert colors for dark mode (Desmos-style)
+// Desmos rotates hue by 180° (complementary color) for dark mode
 const invertColorForDarkMode = (color: string, isDark: boolean): string => {
     if (!isDark) return color;
     
@@ -41,19 +42,12 @@ const invertColorForDarkMode = (color: string, isDark: boolean): string => {
         }
     }
     
-    // Adjust for dark mode - increase lightness and saturation for visibility
-    let newL = l;
+    // Desmos inverts by rotating hue 180° (complementary color)
+    let newH = (h + 0.5) % 1;
+    
+    // Keep saturation, slightly adjust lightness for visibility on dark background
     let newS = s;
-    
-    // For dark colors, brighten them significantly
-    if (l < 0.5) {
-        newL = 0.4 + (l * 0.8); // Map 0-0.5 to 0.4-0.8
-    } else {
-        newL = 0.5 + (l * 0.4); // Map 0.5-1 to 0.7-0.9
-    }
-    
-    // Increase saturation slightly
-    newS = Math.min(1, s * 1.2);
+    let newL = Math.max(0.4, Math.min(0.8, l + 0.1)); // Ensure visible on dark bg
     
     // Convert back to RGB
     const hue2rgb = (p: number, q: number, t: number) => {
@@ -67,9 +61,9 @@ const invertColorForDarkMode = (color: string, isDark: boolean): string => {
     
     const q = newL < 0.5 ? newL * (1 + newS) : newL + newS - newL * newS;
     const p = 2 * newL - q;
-    const newR = Math.round(hue2rgb(p, q, h + 1/3) * 255);
-    const newG = Math.round(hue2rgb(p, q, h) * 255);
-    const newB = Math.round(hue2rgb(p, q, h - 1/3) * 255);
+    const newR = Math.round(hue2rgb(p, q, newH + 1/3) * 255);
+    const newG = Math.round(hue2rgb(p, q, newH) * 255);
+    const newB = Math.round(hue2rgb(p, q, newH - 1/3) * 255);
     
     return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 };
