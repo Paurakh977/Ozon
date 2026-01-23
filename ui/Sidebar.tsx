@@ -1,7 +1,7 @@
 
-import React, { useRef, useCallback, useEffect } from "react";
-import { Plus, Trash2, Terminal, Eye, EyeOff } from "lucide-react";
-import { MathExpression } from "../components/calculator/types";
+import React, { useRef, useCallback, useEffect, useState } from "react";
+import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown } from "lucide-react";
+import { MathExpression, VisibilityMode } from "../components/calculator/types";
 
 // Helper function to invert colors for dark mode (Desmos-style)
 // Desmos rotates hue by 180° (complementary color) for dark mode
@@ -61,9 +61,39 @@ interface SidebarProps {
     removeExpr: (id: string) => void;
     addExpr: () => void;
     toggleVisibility: (id: string) => void;
+    setVisibilityMode: (id: string, mode: VisibilityMode) => void;
     debugInfo: string;
     resolvedTheme: string | undefined;
 }
+
+// Helper to detect if expression is a multi-curve type (derivative or integral)
+const isMultiCurveExpression = (latex: string): boolean => {
+    if (!latex) return false;
+    // Normalize the latex for detection - same as processExpression cleaning
+    const clean = latex
+        .replace(/\\mathrm\{d\}/g, "d")
+        .replace(/\\differentialD/g, "d")
+        .replace(/\\dfrac/g, "\\frac") // Handle \dfrac -> \frac
+        .replace(/\\bigm/g, "") // Remove \bigm
+        .trim();
+    
+    // Derivative detection: \frac{d...}{d...} pattern
+    // Matches: \frac{d}{dx}, \frac{d^2}{dx^2}, \frac{d^{2}}{dx^{2}}, etc.
+    // The pattern allows for optional spaces and both d^2 and d^{2} formats
+    const derivRegex = /^\\frac\s*\{\s*d(\^\{?[0-9]+\}?)?\s*\}\s*\{\s*d/;
+    const isDerivative = derivRegex.test(clean);
+    
+    // Integral: starts with \int
+    const isIntegral = clean.startsWith("\\int");
+    
+    return isDerivative || isIntegral;
+};
+
+// Get visibility icon based on mode
+const getVisibilityIcon = (mode: VisibilityMode, visible: boolean) => {
+    if (!visible || mode === 'none') return <EyeOff size={16} />;
+    return <Eye size={16} />;
+};
 
 export const Sidebar: React.FC<SidebarProps> = ({
     expressions,
@@ -72,58 +102,33 @@ export const Sidebar: React.FC<SidebarProps> = ({
     removeExpr,
     addExpr,
     toggleVisibility,
+    setVisibilityMode,
     debugInfo,
     resolvedTheme
 }) => {
     const mathFieldRefs = useRef<Map<string, HTMLElement>>(new Map());
+    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     
-    // Handle focus management for virtual keyboard and menu customization
+    // Close dropdown when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (e: MouseEvent) => {
+            if (openMenuId && !(e.target as Element).closest('.visibility-menu-container')) {
+                setOpenMenuId(null);
+            }
+        };
+        document.addEventListener('click', handleClickOutside);
+        return () => document.removeEventListener('click', handleClickOutside);
+    }, [openMenuId]);
+    
+    // Handle focus management for virtual keyboard
     const handleMathFieldRef = useCallback((id: string, el: HTMLElement | null) => {
         if (el) {
             mathFieldRefs.current.set(id, el);
             
             const mf = el as any;
             
-            // Configure MathLive menu - filter out unwanted items
-            // This runs after element is fully initialized
-            const configureMenu = () => {
-                try {
-                    if (mf.menuItems) {
-                        const unwantedIds = ['color', 'background-color', 'variant', 'mode'];
-                        
-                        const filterItems = (items: any[]): any[] => {
-                            if (!Array.isArray(items)) return [];
-                            return items
-                                .filter((item: any) => {
-                                    if (!item) return false;
-                                    const itemId = (item.id || '').toLowerCase();
-                                    return !unwantedIds.includes(itemId);
-                                })
-                                .map((item: any) => {
-                                    if (item.submenu) {
-                                        return { ...item, submenu: filterItems(item.submenu) };
-                                    }
-                                    return item;
-                                });
-                        };
-                        
-                        const currentItems = mf.menuItems;
-                        if (Array.isArray(currentItems)) {
-                            mf.menuItems = filterItems(currentItems);
-                        }
-                    }
-                } catch (e) {
-                    // Silently fail if menu customization doesn't work
-                }
-            };
-            
-            // Try to configure menu after a delay when element is fully ready
-            setTimeout(configureMenu, 100);
-            setTimeout(configureMenu, 500);
-            
-            // Also configure on focus to ensure it's always set
+            // Handle focus to ensure cursor is active
             el.addEventListener('focus', () => {
-                configureMenu();
                 if (typeof mf.focus === 'function') {
                     mf.focus();
                 }
@@ -169,14 +174,58 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </div>
                     </div>
                     
-                    {/* Visibility toggle button - positioned between color and expression */}
-                    <button 
-                        onClick={() => toggleVisibility(expr.id)}
-                        className={`shrink-0 p-1 rounded transition-all hover:bg-muted/50 ${expr.visible ? 'text-muted-foreground/70 hover:text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
-                        title={expr.visible ? "Hide graph" : "Show graph"}
-                    >
-                        {expr.visible ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
+                    {/* Visibility toggle button - with dropdown for multi-curve expressions */}
+                    <div className="relative shrink-0 visibility-menu-container">
+                        {isMultiCurveExpression(expr.latex) ? (
+                            <>
+                                <button 
+                                    onClick={() => setOpenMenuId(openMenuId === expr.id ? null : expr.id)}
+                                    className={`flex items-center gap-0.5 p-1 rounded transition-all hover:bg-muted/50 ${expr.visible ? 'text-muted-foreground/70 hover:text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
+                                    title="Visibility options"
+                                >
+                                    {getVisibilityIcon(expr.visibilityMode, expr.visible)}
+                                    <ChevronDown size={12} className={`transition-transform ${openMenuId === expr.id ? 'rotate-180' : ''}`} />
+                                </button>
+                                {/* Dropdown menu for visibility options */}
+                                {openMenuId === expr.id && (
+                                    <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-lg shadow-lg py-1 min-w-[140px]">
+                                        <button
+                                            onClick={() => { setVisibilityMode(expr.id, 'all'); setOpenMenuId(null); }}
+                                            className={`w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50 transition-colors flex items-center gap-2 ${expr.visibilityMode === 'all' ? 'text-primary font-medium' : 'text-foreground'}`}
+                                        >
+                                            <Eye size={14} /> Show All
+                                        </button>
+                                        <button
+                                            onClick={() => { setVisibilityMode(expr.id, 'parent'); setOpenMenuId(null); }}
+                                            className={`w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50 transition-colors flex items-center gap-2 ${expr.visibilityMode === 'parent' ? 'text-primary font-medium' : 'text-foreground'}`}
+                                        >
+                                            <Eye size={14} /> Parent Only
+                                        </button>
+                                        <button
+                                            onClick={() => { setVisibilityMode(expr.id, 'operated'); setOpenMenuId(null); }}
+                                            className={`w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50 transition-colors flex items-center gap-2 ${expr.visibilityMode === 'operated' ? 'text-primary font-medium' : 'text-foreground'}`}
+                                        >
+                                            <Eye size={14} /> {expr.latex.startsWith("\\int") ? "Integral Only" : "Derivative Only"}
+                                        </button>
+                                        <button
+                                            onClick={() => { setVisibilityMode(expr.id, 'none'); setOpenMenuId(null); }}
+                                            className={`w-full px-3 py-1.5 text-left text-sm hover:bg-muted/50 transition-colors flex items-center gap-2 ${expr.visibilityMode === 'none' ? 'text-primary font-medium' : 'text-foreground'}`}
+                                        >
+                                            <EyeOff size={14} /> Hide All
+                                        </button>
+                                    </div>
+                                )}
+                            </>
+                        ) : (
+                            <button 
+                                onClick={() => toggleVisibility(expr.id)}
+                                className={`p-1 rounded transition-all hover:bg-muted/50 ${expr.visible ? 'text-muted-foreground/70 hover:text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
+                                title={expr.visible ? "Hide graph" : "Show graph"}
+                            >
+                                {expr.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                            </button>
+                        )}
+                    </div>
                     <div className="flex-1 min-w-0 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                         {/* @ts-ignore */}
                         <math-field

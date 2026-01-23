@@ -25,7 +25,8 @@ export function Calculator() {
         handleColorChange,
         addExpr,
         removeExpr,
-        toggleVisibility
+        toggleVisibility,
+        setVisibilityMode
     } = useExpressionLogic(calculatorInstance);
 
     if (!libLoaded) return <div className="h-screen w-full flex items-center justify-center font-mono">Loading Engine...</div>;
@@ -48,6 +49,7 @@ export function Calculator() {
                         removeExpr={removeExpr}
                         addExpr={addExpr}
                         toggleVisibility={toggleVisibility}
+                        setVisibilityMode={setVisibilityMode}
                         debugInfo={debugInfo}
                         resolvedTheme={resolvedTheme}
                     />

@@ -18,10 +18,18 @@ declare global {
     }
 }
 
+// Visibility modes for expressions with multiple curves (derivatives, integrals)
+// - 'all': Show all curves (parent + operated)
+// - 'parent': Show only the parent function curve
+// - 'operated': Show only the derivative/integral curve
+// - 'none': Hide all curves
+export type VisibilityMode = 'all' | 'parent' | 'operated' | 'none';
+
 export interface MathExpression {
     id: string;
     latex: string;
     result?: string;
     color: string;
-    visible: boolean;
+    visible: boolean; // Simple show/hide for basic expressions
+    visibilityMode: VisibilityMode; // Granular control for multi-curve expressions
 }
