@@ -1,13 +1,20 @@
 
 import { useState, useRef, useEffect } from "react";
-import { MathExpression } from "../types";
+import { MathExpression, VisibilityMode } from "../types";
 import { getRandomColor } from "../../../utils/colors";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
 
+// Helper to determine if parent curve should be visible based on mode
+const isParentVisible = (mode: VisibilityMode): boolean => mode === 'all' || mode === 'parent';
+// Helper to determine if operated curve (derivative/integral) should be visible based on mode
+const isOperatedVisible = (mode: VisibilityMode): boolean => mode === 'all' || mode === 'operated';
+
 export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<any>) => {
     const helpersRef = useRef<{ [key: string]: any }>({});
+    // Track when visibility update is in progress to prevent re-processing
+    const visibilityUpdateInProgress = useRef<Set<string>>(new Set());
     const [expressions, setExpressions] = useState<MathExpression[]>([
-        { id: "1", latex: "", color: "#2d70b3" },
+        { id: "1", latex: "", color: "#2d70b3", visible: true, visibilityMode: 'all' },
     ]);
     const [debugInfo, setDebugInfo] = useState<string>("Ready");
     const [legendOpen, setLegendOpen] = useState(true);
@@ -15,7 +22,12 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     // ==========================================
     //      THE LOGIC: SMART TRANSFORMER
     // ==========================================
-    const processExpression = (id: string, rawLatex: string, color: string) => {
+    const processExpression = (id: string, rawLatex: string, color: string, visible: boolean = true, visibilityMode: VisibilityMode = 'all') => {
+        // CRITICAL: Skip if visibility update is in progress
+        if (visibilityUpdateInProgress.current.has(id)) {
+            return;
+        }
+        
         const Calc = calculatorInstance.current;
         if (!Calc) return;
 
@@ -185,7 +197,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                     Calc.setExpression({
                         id: `val-${safeId}`,
                         latex: `S_{${safeId}} = ${clean}`,
-                        secret: true
+                        secret: true,
+                        hidden: true
                     });
                     helperLatex = `S_{${safeId}}`;
                     handled = true;
@@ -242,6 +255,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                                 lineStyle: window.Desmos.Styles.DOTTED,
                                 label: "Parent Function",
                                 showLabel: true,
+                                hidden: !isParentVisible(visibilityMode)
                             });
 
                             const shadeLatex = `\\min(0, ${plotBody}) \\le y \\le \\max(0, ${plotBody}) \\left\\{ ${cleanMin} \\le x \\le ${cleanMax} \\right\\}`;
@@ -250,14 +264,16 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                                 latex: shadeLatex,
                                 color: color,
                                 fillOpacity: 0.3,
-                                lines: false
+                                lines: false,
+                                hidden: !isOperatedVisible(visibilityMode)
                             });
                         }
 
                         Calc.setExpression({
                             id: `val-${safeId}`,
                             latex: `I_{${safeId}} = ${clean}`,
-                            secret: true
+                            secret: true,
+                            hidden: true
                         });
                         helperLatex = `I_{${safeId}}`;
                         handled = true;
@@ -274,7 +290,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                             lineStyle: window.Desmos.Styles.DOTTED,
                             color: color,
                             label: "Parent Function",
-                            showLabel: true
+                            showLabel: true,
+                            hidden: !isParentVisible(visibilityMode)
                         });
                         const bodyWithT = body.split(rawVariable).join("t");
                         Calc.setExpression({
@@ -283,7 +300,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                             color: color,
                             lineStyle: window.Desmos.Styles.SOLID,
                             label: "Integral",
-                            showLabel: true
+                            showLabel: true,
+                            hidden: !isOperatedVisible(visibilityMode)
                         });
                         handled = true;
                     }
@@ -292,43 +310,62 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
             // --- BRANCH C: Derivative (Symbolic & Numeric) ---
             if (!handled && clean.startsWith("\\frac")) {
-                const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d(\\[a-zA-Z]+|[a-zA-Z])(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
+                // Updated regex to handle various derivative notations:
+                // - \frac{d}{dx}f(x), \frac{d^2}{dx^2}f(x), \frac{d^{2}}{dx^{2}}f(x)
+                // - With or without spaces, with or without braces around exponent
+                // Groups: [1]=^n or ^{n}, [2]=n (order), [3]=variable, [4]=^n or ^{n}, [5]=n, [6]=content
+                const derivRegex = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d\s*(\\?[a-zA-Z]+)(\^\{?([0-9]+)\}?)?\s*\}\s*(.+)$/;
                 const derivMatch = clean.match(derivRegex);
 
                 if (derivMatch) {
                     const order = derivMatch[2] ? parseInt(derivMatch[2]) : 1;
                     const variable = derivMatch[3];
                     let content = derivMatch[6];
+                    
+                    // Clean up placeholder notation that might be present
+                    content = content.replace(/\\placeholder\{[^}]*\}/g, '').trim();
 
                     let isEvaluation = false;
                     let targetVal = "";
                     let body = content;
 
+                    // Handle evaluation notation: |_{x=2} or \bigm|_{x=2} (bigm already removed)
+                    // Look for |_{ pattern for evaluation point
                     const barIndex = content.lastIndexOf("|_{");
                     if (barIndex !== -1 && content.trim().endsWith("}")) {
                         const possibleBody = content.substring(0, barIndex).trim();
                         const evalPart = content.substring(barIndex + 3, content.length - 1);
                         const parts = evalPart.split("=");
-                        if (parts.length === 2 && parts[0].trim() === variable) {
+                        // Variable might be 'x' or '\theta' etc - compare without backslash
+                        const cleanVar = variable.replace(/^\\/,'');
+                        const evalVar = parts[0].trim().replace(/^\\/,'');
+                        if (parts.length === 2 && evalVar === cleanVar) {
                             isEvaluation = true;
                             targetVal = parts[1].trim();
                             body = possibleBody;
                         }
                     }
 
+                    // Use clean variable for Desmos (remove backslash if present)
+                    const desmosVar = variable.replace(/^\\/,'');
+                    
+                    // Function definition - must be hidden to prevent Desmos from plotting it
                     Calc.setExpression({
                         id: `funcD-${safeId}`,
-                        latex: `f_{${safeId}}(${variable}) = ${body}`,
-                        secret: true
+                        latex: `f_{${safeId}}(${desmosVar}) = ${body}`,
+                        secret: true,
+                        hidden: true
                     });
 
+                    // Parent function curve (dotted line)
                     Calc.setExpression({
                         id: `plot-orig-${safeId}`,
                         latex: `y = f_{${safeId}}(x)`,
                         lineStyle: window.Desmos.Styles.DOTTED,
                         color: color,
                         label: "Parent Function",
-                        showLabel: true
+                        showLabel: true,
+                        hidden: !isParentVisible(visibilityMode)
                     });
 
                     let derivNotation = "";
@@ -340,6 +377,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                         derivNotation = `\\frac{d^${order}}{dx^${order}} f_{${safeId}}(x)`;
                     }
 
+                    // Derivative curve (solid line)
                     const derivLabel = `Derivative: f${order > 1 ? `^(${order})` : "'"}(x)`;
                     Calc.setExpression({
                         id: `plot-deriv-${safeId}`,
@@ -347,7 +385,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                         color: color,
                         label: derivLabel,
                         showLabel: true,
-                        lineStyle: window.Desmos.Styles.SOLID
+                        lineStyle: window.Desmos.Styles.SOLID,
+                        hidden: !isOperatedVisible(visibilityMode)
                     });
 
                     if (isEvaluation) {
@@ -357,12 +396,13 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                             for (let k = 0; k < order; k++) primes += "'";
                             valLatex = `f_{${safeId}}${primes}(${targetVal})`;
                         } else {
-                            valLatex = `\\frac{d^${order}}{d${variable}^${order}} f_{${safeId}}(${targetVal})`;
+                            valLatex = `\\frac{d^${order}}{d${desmosVar}^${order}} f_{${safeId}}(${targetVal})`;
                         }
                         Calc.setExpression({
                             id: `val-${safeId}`,
                             latex: `V_{${safeId}} = ${valLatex}`,
-                            secret: true
+                            secret: true,
+                            hidden: true
                         });
                         helperLatex = `V_{${safeId}}`;
                     }
@@ -385,7 +425,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                 id: id,
                 latex: finalLatex,
                 color: color,
-                showLabel: true
+                showLabel: true,
+                hidden: visibilityMode === 'none' || !visible
             });
         }
 
@@ -417,20 +458,153 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
     const handleInput = (id: string, value: string) => {
         const expr = expressions.find(e => e.id === id);
+        
+        // Skip processing if latex hasn't changed (prevents re-processing on visibility changes)
+        if (expr && expr.latex === value) {
+            return;
+        }
+        
+        // Also skip if visibility update is in progress for this expression
+        if (visibilityUpdateInProgress.current.has(id)) {
+            return;
+        }
+        
         const currentColor = expr ? expr.color : "#2d70b3";
+        const currentVisible = expr ? expr.visible : true;
+        const currentMode = expr ? expr.visibilityMode : 'all';
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, latex: value } : e));
-        processExpression(id, value, currentColor);
+        processExpression(id, value, currentColor, currentVisible, currentMode);
     };
 
     const handleColorChange = (id: string, newColor: string) => {
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, color: newColor } : e));
         const expr = expressions.find(e => e.id === id);
-        if (expr) processExpression(id, expr.latex, newColor);
+        if (expr) processExpression(id, expr.latex, newColor, expr.visible, expr.visibilityMode);
     };
 
     const addExpr = () => {
         const id = Math.random().toString(36).substr(2, 9);
-        setExpressions([...expressions, { id, latex: "", color: getRandomColor() }]);
+        setExpressions([...expressions, { id, latex: "", color: getRandomColor(), visible: true, visibilityMode: 'all' }]);
+    };
+
+    const toggleVisibility = (id: string) => {
+        // Mark that visibility update is in progress to prevent re-processing
+        visibilityUpdateInProgress.current.add(id);
+        
+        setExpressions(prev => prev.map(e => {
+            if (e.id === id) {
+                const newVisible = !e.visible;
+                const newMode: VisibilityMode = newVisible ? 'all' : 'none';
+                // Update Desmos expression visibility
+                if (calculatorInstance.current) {
+                    const safeId = `E${id.replace(/-/g, "")}`;
+                    const Calc = calculatorInstance.current;
+                    
+                    // Get all current expressions to check what exists
+                    const allExprs = Calc.getExpressions();
+                    const exprIds = allExprs.map((ex: any) => ex.id);
+                    
+                    // Parent curves (dotted lines) - graphical elements
+                    const parentIds = [`curve-${safeId}`, `plot-orig-${safeId}`];
+                    // Operated curves (solid lines - derivative/integral result) - graphical elements
+                    const operatedIds = [id, `shade-${safeId}`, `plot-deriv-${safeId}`];
+                    
+                    // Only update visibility for graphical elements (parent + operated)
+                    const graphicalIds = [...parentIds, ...operatedIds];
+                    
+                    // Update visibility for graphical expressions only
+                    graphicalIds.forEach(eid => {
+                        if (exprIds.includes(eid)) {
+                            const isParent = parentIds.includes(eid);
+                            const shouldHide = isParent 
+                                ? !isParentVisible(newMode) 
+                                : !isOperatedVisible(newMode);
+                            try {
+                                // For parent curves, also re-specify the lineStyle to ensure it stays dotted
+                                if (isParent) {
+                                    Calc.setExpression({ 
+                                        id: eid, 
+                                        hidden: shouldHide,
+                                        lineStyle: window.Desmos.Styles.DOTTED
+                                    });
+                                } else {
+                                    Calc.setExpression({ id: eid, hidden: shouldHide });
+                                }
+                            } catch (err) {
+                                console.warn(`Failed to update visibility for ${eid}`, err);
+                            }
+                        }
+                    });
+                }
+                return { ...e, visible: newVisible, visibilityMode: newMode };
+            }
+            return e;
+        }));
+        
+        // Clear the visibility update flag after a short delay to allow React to finish re-rendering
+        setTimeout(() => {
+            visibilityUpdateInProgress.current.delete(id);
+        }, 100);
+    };
+
+    // New function for granular visibility control
+    const setVisibilityMode = (id: string, mode: VisibilityMode) => {
+        // Mark that visibility update is in progress to prevent re-processing
+        visibilityUpdateInProgress.current.add(id);
+        
+        setExpressions(prev => prev.map(e => {
+            if (e.id === id) {
+                const newVisible = mode !== 'none';
+                // Update Desmos expression visibility
+                if (calculatorInstance.current) {
+                    const safeId = `E${id.replace(/-/g, "")}`;
+                    const Calc = calculatorInstance.current;
+                    
+                    // Get all current expressions to check what exists
+                    const allExprs = Calc.getExpressions();
+                    const exprIds = allExprs.map((ex: any) => ex.id);
+                    
+                    // Parent curves (dotted lines) - graphical elements
+                    const parentIds = [`curve-${safeId}`, `plot-orig-${safeId}`];
+                    // Operated curves (solid lines - derivative/integral result) - graphical elements
+                    const operatedIds = [id, `shade-${safeId}`, `plot-deriv-${safeId}`];
+                    
+                    // Only update visibility for graphical elements (parent + operated)
+                    const graphicalIds = [...parentIds, ...operatedIds];
+                    
+                    // Update visibility for graphical expressions only
+                    graphicalIds.forEach(eid => {
+                        if (exprIds.includes(eid)) {
+                            const isParent = parentIds.includes(eid);
+                            const shouldHide = isParent 
+                                ? !isParentVisible(mode) 
+                                : !isOperatedVisible(mode);
+                            try {
+                                // For parent curves, also re-specify the lineStyle to ensure it stays dotted
+                                if (isParent) {
+                                    Calc.setExpression({ 
+                                        id: eid, 
+                                        hidden: shouldHide,
+                                        lineStyle: window.Desmos.Styles.DOTTED
+                                    });
+                                } else {
+                                    Calc.setExpression({ id: eid, hidden: shouldHide });
+                                }
+                            } catch (err) {
+                                console.warn(`Failed to update visibility for ${eid}`, err);
+                            }
+                        }
+                    });
+                }
+                return { ...e, visible: newVisible, visibilityMode: mode };
+            }
+            return e;
+        }));
+        
+        // Clear the visibility update flag after a short delay to allow React to finish re-rendering
+        setTimeout(() => {
+            visibilityUpdateInProgress.current.delete(id);
+        }, 100);
     };
 
     const removeExpr = (id: string) => {
@@ -455,7 +629,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     // Re-process expressions when the engine loads or component mounts
     useEffect(() => {
         if (calculatorInstance.current) {
-            expressions.forEach(e => processExpression(e.id, e.latex, e.color));
+            expressions.forEach(e => processExpression(e.id, e.latex, e.color, e.visible, e.visibilityMode));
         }
     }, [!!calculatorInstance.current]);
 
@@ -468,6 +642,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         handleColorChange,
         addExpr,
         removeExpr,
+        toggleVisibility,
+        setVisibilityMode,
         processExpression
     };
 };
