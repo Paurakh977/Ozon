@@ -7,7 +7,7 @@ import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../uti
 export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<any>) => {
     const helpersRef = useRef<{ [key: string]: any }>({});
     const [expressions, setExpressions] = useState<MathExpression[]>([
-        { id: "1", latex: "", color: "#2d70b3" },
+        { id: "1", latex: "", color: "#2d70b3", visible: true },
     ]);
     const [debugInfo, setDebugInfo] = useState<string>("Ready");
     const [legendOpen, setLegendOpen] = useState(true);
@@ -15,7 +15,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     // ==========================================
     //      THE LOGIC: SMART TRANSFORMER
     // ==========================================
-    const processExpression = (id: string, rawLatex: string, color: string) => {
+    const processExpression = (id: string, rawLatex: string, color: string, visible: boolean = true) => {
         const Calc = calculatorInstance.current;
         if (!Calc) return;
 
@@ -242,6 +242,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                                 lineStyle: window.Desmos.Styles.DOTTED,
                                 label: "Parent Function",
                                 showLabel: true,
+                                hidden: !visible
                             });
 
                             const shadeLatex = `\\min(0, ${plotBody}) \\le y \\le \\max(0, ${plotBody}) \\left\\{ ${cleanMin} \\le x \\le ${cleanMax} \\right\\}`;
@@ -250,7 +251,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                                 latex: shadeLatex,
                                 color: color,
                                 fillOpacity: 0.3,
-                                lines: false
+                                lines: false,
+                                hidden: !visible
                             });
                         }
 
@@ -274,7 +276,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                             lineStyle: window.Desmos.Styles.DOTTED,
                             color: color,
                             label: "Parent Function",
-                            showLabel: true
+                            showLabel: true,
+                            hidden: !visible
                         });
                         const bodyWithT = body.split(rawVariable).join("t");
                         Calc.setExpression({
@@ -283,7 +286,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                             color: color,
                             lineStyle: window.Desmos.Styles.SOLID,
                             label: "Integral",
-                            showLabel: true
+                            showLabel: true,
+                            hidden: !visible
                         });
                         handled = true;
                     }
@@ -332,7 +336,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                         lineStyle: window.Desmos.Styles.DOTTED,
                         color: color,
                         label: "Parent Function",
-                        showLabel: true
+                        showLabel: true,
+                        hidden: !visible
                     });
 
                     let derivNotation = "";
@@ -351,7 +356,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                         color: color,
                         label: derivLabel,
                         showLabel: true,
-                        lineStyle: window.Desmos.Styles.SOLID
+                        lineStyle: window.Desmos.Styles.SOLID,
+                        hidden: !visible
                     });
 
                     if (isEvaluation) {
@@ -389,7 +395,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                 id: id,
                 latex: finalLatex,
                 color: color,
-                showLabel: true
+                showLabel: true,
+                hidden: !visible
             });
         }
 
@@ -422,19 +429,45 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     const handleInput = (id: string, value: string) => {
         const expr = expressions.find(e => e.id === id);
         const currentColor = expr ? expr.color : "#2d70b3";
+        const currentVisible = expr ? expr.visible : true;
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, latex: value } : e));
-        processExpression(id, value, currentColor);
+        processExpression(id, value, currentColor, currentVisible);
     };
 
     const handleColorChange = (id: string, newColor: string) => {
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, color: newColor } : e));
         const expr = expressions.find(e => e.id === id);
-        if (expr) processExpression(id, expr.latex, newColor);
+        if (expr) processExpression(id, expr.latex, newColor, expr.visible);
     };
 
     const addExpr = () => {
         const id = Math.random().toString(36).substr(2, 9);
-        setExpressions([...expressions, { id, latex: "", color: getRandomColor() }]);
+        setExpressions([...expressions, { id, latex: "", color: getRandomColor(), visible: true }]);
+    };
+
+    const toggleVisibility = (id: string) => {
+        setExpressions(prev => prev.map(e => {
+            if (e.id === id) {
+                const newVisible = !e.visible;
+                // Update Desmos expression visibility
+                if (calculatorInstance.current) {
+                    const safeId = `E${id.replace(/-/g, "")}`;
+                    // Hide/show all associated expressions
+                    [id, `curve-${safeId}`, `shade-${safeId}`, `plot-orig-${safeId}`, `plot-deriv-${safeId}`].forEach(eid => {
+                        try {
+                            const expr = calculatorInstance.current.getExpressions().find((ex: any) => ex.id === eid);
+                            if (expr) {
+                                calculatorInstance.current.setExpression({ id: eid, hidden: !newVisible });
+                            }
+                        } catch (err) {
+                            // Expression might not exist
+                        }
+                    });
+                }
+                return { ...e, visible: newVisible };
+            }
+            return e;
+        }));
     };
 
     const removeExpr = (id: string) => {
@@ -459,7 +492,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     // Re-process expressions when the engine loads or component mounts
     useEffect(() => {
         if (calculatorInstance.current) {
-            expressions.forEach(e => processExpression(e.id, e.latex, e.color));
+            expressions.forEach(e => processExpression(e.id, e.latex, e.color, e.visible));
         }
     }, [!!calculatorInstance.current]);
 
@@ -472,6 +505,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         handleColorChange,
         addExpr,
         removeExpr,
+        toggleVisibility,
         processExpression
     };
 };

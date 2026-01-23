@@ -1,6 +1,6 @@
 
 import React, { useRef, useCallback, useEffect } from "react";
-import { Plus, Trash2, Terminal } from "lucide-react";
+import { Plus, Trash2, Terminal, Eye, EyeOff } from "lucide-react";
 import { MathExpression } from "../components/calculator/types";
 
 // Helper function to invert colors for dark mode (Desmos-style)
@@ -60,6 +60,7 @@ interface SidebarProps {
     handleInput: (id: string, value: string) => void;
     removeExpr: (id: string) => void;
     addExpr: () => void;
+    toggleVisibility: (id: string) => void;
     debugInfo: string;
     resolvedTheme: string | undefined;
 }
@@ -70,30 +71,69 @@ export const Sidebar: React.FC<SidebarProps> = ({
     handleInput,
     removeExpr,
     addExpr,
+    toggleVisibility,
     debugInfo,
     resolvedTheme
 }) => {
     const mathFieldRefs = useRef<Map<string, HTMLElement>>(new Map());
     
-    // Handle focus management for virtual keyboard
+    // Handle focus management for virtual keyboard and menu customization
     const handleMathFieldRef = useCallback((id: string, el: HTMLElement | null) => {
         if (el) {
             mathFieldRefs.current.set(id, el);
             
-            // Add focus event handler to ensure proper keyboard behavior
+            const mf = el as any;
+            
+            // Configure MathLive menu - filter out unwanted items
+            // This runs after element is fully initialized
+            const configureMenu = () => {
+                try {
+                    if (mf.menuItems) {
+                        const unwantedIds = ['color', 'background-color', 'variant', 'mode'];
+                        
+                        const filterItems = (items: any[]): any[] => {
+                            if (!Array.isArray(items)) return [];
+                            return items
+                                .filter((item: any) => {
+                                    if (!item) return false;
+                                    const itemId = (item.id || '').toLowerCase();
+                                    return !unwantedIds.includes(itemId);
+                                })
+                                .map((item: any) => {
+                                    if (item.submenu) {
+                                        return { ...item, submenu: filterItems(item.submenu) };
+                                    }
+                                    return item;
+                                });
+                        };
+                        
+                        const currentItems = mf.menuItems;
+                        if (Array.isArray(currentItems)) {
+                            mf.menuItems = filterItems(currentItems);
+                        }
+                    }
+                } catch (e) {
+                    // Silently fail if menu customization doesn't work
+                }
+            };
+            
+            // Try to configure menu after a delay when element is fully ready
+            setTimeout(configureMenu, 100);
+            setTimeout(configureMenu, 500);
+            
+            // Also configure on focus to ensure it's always set
             el.addEventListener('focus', () => {
-                // Ensure the math field is properly focused when clicked
-                if (el && typeof (el as any).focus === 'function') {
-                    (el as any).focus();
+                configureMenu();
+                if (typeof mf.focus === 'function') {
+                    mf.focus();
                 }
             });
             
             // Handle virtual keyboard toggle - ensure focus stays in field
-            el.addEventListener('virtual-keyboard-toggle', (e: any) => {
-                // When virtual keyboard is toggled, ensure the field retains focus
+            el.addEventListener('virtual-keyboard-toggle', () => {
                 setTimeout(() => {
-                    if (el && typeof (el as any).focus === 'function') {
-                        (el as any).focus();
+                    if (typeof mf.focus === 'function') {
+                        mf.focus();
                     }
                 }, 0);
             });
@@ -108,25 +148,35 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 const isDark = resolvedTheme === 'dark';
                 const displayColor = invertColorForDarkMode(expr.color, isDark);
                 return (
-                <div key={expr.id} className="group relative flex items-start gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all">
-                    <div className="flex flex-col items-center gap-1 mt-2">
-                        <div className="text-xs font-mono opacity-30 select-none w-4 text-center">{i + 1}</div>
-                        {/* Show display color as indicator, but keep original in picker */}
+                <div key={expr.id} className={`group relative flex items-center gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all ${!expr.visible ? 'opacity-60' : ''}`}>
+                    {/* Left side: Number + Color picker stacked */}
+                    <div className="flex flex-col items-center gap-1 shrink-0">
+                        <div className="text-xs font-mono opacity-40 select-none w-5 text-center">{i + 1}</div>
+                        {/* Color picker */}
                         <div className="relative">
                             <input
                                 type="color"
                                 value={expr.color}
                                 onChange={(e) => handleColorChange(expr.id, e.target.value)}
-                                className="w-4 h-4 rounded-full overflow-hidden p-0 border-0 cursor-pointer opacity-0 absolute inset-0"
+                                className="w-5 h-5 rounded-full overflow-hidden p-0 border-0 cursor-pointer opacity-0 absolute inset-0 z-10"
                                 title="Change Graph Color"
                             />
                             <div 
-                                className="w-4 h-4 rounded-full cursor-pointer border border-border/50"
-                                style={{ backgroundColor: displayColor }}
+                                className="w-5 h-5 rounded-full cursor-pointer border border-border/50 transition-opacity"
+                                style={{ backgroundColor: displayColor, opacity: expr.visible ? 1 : 0.4 }}
                                 title="Change Graph Color"
                             />
                         </div>
                     </div>
+                    
+                    {/* Visibility toggle button - positioned between color and expression */}
+                    <button 
+                        onClick={() => toggleVisibility(expr.id)}
+                        className={`shrink-0 p-1 rounded transition-all hover:bg-muted/50 ${expr.visible ? 'text-muted-foreground/70 hover:text-primary' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
+                        title={expr.visible ? "Hide graph" : "Show graph"}
+                    >
+                        {expr.visible ? <Eye size={16} /> : <EyeOff size={16} />}
+                    </button>
                     <div className="flex-1 min-w-0 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none' }}>
                         {/* @ts-ignore */}
                         <math-field
@@ -170,11 +220,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                         </math-field>
                     </div>
                     {expr.result && (
-                        <div className="flex items-center justify-center px-2 py-0.5 bg-primary/10 text-primary font-mono text-sm rounded select-all whitespace-nowrap self-center">
+                        <div className="flex items-center justify-center px-2 py-0.5 bg-primary/10 text-primary font-mono text-sm rounded select-all whitespace-nowrap">
                             = {expr.result}
                         </div>
                     )}
-                    <button onClick={() => removeExpr(expr.id)} className="mt-1 opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-all">
+                    <button onClick={() => removeExpr(expr.id)} className="shrink-0 opacity-0 group-hover:opacity-100 p-1 text-muted-foreground hover:text-red-500 transition-all">
                         <Trash2 size={14} />
                     </button>
                 </div>

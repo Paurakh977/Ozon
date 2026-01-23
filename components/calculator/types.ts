@@ -23,4 +23,5 @@ export interface MathExpression {
     latex: string;
     result?: string;
     color: string;
+    visible: boolean;
 }
