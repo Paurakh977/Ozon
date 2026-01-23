@@ -152,8 +152,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             {expressions.map((expr, i) => {
                 const isDark = resolvedTheme === 'dark';
                 const displayColor = invertColorForDarkMode(expr.color, isDark);
+                const isMenuOpen = openMenuId === expr.id;
                 return (
-                <div key={expr.id} className={`group relative flex items-center gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all ${!expr.visible ? 'opacity-60' : ''}`}>
+                <div key={expr.id} className={`group relative flex items-center gap-2 bg-muted/30 p-2 rounded-lg border border-transparent focus-within:border-primary/50 focus-within:bg-muted/50 transition-all ${!expr.visible ? 'opacity-60' : ''} ${isMenuOpen ? 'z-50' : ''}`}>
                     {/* Left side: Number + Color picker stacked */}
                     <div className="flex flex-col items-center gap-1 shrink-0">
                         <div className="text-xs font-mono opacity-40 select-none w-5 text-center">{i + 1}</div>
