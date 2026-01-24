@@ -82,3 +82,7 @@ coverage/
 
 # === Temporary files ===
 tmp/
+
+#python cache
+__pycache__/
+*.pyc
