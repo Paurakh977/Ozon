@@ -3,6 +3,56 @@ import React, { useRef, useCallback, useEffect, useState } from "react";
 import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown } from "lucide-react";
 import { MathExpression, VisibilityMode } from "../components/calculator/types";
 
+// Custom inline shortcuts for calculus operations
+// These shortcuts allow quick entry of calculus expressions by typing keywords
+const CUSTOM_INLINE_SHORTCUTS = {
+    // ==========================================
+    // INTEGRAL SHORTCUTS
+    // ==========================================
+    // Indefinite integral with dx (no thin space - required for proper parsing)
+    'int': '\\int #?\\mathrm{d}x',
+    // Definite integral with bounds
+    'dint': '\\int_{#?}^{#?}#?\\mathrm{d}x',
+    
+    // ==========================================
+    // DERIVATIVE SHORTCUTS
+    // ==========================================
+    // First derivative with respect to x
+    'ddx': '\\frac{d}{dx}#?',
+    // First derivative with respect to y
+    'ddy': '\\frac{d}{dy}#?',
+    // Second derivative
+    'd2dx2': '\\frac{d^{2}}{dx^{2}}#?',
+    // nth derivative at a point (user specifies the order and evaluation point)
+    'dndxn': '\\frac{d^{#?}}{dx^{#?}}#?\\bigm|_{x=#?}',
+    // General derivative at a point: d/d? □|_{?=?}
+    'deriv': '\\frac{d}{d#?}#?\\bigm|_{#?=#?}',
+    
+    // ==========================================
+    // PARTIAL DERIVATIVE SHORTCUTS
+    // ==========================================
+    // Partial derivative with respect to x
+    'pdx': '\\frac{\\partial}{\\partial x}#?',
+    // Partial derivative with respect to y  
+    'pdy': '\\frac{\\partial}{\\partial y}#?',
+    
+    // ==========================================
+    // LIMIT SHORTCUTS
+    // ==========================================
+    // General limit: lim_{? → ?} □
+    'lim': '\\lim_{#?\\to #?}#?',
+    // Limit with x approaching something
+    'limx': '\\lim_{x\\to #?}#?',
+    
+    // ==========================================
+    // SUMMATION SHORTCUTS
+    // ==========================================
+    // General summation
+    'sum': '\\sum_{#?}^{#?}#?',
+    // Summation with n as index
+    'sumn': '\\sum_{n=#?}^{#?}#?',
+};
+
 // Helper function to invert colors for dark mode (Desmos-style)
 // Desmos rotates hue by 180° (complementary color) for dark mode
 const invertColorForDarkMode = (color: string, isDark: boolean): string => {
@@ -120,12 +170,23 @@ export const Sidebar: React.FC<SidebarProps> = ({
         return () => document.removeEventListener('click', handleClickOutside);
     }, [openMenuId]);
     
-    // Handle focus management for virtual keyboard
+    // Handle focus management for virtual keyboard and configure inline shortcuts
     const handleMathFieldRef = useCallback((id: string, el: HTMLElement | null) => {
         if (el) {
             mathFieldRefs.current.set(id, el);
             
             const mf = el as any;
+            
+            // Configure inline shortcuts for this math-field element
+            // This applies our custom calculus shortcuts to enable quick entry
+            if (mf.inlineShortcuts !== undefined) {
+                // Merge our custom shortcuts with existing defaults
+                const existingShortcuts = mf.inlineShortcuts || {};
+                mf.inlineShortcuts = {
+                    ...existingShortcuts,
+                    ...CUSTOM_INLINE_SHORTCUTS,
+                };
+            }
             
             // Handle focus to ensure cursor is active
             el.addEventListener('focus', () => {

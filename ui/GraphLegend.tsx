@@ -155,7 +155,12 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
         // ==========================================
         if (clean.startsWith("\\int")) {
             // Robust regex to capture integral bounds
-            const boundsRegex = /^\\int(?:_\{([^}]*)\}|_(-?[0-9a-zA-Z\\]+))?(?:\^\{([^}]*)\}|\^(-?[0-9a-zA-Z\\]+))?/;
+            // For bare bounds (without braces), only match:
+            // - Digits with optional minus sign: -?\d+
+            // - Single letter: [a-zA-Z]
+            // - LaTeX command: \\[a-zA-Z]+
+            // This prevents capturing part of the integrand (e.g., ^3x should only capture 3)
+            const boundsRegex = /^\\int(?:_\{([^}]*)\}|_(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?(?:\^\{([^}]*)\}|\^(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?/;
             const boundsMatch = clean.match(boundsRegex);
 
             // Extract and CLEAN bounds
@@ -172,6 +177,9 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
 
             // Extract differential variable
             let diffVar = 'x';
+            // Clean thin spaces (\,) from the body first - these are formatting only
+            body = body.replace(/\\,/g, '').trim();
+            
             const dMatch = body.match(/(?:\\mathrm\{d\}|d)(\\[a-zA-Z]+|[a-zA-Z])$/);
             if (dMatch) {
                 const rawVar = dMatch[1];
@@ -235,7 +243,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
     };
 
     return (
-        <div className={`absolute top-4 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] w-[220px]' : 'w-auto h-auto'}`}>
+        <div className={`absolute top-4 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] min-w-[220px] max-w-[400px] w-auto' : 'w-auto h-auto'}`}>
             <div
                 className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 border-b border-border/50"
                 onClick={() => setLegendOpen(!legendOpen)}
@@ -276,7 +284,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                                                     <div className="w-full h-3 rounded-[2px] opacity-40 border border-transparent" style={{ backgroundColor: displayColor }}></div>
                                                 )}
                                             </div>
-                                            <div className="min-w-0">
+                                            <div className="min-w-0 overflow-x-auto max-w-full">
                                                 {item.math ? (
                                                     /* @ts-ignore */
                                                     <math-field read-only style={{
@@ -288,6 +296,10 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                                                         border: 'none',
                                                         outline: 'none',
                                                         '--caret-color': 'transparent',
+                                                        display: 'inline-block',
+                                                        maxWidth: '100%',
+                                                        overflowX: 'auto',
+                                                        whiteSpace: 'nowrap',
                                                     }}>{item.label}</math-field>
                                                 ) : (
                                                     <span className="opacity-70 truncate block">{item.label}</span>

@@ -64,7 +64,13 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
             .replace(/\\limits/g, "")
             .replace(/\\differentialD/g, "d")
-            .replace(/\\mathrm\{d\}/g, "d")
+            // Handle various dx patterns from different input methods
+            .replace(/\\mathrm\{dx\}/g, "dx")  // \mathrm{dx} -> dx (sidebar insertion)
+            .replace(/\\mathrm\{d([a-zA-Z])\}/g, "d$1")  // \mathrm{dy}, \mathrm{dt} etc
+            .replace(/\\mathrm\{d\}/g, "d")  // \mathrm{d}x -> dx (virtual keyboard)
+            .replace(/\\text\{dx\}/g, "dx")  // \text{dx} -> dx
+            .replace(/\\text\{d\}/g, "d")  // \text{d}x -> dx
+            .replace(/\\operatorname\{d\}/g, "d")  // \operatorname{d}x -> dx
             .replace(/\\dfrac/g, "\\frac")
             .trim();
 
@@ -208,12 +214,22 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             // --- BRANCH B: Definite/Indefinite Integral ---
             if (!handled && clean.startsWith("\\int")) {
                 const bounds = parseBounds(4, clean);
-                const rest = clean.substring(bounds.end).trim();
-                const varMatch = rest.match(/(?:\\mathrm\{d\}|d)(\\[a-zA-Z]+|[a-zA-Z])$/);
+                // Clean thin spaces (\,) and other spacing before parsing - they're just formatting
+                let rest = clean.substring(bounds.end).trim()
+                    .replace(/\\,/g, '')
+                    .replace(/\\!/g, '')
+                    .replace(/\s+/g, ' ')  // Normalize multiple spaces to single
+                    .trim();
+                
+                // Match the differential at the end: d followed by variable (dx, dt, dy, etc.)
+                // After cleaning, \mathrm{d}x and \mathrm{dx} are already converted to dx
+                // So we just need to match: optional space, d, optional space, variable
+                const varMatch = rest.match(/\s?d\s?(\\?[a-zA-Z])$/);
 
                 if (varMatch) {
                     const rawVariable = varMatch[1];
-                    const dPattern = new RegExp(`(?:\\\\mathrm\\{d\\}|d)${rawVariable.replace('\\', '\\\\')}$`);
+                    // Build pattern to remove the differential from the expression
+                    const dPattern = new RegExp(`\\s?d\\s?${rawVariable.replace('\\', '\\\\')}$`);
                     const body = rest.replace(dPattern, '').trim();
 
                     if (bounds.min && bounds.max) {
