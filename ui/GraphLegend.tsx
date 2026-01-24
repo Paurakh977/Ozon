@@ -155,7 +155,12 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
         // ==========================================
         if (clean.startsWith("\\int")) {
             // Robust regex to capture integral bounds
-            const boundsRegex = /^\\int(?:_\{([^}]*)\}|_(-?[0-9a-zA-Z\\]+))?(?:\^\{([^}]*)\}|\^(-?[0-9a-zA-Z\\]+))?/;
+            // For bare bounds (without braces), only match:
+            // - Digits with optional minus sign: -?\d+
+            // - Single letter: [a-zA-Z]
+            // - LaTeX command: \\[a-zA-Z]+
+            // This prevents capturing part of the integrand (e.g., ^3x should only capture 3)
+            const boundsRegex = /^\\int(?:_\{([^}]*)\}|_(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?(?:\^\{([^}]*)\}|\^(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?/;
             const boundsMatch = clean.match(boundsRegex);
 
             // Extract and CLEAN bounds
@@ -172,6 +177,9 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
 
             // Extract differential variable
             let diffVar = 'x';
+            // Clean thin spaces (\,) from the body first - these are formatting only
+            body = body.replace(/\\,/g, '').trim();
+            
             const dMatch = body.match(/(?:\\mathrm\{d\}|d)(\\[a-zA-Z]+|[a-zA-Z])$/);
             if (dMatch) {
                 const rawVar = dMatch[1];

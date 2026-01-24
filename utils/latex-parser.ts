@@ -80,11 +80,16 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\log\b/g, 'log10');
 
     // Handle e^x -> exp(x)
+    // IMPORTANT: Handle e^{...} patterns AFTER ^{} -> ^() conversion
+    // So we now look for e^(...) patterns
     expr = expr
         .replace(/\\exp\s*\(([^)]+)\)/g, 'exp($1)')
         .replace(/\\exp\s*/g, 'exp')
+        // e^(...) where ... can be complex like (-2x), (-2*x), etc.
         .replace(/e\^\(([^)]+)\)/g, 'exp($1)')
-        .replace(/e\^([a-zA-Z0-9])/g, 'exp($1)');
+        // e^x (single character) - but not if followed by more alphanumeric
+        .replace(/e\^([a-zA-Z])(?![a-zA-Z0-9])/g, 'exp($1)')
+        .replace(/e\^(\d+)(?![a-zA-Z0-9])/g, 'exp($1)');
 
     // Remove remaining backslashes and clean up
     expr = expr

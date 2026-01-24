@@ -6,6 +6,56 @@ export const useGraphEngine = (resolvedTheme: string | undefined) => {
     const calculatorInstance = useRef<any>(null);
     const [libLoaded, setLibLoaded] = useState(false);
 
+    // Custom inline shortcuts for calculus operations
+    // These are defined outside useEffect to avoid recreation
+    const customInlineShortcuts = {
+        // ==========================================
+        // INTEGRAL SHORTCUTS
+        // ==========================================
+        // Indefinite integral with dx (no thin space - required for proper parsing)
+        'int': '\\int #?\\mathrm{d}x',
+        // Definite integral with bounds
+        'dint': '\\int_{#?}^{#?}#?\\mathrm{d}x',
+        
+        // ==========================================
+        // DERIVATIVE SHORTCUTS
+        // ==========================================
+        // First derivative with respect to x
+        'ddx': '\\frac{d}{dx}#?',
+        // First derivative with respect to y
+        'ddy': '\\frac{d}{dy}#?',
+        // Second derivative
+        'd2dx2': '\\frac{d^{2}}{dx^{2}}#?',
+        // nth derivative at a point (user specifies the order and evaluation point)
+        'dndxn': '\\frac{d^{#?}}{dx^{#?}}#?\\bigm|_{x=#?}',
+        // General derivative at a point: d/d? □|_{?=?}
+        'deriv': '\\frac{d}{d#?}#?\\bigm|_{#?=#?}',
+        
+        // ==========================================
+        // PARTIAL DERIVATIVE SHORTCUTS
+        // ==========================================
+        // Partial derivative with respect to x
+        'pdx': '\\frac{\\partial}{\\partial x}#?',
+        // Partial derivative with respect to y  
+        'pdy': '\\frac{\\partial}{\\partial y}#?',
+        
+        // ==========================================
+        // LIMIT SHORTCUTS
+        // ==========================================
+        // General limit: lim_{? → ?} □
+        'lim': '\\lim_{#?\\to #?}#?',
+        // Limit with x approaching something
+        'limx': '\\lim_{x\\to #?}#?',
+        
+        // ==========================================
+        // SUMMATION SHORTCUTS
+        // ==========================================
+        // General summation
+        'sum': '\\sum_{#?}^{#?}#?',
+        // Summation with n as index
+        'sumn': '\\sum_{n=#?}^{#?}#?',
+    };
+
     // 1. MathLive Configuration
     useEffect(() => {
         if (typeof window !== 'undefined') {
@@ -14,6 +64,16 @@ export const useGraphEngine = (resolvedTheme: string | undefined) => {
                 ml.MathfieldElement.fontsDirectory = "https://unpkg.com/mathlive@0.108.2/dist/fonts";
                 // @ts-ignore
                 ml.MathfieldElement.soundsDirectory = null;
+                
+                // Configure global inline shortcuts by extending the default shortcuts
+                // This ensures our calculus shortcuts work across all math-field elements
+                // @ts-ignore - MathfieldElement has inlineShortcuts property
+                const defaultShortcuts = ml.MathfieldElement.inlineShortcuts || {};
+                // @ts-ignore
+                ml.MathfieldElement.inlineShortcuts = {
+                    ...defaultShortcuts,
+                    ...customInlineShortcuts,
+                };
                 
                 // Use CSS-only approach to hide unwanted menu items
                 // This is safer and doesn't interfere with menu functionality

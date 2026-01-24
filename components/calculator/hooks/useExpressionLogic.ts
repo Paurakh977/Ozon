@@ -208,7 +208,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             // --- BRANCH B: Definite/Indefinite Integral ---
             if (!handled && clean.startsWith("\\int")) {
                 const bounds = parseBounds(4, clean);
-                const rest = clean.substring(bounds.end).trim();
+                // Clean thin spaces (\,) before parsing - they're just formatting
+                let rest = clean.substring(bounds.end).trim().replace(/\\,/g, '');
                 const varMatch = rest.match(/(?:\\mathrm\{d\}|d)(\\[a-zA-Z]+|[a-zA-Z])$/);
 
                 if (varMatch) {
