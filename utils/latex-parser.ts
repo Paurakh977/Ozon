@@ -26,6 +26,16 @@ export const latexToNerdamer = (latex: string): string => {
         // Handle pi
         .replace(/\\pi/g, 'pi');
 
+    // ==========================================
+    // IMPLICIT MULTIPLICATION HANDLING (Part 1)
+    // ==========================================
+    // Handle cases like: xe^{...} -> x*e^{...} BEFORE function processing
+    // This catches patterns like "xe^{-2x}" -> "x*e^{-2x}"
+    expr = expr.replace(/([a-zA-Z0-9])e\^/g, '$1*e^');
+    
+    // Variable followed by backslash command (like \sin, \ln): x\sin -> x*\sin
+    expr = expr.replace(/([a-zA-Z0-9])(\\[a-zA-Z]+)/g, '$1*$2');
+
     // Handle trig functions - nerdamer uses sin(x), cos(x), etc.
     expr = expr
         .replace(/\\sin\s*\(([^)]+)\)/g, 'sin($1)')
@@ -82,7 +92,64 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\s+/g, '')
         .trim();
 
-    return expr;
+    // ==========================================
+    // IMPLICIT MULTIPLICATION HANDLING (Part 2)
+    // ==========================================
+    // After all function names are converted, add implicit multiplication
+    const funcNames = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log', 'log10', 'exp', 'sqrt', 'abs', 'asin', 'acos', 'atan'];
+    
+    // Helper: Check if position is at end of a function name
+    const isEndOfFunction = (str: string, pos: number): boolean => {
+        for (const fn of funcNames) {
+            if (pos >= fn.length - 1) {
+                const start = pos - fn.length + 1;
+                if (str.substring(start, pos + 1) === fn) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    
+    // Build result with implicit multiplication
+    let result = '';
+    for (let i = 0; i < expr.length; i++) {
+        const char = expr[i];
+        const prevChar = i > 0 ? expr[i - 1] : '';
+        
+        // Check if we need to insert multiplication
+        if (char === '(' && i > 0) {
+            // Add * before ( if previous char is alphanumeric AND not part of function name
+            if (/[a-zA-Z0-9]/.test(prevChar) && !isEndOfFunction(expr, i - 1)) {
+                result += '*';
+            }
+        } else if (/[a-zA-Z]/.test(char) && i > 0) {
+            // Add * before variable if previous char is ) or digit
+            if (prevChar === ')') {
+                result += '*';
+            } else if (/\d/.test(prevChar)) {
+                result += '*';
+            }
+        } else if (/\d/.test(char) && i > 0 && prevChar === ')') {
+            // Add * after ) before number
+            result += '*';
+        } else if (char === '(' && i > 0 && prevChar === ')') {
+            // Add * between )( 
+            result += '*';
+        }
+        
+        result += char;
+    }
+    
+    // Clean up any double multiplication signs
+    result = result.replace(/\*\*/g, '*');
+    
+    // Remove any leading *
+    if (result.startsWith('*')) {
+        result = result.substring(1);
+    }
+
+    return result;
 };
 
 /**
