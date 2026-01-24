@@ -1,0 +1,21 @@
+[package]
+name = "fast_math_rs"
+version = "0.1.0"
+edition = "2021"
+description = "Fast numerical computation module for Python using Rust"
+
+[lib]
+name = "fast_math_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+numpy = "0.22"
+ndarray = "0.16"
+rayon = "1.10"
+num-traits = "0.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
