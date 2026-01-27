@@ -68,54 +68,107 @@ const invertColorForDarkMode = (color: string, isDark: boolean): string => {
     return `#${newR.toString(16).padStart(2, '0')}${newG.toString(16).padStart(2, '0')}${newB.toString(16).padStart(2, '0')}`;
 };
 
+/**
+ * Standardized LaTeX cleaning to remove artifacts and normalize for display/nerdamer
+ */
+const cleanLatexString = (rawLatex: string): string => {
+    let clean = rawLatex
+        // Global strip of formatting
+        .replace(/\\left/g, "")
+        .replace(/\\right/g, "")
+        .replace(/\\bigm/g, "")
+        .replace(/\\!/g, "")
+        .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
+        .replace(/\\limits/g, "")
+        .replace(/\\differentialD/g, "d")
+        .replace(/\\mathrm\{d\}/g, "d")
+        .replace(/\\dfrac/g, "\\frac")
+        .trim();
+
+    // Artifact cleaning (Critical Fix for () empty braces)
+    clean = clean
+        .replace(/([a-zA-Z0-9])\s*\(\s*\)/g, '$1') // func() -> func
+        .replace(/\s\(\s*\)/g, '') // " ()" -> ""
+        .replace(/^\(\s*\)\s*/g, '') // "() " at start -> ""
+        .replace(/\s*\(\s*\)$/g, ''); // " ()" at end -> ""
+
+    // Malformed \mathrm extraction
+    clean = clean
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
+        .replace(/\\mathrm\{([^}]+)d\}([a-zA-Z])$/g, '$1 d$2');
+
+    // Fix Logarithm bases
+    clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
+
+    // Normalize Trig Powers
+    clean = clean
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '\\$1^{$2}$3')
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}');
+    
+    return clean;
+};
+
+/**
+ * Extract definitions map from expressions, applying cleaning to bodies
+ */
+const getDefinitionsMap = (excludeLatex: string, expressions: MathExpression[]) => {
+    const definitions = new Map<string, { arg: string, body: string }>();
+    expressions.forEach(e => {
+        if (!e.latex || e.latex === excludeLatex) return;
+        
+        // Use basic strip for matching the definition structure
+        const norm = e.latex.replace(/\\left/g, '').replace(/\\right/g, '');
+        const match = norm.match(/^([a-zA-Z])\(([^)]+)\)\s*=\s*(.+)$/);
+        
+        if (match) {
+            // CRITICAL: Clean the body heavily to ensure it doesn't carry artifacts
+            const rawBody = match[3].trim();
+            const cleanBody = cleanLatexString(rawBody);
+            definitions.set(match[1], { arg: match[2].trim(), body: cleanBody });
+        }
+    });
+    return definitions;
+};
+
 export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpen, setLegendOpen, resolvedTheme }) => {
     const isDark = resolvedTheme === 'dark';
 
     const getLegendData = (rawLatex: string) => {
-        let clean = rawLatex
-            .replace(/\\bigm/g, "")
-            .replace(/\\!/g, "")
-            .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
-            .replace(/\\limits/g, "")
-            .replace(/\\differentialD/g, "d")
-            .replace(/\\mathrm\{d\}/g, "d")
-            .replace(/\\dfrac/g, "\\frac")
-            .trim();
+        // Use uniform cleaning
+        let clean = cleanLatexString(rawLatex);
 
         // ==========================================
-        // HANDLE MALFORMED \mathrm{} BLOCKS
+        //      FUNCTION SUBSTITUTION LOGIC
         // ==========================================
-        // Handle cases like \mathrm{\sin^2xd} where trig function is inside \mathrm{}
-        // Extract trig functions from inside \mathrm{} blocks
-        // Pattern: \mathrm{\sin^2xd} -> \sin^2x d (extract trig and separate d)
-        clean = clean
-            // \mathrm{\sin^nx d} or \mathrm{\sin^{n}x d} -> \sin^{n}x d
-            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
-            // \mathrm{\sinx d} -> \sin x d (no power)
-            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
-            // \mathrm{\sin(expr)d} -> \sin(expr) d
-            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
-            // Generic: \mathrm{content} where content has a trailing 'd' for differential
-            // \mathrm{...d} at end of integral body -> extract content + d
-            .replace(/\\mathrm\{([^}]+)d\}([a-zA-Z])$/g, '$1 d$2');
+        // Resolve references like f(x) -> sin(x) for symbolic computation
+        // This ensures derivatives/integrals work on the actual content
+        let substituted = clean;
+        try {
+            // Use shared definitions logic
+            const definitions = getDefinitionsMap(rawLatex, expressions);
 
-        // Fix Logarithm bases
-        clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
-
-        // ==========================================
-        // NORMALIZE TRIG^N NOTATION FOR DISPLAY
-        // ==========================================
-        // Convert \sin^2x to \sin^{2}x for consistent display
-        // Convert \sin^{2}x to (\sin x)^{2} for cleaner legend display
-        // This ensures the legend shows the full expression correctly
-        clean = clean
-            // First normalize unbraced powers: \sin^2x -> \sin^{2}x
-            .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '\\$1^{$2}$3')
-            // Then convert to explicit notation: \sin^{n}x -> (\sin x)^{n}
-            .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
-            // Also handle with parentheses: \sin^{n}(expr) -> (\sin(expr))^{n}
-            .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
-            .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}');
+            // Perform substitution
+            definitions.forEach((def, funcName) => {
+                // Look for funcName(arg) e.g. f(x)
+                
+                // Escape special regex chars in arguments just in case
+                const safeArg = def.arg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                
+                // Match f(x). Note backslashes are already stripped from 'clean'.
+                // Handle optional spaces.
+                const pattern = new RegExp(`${funcName}\\s*\\(\\s*${safeArg}\\s*\\)`, 'g');
+                
+                if (pattern.test(substituted)) {
+                    substituted = substituted.replace(pattern, `(${def.body})`);
+                }
+            });
+        } catch (e) {
+            console.warn("Substitution failed", e);
+        }
 
         // ==========================================
         //      DERIVATIVE PARSING WITH SYMBOLIC RESULT
@@ -130,27 +183,39 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
             // Extract the function being derived
             let content = derivMatch[6];
             
+            // Apply substitution to content specifically
+            let subContent = content;
+            
+            // Re-run subst logic just on content (using helper)
+            const definitions = getDefinitionsMap(rawLatex, expressions);
+            
+            definitions.forEach((def, funcName) => {
+                 const safeArg = def.arg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                 const pattern = new RegExp(`${funcName}\\s*\\(\\s*${safeArg}\\s*\\)`, 'g');
+                 subContent = subContent.replace(pattern, `(${def.body})`);
+            });
+
             // Handle evaluation point notation: |_{x=...} or \bigm|_{x=...}
-            const barIndex = content.lastIndexOf("|_{");
-            if (barIndex !== -1 && content.trim().endsWith("}")) {
-                content = content.substring(0, barIndex).trim();
+            const barIndex = subContent.lastIndexOf("|_{");
+            if (barIndex !== -1 && subContent.trim().endsWith("}")) {
+                subContent = subContent.substring(0, barIndex).trim();
             }
             
             // Also handle \placeholder{} that might be in evaluation expressions
-            content = content.replace(/\\placeholder\{[^}]*\}/g, '').trim();
+            subContent = subContent.replace(/\\placeholder\{[^}]*\}/g, '').trim();
 
-            // Clean up parent label
-            let parentLabel = content
+            // Clean up parent label (Use substituted version for display as requested by user)
+            let parentLabel = subContent
                 .replace(/\\left\s*/g, '')
                 .replace(/\\right\s*/g, '')
                 .trim();
 
-            if (parentLabel.length > 30) {
-                parentLabel = `f(${variable})`;
+            if (parentLabel.length > 50) { // Increased length allowance
+                parentLabel = content.includes('f') || content.includes('g') ? content : `f(${variable})`;
             }
 
             // Compute symbolic derivative using nerdamer
-            const symbolicResult = computeSymbolicDerivative(content, variable, order);
+            const symbolicResult = computeSymbolicDerivative(subContent, variable, order);
 
             // Build the result label with proper order indication
             let resultLabel: string;
@@ -177,8 +242,8 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
             }
 
             return [
-                { type: 'dotted', label: parentLabel, math: true, description: 'Parent Function' },
-                { type: 'solid', label: resultLabel, math: true, description: symbolicResult ? `${orderLabel} = Result` : 'Derivative' }
+                { type: 'dotted', label: parentLabel, math: true, description: 'Parent Function (Resolved)' },
+                { type: 'solid', label: resultLabel, math: true, description: symbolicResult ? `Derivative` : 'Derivative' }
             ];
         }
 
@@ -222,6 +287,16 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
 
             let cleanBody = body.replace(/\\left\s*/g, '').replace(/\\right\s*/g, '').trim();
 
+            // Apply substitution to Integral body
+            // Use helper
+            const definitions = getDefinitionsMap(rawLatex, expressions);
+            
+            definitions.forEach((def, funcName) => {
+                 const safeArg = def.arg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                 const pattern = new RegExp(`${funcName}\\s*\\(\\s*${safeArg}\\s*\\)`, 'g');
+                 cleanBody = cleanBody.replace(pattern, `(${def.body})`);
+            });
+
             if (cleanBody.startsWith('(') && cleanBody.endsWith(')')) {
                 let depth = 0;
                 let isOuter = true;
@@ -238,7 +313,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                 }
             }
 
-            const parentLabel = cleanBody.length > 25 ? `f(${diffVar})` : cleanBody;
+            const parentLabel = cleanBody; // Show full substituted body
             const symbolicIntegral = computeSymbolicIntegral(cleanBody, diffVar);
 
             if (hasBounds) {
@@ -271,7 +346,13 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
             }
         }
 
-        return [{ type: 'solid', label: clean, math: true }];
+        // If it's a definition like f(x)=..., show it as is.
+        if (clean.includes('=')) {
+           return [{ type: 'solid', label: clean, math: true }];
+        }
+        
+        // Return substituted version for expressions to show "Evaluated" form.
+        return [{ type: 'solid', label: substituted, math: true }];
     };
 
     return (

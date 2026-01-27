@@ -7,6 +7,9 @@ export const latexToNerdamer = (latex: string): string => {
         // Remove LaTeX formatting first
         .replace(/\\left\s*/g, '')
         .replace(/\\right\s*/g, '')
+        // Clean empty parentheses artifacts
+        .replace(/([a-zA-Z0-9])\s*\(\s*\)/g, '$1')
+        .replace(/\(\s*\)/g, '')
         .replace(/\\cdot/g, '*')
         .replace(/\\times/g, '*')
         // Handle fractions: \frac{a}{b} -> (a)/(b)
@@ -86,6 +89,14 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\cot\s+([a-zA-Z])/g, 'cot($1)')
         .replace(/\\sec\s+([a-zA-Z])/g, 'sec($1)')
         .replace(/\\csc\s+([a-zA-Z])/g, 'csc($1)')
+        // Handle trig where the argument might not be separated by space (common in substitutions)
+        // e.g. \sin(x) -> sin(x)
+        .replace(/\\sin(\(|\[)/g, 'sin$1')
+        .replace(/\\cos(\(|\[)/g, 'cos$1')
+        .replace(/\\tan(\(|\[)/g, 'tan$1')
+        .replace(/\\cot(\(|\[)/g, 'cot$1')
+        .replace(/\\sec(\(|\[)/g, 'sec$1')
+        .replace(/\\csc(\(|\[)/g, 'csc$1')
         // Handle remaining \sin, \cos etc followed by variable
         .replace(/\\(sin|cos|tan|cot|sec|csc)([a-zA-Z])/g, '$1($2)')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\s*/g, '$1');

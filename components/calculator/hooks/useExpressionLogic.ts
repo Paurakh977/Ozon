@@ -510,10 +510,21 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // --- 4. Result Calculation (Universal Helper) ---
         // Only create helper if NO free variables (like x, y) are present
         // This prevents creating helpers for things like "f(x)" which might conflict with the function definition itself
-        const hasFreeVars = /[a-zA-Z]/.test(clean.replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta)/g, ''));
+        
+        // Fix: Robustly check for free variables by stripping LaTeX commands and common functions
+        // This ensures operators like \cdot dont trigger variable detection
+        const checkStr = clean
+            .replace(/\\[a-zA-Z]+/g, '') 
+            .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
+        
+        const hasFreeVars = /[a-zA-Z]/.test(checkStr);
         const isDefinition = clean.includes('=');
         
-        if (!isDefinition && !hasFreeVars) {        
+        // Fix: If we handled the expression specially (summation, integral, etc.) and assigned a helper variable,
+        // we should observe it regardless of free variables in the original string.
+        const shouldObserve = (handled && helperLatex !== clean) || (!isDefinition && !hasFreeVars);
+
+        if (shouldObserve) {        
             try {
                 const helper = Calc.HelperExpression({ latex: helperLatex });
                 helpersRef.current[safeId] = helper;
