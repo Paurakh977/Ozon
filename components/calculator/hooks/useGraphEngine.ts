@@ -172,6 +172,13 @@ export const useGraphEngine = (resolvedTheme: string | undefined) => {
             border: false,
         });
 
+        // Clear any stale state from previous sessions
+        // This prevents "defined in more than one place" errors
+        calculatorInstance.current.setBlank();
+
+        // Expose for debugging
+        (window as any).DesmosCalc = calculatorInstance.current;
+
         // We can't init expressions here easily because they are in the other hook.
         // The other hook should handle initial processing if needed, 
         // or we rely on useEffect there.

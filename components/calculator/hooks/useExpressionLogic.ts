@@ -36,7 +36,6 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
         // 2. Clear All Associated Expressions
         const cleanupList = [
-            id,
             `curve-${safeId}`, `shade-${safeId}`,
             `val-${safeId}`, `func-${safeId}`, `label-${safeId}`,
             `funcD-${safeId}`,
@@ -53,6 +52,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
         if (!rawLatex.trim()) {
             setExpressions(prev => prev.map(e => e.id === id ? { ...e, result: undefined } : e));
+            Calc.removeExpression({ id: id });
             return;
         }
 
@@ -74,8 +74,37 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\dfrac/g, "\\frac")
             .trim();
 
-        // Fix Logarithm bases: \log_5 10 -> \log_{5} 10
+        // Fix Logarithm bases: \log_5 10 -> \log_{$1} 10
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
+
+        // ==========================================
+        // NORMALIZE ROUND PARENTHESES FOR DESMOS
+        // ==========================================
+        // Desmos handles both \left(...\right) and plain (...) parentheses
+        // MathLive often outputs \left(...\right) for everything
+        // For user-defined functions like f(x), g(x), Desmos works better with plain ()
+        // We normalize \left( and \right) to plain parentheses
+        // This ensures expressions like f(x)+g(x) work correctly
+        // Built-in functions like \sin(x) work fine with plain parentheses too
+        // NOTE: Only convert round parentheses, preserve \left[, \left|, \left\{ etc
+        clean = clean
+            .replace(/\\left\(/g, '(')
+            .replace(/\\right\)/g, ')');
+
+        // ==========================================
+        // HANDLE MALFORMED \mathrm{} BLOCKS
+        // ==========================================
+        // Handle cases like \mathrm{\sin^2xd} where trig function is inside \mathrm{}
+        // Extract trig functions from inside \mathrm{} blocks
+        clean = clean
+            // \mathrm{\sin^nx d} or \mathrm{\sin^{n}x d} -> \sin^{n}x d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
+            // \mathrm{\sinx d} -> \sin x d (no power)
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
+            // \mathrm{\sin(expr)d} -> \sin(expr) d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
+            // Generic fallback: remove remaining \mathrm{} wrappers
+            .replace(/\\mathrm\{([^}]+)\}/g, '$1');
 
         // ========================================
         // ABSOLUTE VALUE NORMALIZATION (Comprehensive)
@@ -437,6 +466,32 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                 finalLatex = finalLatex.replace(/d[x-z]$/, "");
             }
 
+            // ==========================================
+            // AUTO-GRAPH EXPRESSIONS THAT NEED y=
+            // ==========================================
+            // In Desmos API, expressions like "f(x)+2" or "sin(x)" need "y=" prefix to be graphed
+            // But definitions like "f(x)=x^2" or "a=5" should NOT get the prefix
+            // Check if expression:
+            // 1. Contains x (or is a function of x)
+            // 2. Does NOT contain = (not a definition/assignment)
+            // 3. Is not just a number
+            const hasEquals = finalLatex.includes('=');
+            const hasX = /[^a-zA-Z]x[^a-zA-Z]|^x[^a-zA-Z]|[^a-zA-Z]x$|^x$/.test(finalLatex) || 
+                         finalLatex.includes('(x)');  // Function calls like f(x), g(x), sin(x)
+            const isJustNumber = /^-?\d+\.?\d*$/.test(finalLatex.trim());
+            
+            // If it's an expression with x but no equals sign, add y= to make it graph
+            if (!hasEquals && hasX && !isJustNumber) {
+                finalLatex = `y=${finalLatex}`;
+                console.log(`[DEBUG] Added y= prefix: "${finalLatex}"`);
+            }
+
+            console.log(`[DEBUG] Setting expression id=${id}, latex="${finalLatex}"`);
+
+            // FORCE REMOVAL: Clean up the expression ID before setting it again.
+            // This clears any "defined in more than one place" errors that might be stuck.
+            Calc.removeExpression({ id: id });
+            
             Calc.setExpression({
                 id: id,
                 latex: finalLatex,
@@ -444,31 +499,55 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                 showLabel: true,
                 hidden: visibilityMode === 'none' || !visible
             });
+            
+            // Debug: Show all expressions in Desmos right now
+            setTimeout(() => {
+                const allExprs = Calc.getExpressions();
+                console.log('[DEBUG] Current Desmos state:', allExprs.map((e: any) => `${e.id}: ${e.latex}`));
+            }, 100);
         }
 
         // --- 4. Result Calculation (Universal Helper) ---
-        try {
-            const helper = Calc.HelperExpression({ latex: helperLatex });
-            helpersRef.current[safeId] = helper;
+        // Only create helper if NO free variables (like x, y) are present
+        // This prevents creating helpers for things like "f(x)" which might conflict with the function definition itself
+        
+        // Fix: Robustly check for free variables by stripping LaTeX commands and common functions
+        // This ensures operators like \cdot dont trigger variable detection
+        const checkStr = clean
+            .replace(/\\[a-zA-Z]+/g, '') 
+            .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
+        
+        const hasFreeVars = /[a-zA-Z]/.test(checkStr);
+        const isDefinition = clean.includes('=');
+        
+        // Fix: If we handled the expression specially (summation, integral, etc.) and assigned a helper variable,
+        // we should observe it regardless of free variables in the original string.
+        const shouldObserve = (handled && helperLatex !== clean) || (!isDefinition && !hasFreeVars);
 
-            helper.observe('numericValue', () => {
-                const val = helper.numericValue;
-                setExpressions(prev => prev.map(e => {
-                    if (e.id === id) {
-                        if (val !== undefined && !isNaN(val) && isFinite(val)) {
-                            const display = Math.abs(val) < 1e-10 ? "0" :
-                                Math.abs(val) > 1e10 ? val.toExponential(4) :
-                                    parseFloat(val.toFixed(6)).toString();
-                            return { ...e, result: display };
-                        } else {
-                            return { ...e, result: undefined };
+        if (shouldObserve) {        
+            try {
+                const helper = Calc.HelperExpression({ latex: helperLatex });
+                helpersRef.current[safeId] = helper;
+
+                helper.observe('numericValue', () => {
+                    const val = helper.numericValue;
+                    setExpressions(prev => prev.map(e => {
+                        if (e.id === id) {
+                            if (val !== undefined && !isNaN(val) && isFinite(val)) {
+                                const display = Math.abs(val) < 1e-10 ? "0" :
+                                    Math.abs(val) > 1e10 ? val.toExponential(4) :
+                                        parseFloat(val.toFixed(6)).toString();
+                                return { ...e, result: display };
+                            } else {
+                                return { ...e, result: undefined };
+                            }
                         }
-                    }
-                    return e;
-                }));
-            });
-        } catch (e) {
-            console.warn("Helper creation failed", e);
+                        return e;
+                    }));
+                });
+            } catch (e) {
+                console.warn("Helper creation failed", e);
+            }
         }
     };
 
