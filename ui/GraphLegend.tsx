@@ -86,6 +86,21 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
         // ==========================================
+        // NORMALIZE TRIG^N NOTATION FOR DISPLAY
+        // ==========================================
+        // Convert \sin^2x to \sin^{2}x for consistent display
+        // Convert \sin^{2}x to (\sin x)^{2} for cleaner legend display
+        // This ensures the legend shows the full expression correctly
+        clean = clean
+            // First normalize unbraced powers: \sin^2x -> \sin^{2}x
+            .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '\\$1^{$2}$3')
+            // Then convert to explicit notation: \sin^{n}x -> (\sin x)^{n}
+            .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
+            // Also handle with parentheses: \sin^{n}(expr) -> (\sin(expr))^{n}
+            .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
+            .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}');
+
+        // ==========================================
         //      DERIVATIVE PARSING WITH SYMBOLIC RESULT
         // ==========================================
         // Updated regex to handle spaces like "d x" instead of "dx" and various derivative notations

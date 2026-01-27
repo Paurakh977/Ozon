@@ -36,6 +36,23 @@ export const latexToNerdamer = (latex: string): string => {
     // Variable followed by backslash command (like \sin, \ln): x\sin -> x*\sin
     expr = expr.replace(/([a-zA-Z0-9])(\\[a-zA-Z]+)/g, '$1*$2');
 
+    // ==========================================
+    // TRIG FUNCTION WITH POWER BEFORE ARGUMENT (e.g., \sin^2x)
+    // ==========================================
+    // CRITICAL: Handle \sin^2x, \cos^{3}y patterns BEFORE other trig handling
+    // \sin^2x means (sin(x))^2, not sin(x^2)
+    // \sin^{2}x also means (sin(x))^2
+    // Handle both braced and unbraced power formats
+    expr = expr
+        // \sin^{n}x -> (sin(x))^(n) - braced power with variable
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '($1($3))^($2)')
+        // \sin^nx -> (sin(x))^n - unbraced single/multi digit power with variable
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '($1($3))^$2')
+        // \sin^{n}(expr) -> (sin(expr))^(n) - braced power with parenthesized argument
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '($1($3))^($2)')
+        // \sin^n(expr) -> (sin(expr))^n - unbraced power with parenthesized argument
+        .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '($1($3))^$2');
+
     // Handle trig functions - nerdamer uses sin(x), cos(x), etc.
     expr = expr
         .replace(/\\sin\s*\(([^)]+)\)/g, 'sin($1)')
