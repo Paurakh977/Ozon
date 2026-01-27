@@ -77,6 +77,21 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // Fix Logarithm bases: \log_5 10 -> \log_{5} 10
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
+        // ==========================================
+        // HANDLE MALFORMED \mathrm{} BLOCKS
+        // ==========================================
+        // Handle cases like \mathrm{\sin^2xd} where trig function is inside \mathrm{}
+        // Extract trig functions from inside \mathrm{} blocks
+        clean = clean
+            // \mathrm{\sin^nx d} or \mathrm{\sin^{n}x d} -> \sin^{n}x d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
+            // \mathrm{\sinx d} -> \sin x d (no power)
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
+            // \mathrm{\sin(expr)d} -> \sin(expr) d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
+            // Generic fallback: remove remaining \mathrm{} wrappers
+            .replace(/\\mathrm\{([^}]+)\}/g, '$1');
+
         // ========================================
         // ABSOLUTE VALUE NORMALIZATION (Comprehensive)
         // ========================================

@@ -37,6 +37,21 @@ export const latexToNerdamer = (latex: string): string => {
     expr = expr.replace(/([a-zA-Z0-9])(\\[a-zA-Z]+)/g, '$1*$2');
 
     // ==========================================
+    // HANDLE MALFORMED \mathrm{} BLOCKS
+    // ==========================================
+    // Handle cases like \mathrm{\sin^2xd} where trig function is inside \mathrm{}
+    // Extract trig functions from inside \mathrm{} blocks before normal processing
+    expr = expr
+        // \mathrm{\sin^nx d} or \mathrm{\sin^{n}x d} -> \sin^{n}x d
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
+        // \mathrm{\sinx d} -> \sin x d (no power)
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
+        // \mathrm{\sin(expr)d} -> \sin(expr) d
+        .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
+        // Generic fallback: remove \mathrm{} wrapper but keep content
+        .replace(/\\mathrm\{([^}]+)\}/g, '$1');
+
+    // ==========================================
     // TRIG FUNCTION WITH POWER BEFORE ARGUMENT (e.g., \sin^2x)
     // ==========================================
     // CRITICAL: Handle \sin^2x, \cos^{3}y patterns BEFORE other trig handling

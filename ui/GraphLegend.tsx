@@ -82,6 +82,23 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
             .replace(/\\dfrac/g, "\\frac")
             .trim();
 
+        // ==========================================
+        // HANDLE MALFORMED \mathrm{} BLOCKS
+        // ==========================================
+        // Handle cases like \mathrm{\sin^2xd} where trig function is inside \mathrm{}
+        // Extract trig functions from inside \mathrm{} blocks
+        // Pattern: \mathrm{\sin^2xd} -> \sin^2x d (extract trig and separate d)
+        clean = clean
+            // \mathrm{\sin^nx d} or \mathrm{\sin^{n}x d} -> \sin^{n}x d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
+            // \mathrm{\sinx d} -> \sin x d (no power)
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
+            // \mathrm{\sin(expr)d} -> \sin(expr) d
+            .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
+            // Generic: \mathrm{content} where content has a trailing 'd' for differential
+            // \mathrm{...d} at end of integral body -> extract content + d
+            .replace(/\\mathrm\{([^}]+)d\}([a-zA-Z])$/g, '$1 d$2');
+
         // Fix Logarithm bases
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
