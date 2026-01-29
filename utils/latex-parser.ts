@@ -11,10 +11,90 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/([a-zA-Z0-9])\s*\(\s*\)/g, '$1')
         .replace(/\(\s*\)/g, '')
         .replace(/\\cdot/g, '*')
-        .replace(/\\times/g, '*')
-        // Handle fractions: \frac{a}{b} -> (a)/(b)
-        // Need to handle nested braces properly
-        .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, '($1)/($2)')
+        .replace(/\\times/g, '*');
+
+    // ==========================================
+    // ROBUST FRACTION HANDLING
+    // ==========================================
+    // Handle \frac{a}{b}, \frac12, \frac1{2} etc.
+    while (expr.includes('\\frac')) {
+        const match = expr.match(/\\frac/);
+        if (!match || match.index === undefined) break;
+        const start = match.index;
+        
+        // Parse Numerator
+        let numStart = start + 5; // length of \frac
+        while (numStart < expr.length && /\s/.test(expr[numStart])) numStart++;
+        
+        let numEnd = numStart;
+        let numerator = '';
+        
+        if (numStart < expr.length) {
+             if (expr[numStart] === '{') {
+                 // Block
+                 let depth = 1;
+                 numEnd = numStart + 1;
+                 while (numEnd < expr.length && depth > 0) {
+                     if (expr[numEnd] === '{') depth++;
+                     else if (expr[numEnd] === '}') depth--;
+                     numEnd++;
+                 }
+                 numerator = numEnd > expr.length ? expr.substring(numStart + 1) : expr.substring(numStart + 1, numEnd - 1);
+             } else if (expr[numStart] === '\\') {
+                 // Command e.g. \pi or \sin
+                 const cmdMatch = expr.substring(numStart).match(/^(\\[a-zA-Z]+)/);
+                 if (cmdMatch) {
+                     numerator = cmdMatch[1];
+                     numEnd = numStart + cmdMatch[1].length;
+                 } else {
+                     numerator = expr[numStart] + (expr[numStart+1] || '');
+                     numEnd = numStart + 2;
+                 }
+             } else {
+                 // Single char
+                 numerator = expr[numStart];
+                 numEnd = numStart + 1;
+             }
+        }
+
+        // Parse Denominator
+        let denStart = numEnd;
+        while (denStart < expr.length && /\s/.test(expr[denStart])) denStart++;
+        
+        let denEnd = denStart;
+        let denominator = '';
+        
+        if (denStart < expr.length) {
+             if (expr[denStart] === '{') {
+                 let depth = 1;
+                 denEnd = denStart + 1;
+                 while (denEnd < expr.length && depth > 0) {
+                     if (expr[denEnd] === '{') depth++;
+                     else if (expr[denEnd] === '}') depth--;
+                     denEnd++;
+                 }
+                 denominator = denEnd > expr.length ? expr.substring(denStart + 1) : expr.substring(denStart + 1, denEnd - 1);
+             } else if (expr[denStart] === '\\') {
+                 const cmdMatch = expr.substring(denStart).match(/^(\\[a-zA-Z]+)/);
+                 if (cmdMatch) {
+                     denominator = cmdMatch[1];
+                     denEnd = denStart + cmdMatch[1].length;
+                 } else {
+                     denominator = expr[denStart] + (expr[denStart+1] || '');
+                     denEnd = denStart + 2;
+                 }
+             } else {
+                 denominator = expr[denStart];
+                 denEnd = denStart + 1;
+             }
+        }
+        
+        const before = expr.substring(0, start);
+        const after = expr.substring(denEnd);
+        expr = before + `(${numerator})/(${denominator})` + after;
+    }
+
+    expr = expr
         // Handle sqrt: \sqrt{x} -> sqrt(x)
         .replace(/\\sqrt\s*\{([^{}]*)\}/g, 'sqrt($1)')
         // Handle nth root: \sqrt[n]{x} -> x^(1/n)
