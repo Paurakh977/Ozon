@@ -170,6 +170,7 @@ export const useGraphEngine = (resolvedTheme: string | undefined) => {
             zoomButtons: true,
             invertedColors: resolvedTheme === 'dark',
             border: false,
+            sliders: true,
         });
 
         // Clear any stale state from previous sessions

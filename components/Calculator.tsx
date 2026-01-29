@@ -26,7 +26,9 @@ export function Calculator() {
         addExpr,
         removeExpr,
         toggleVisibility,
-        setVisibilityMode
+        setVisibilityMode,
+        updateSliderBounds,
+        setExpressionPlaying
     } = useExpressionLogic(calculatorInstance);
 
     if (!libLoaded) return <div className="h-screen w-full flex items-center justify-center font-mono">Loading Engine...</div>;
@@ -41,7 +43,7 @@ export function Calculator() {
             />
 
             <div className="flex-1 flex overflow-hidden">
-                <div className={`flex flex-col border-r bg-card z-10 shadow-lg transition-all duration-300 ease-in-out relative ${sidebarOpen ? 'w-[400px] translate-x-0' : 'w-0 border-r-0 -translate-x-full opacity-0 overflow-hidden'}`}>
+                <div className={`flex flex-col border-r bg-card z-10 shadow-lg transition-all duration-300 ease-in-out relative ${sidebarOpen ? 'w-full sm:w-[400px] translate-x-0' : 'w-0 border-r-0 -translate-x-full opacity-0 overflow-hidden'}`}>
                     <Sidebar
                         expressions={expressions}
                         handleColorChange={handleColorChange}
@@ -50,6 +52,8 @@ export function Calculator() {
                         addExpr={addExpr}
                         toggleVisibility={toggleVisibility}
                         setVisibilityMode={setVisibilityMode}
+                        updateSliderBounds={updateSliderBounds}
+                        setExpressionPlaying={setExpressionPlaying}
                         debugInfo={debugInfo}
                         resolvedTheme={resolvedTheme}
                     />

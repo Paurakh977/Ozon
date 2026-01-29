@@ -118,7 +118,7 @@ const cleanLatexString = (rawLatex: string): string => {
 const getDefinitionsMap = (excludeLatex: string, expressions: MathExpression[]) => {
     const definitions = new Map<string, { arg: string, body: string }>();
     expressions.forEach(e => {
-        if (!e.latex || e.latex === excludeLatex) return;
+        if (!e.latex || typeof e.latex !== 'string' || e.latex === excludeLatex) return;
         
         // Use basic strip for matching the definition structure
         const norm = e.latex.replace(/\\left/g, '').replace(/\\right/g, '');
@@ -251,18 +251,85 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
         //      INTEGRAL PARSING WITH SYMBOLIC RESULT
         // ==========================================
         if (clean.startsWith("\\int")) {
-            // Robust regex to capture integral bounds
-            // For bare bounds (without braces), only match:
-            // - Digits with optional minus sign: -?\d+
-            // - Single letter: [a-zA-Z]
-            // - LaTeX command: \\[a-zA-Z]+
-            // This prevents capturing part of the integrand (e.g., ^3x should only capture 3)
-            const boundsRegex = /^\\int(?:_\{([^}]*)\}|_(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?(?:\^\{([^}]*)\}|\^(-?\d+|[a-zA-Z]|\\[a-zA-Z]+))?/;
-            const boundsMatch = clean.match(boundsRegex);
+            // Helper to handle nested braces for bounds like \frac{...}
+            const parseBounds = (str: string) => {
+                let index = 4; // Skip \int
+                let lower: string | null = null;
+                let upper: string | null = null;
+                
+                const consumeSpaces = () => {
+                    while (index < str.length && /\s/.test(str[index])) index++;
+                };
 
-            // Extract and CLEAN bounds
-            let lowerBound = boundsMatch ? (boundsMatch[1] ?? boundsMatch[2] ?? null) : null;
-            let upperBound = boundsMatch ? (boundsMatch[3] ?? boundsMatch[4] ?? null) : null;
+                // Check for lower bound _
+                consumeSpaces();
+                if (index < str.length && str[index] === '_') {
+                    index++; // skip _
+                    consumeSpaces();
+                    if (index < str.length && str[index] === '{') {
+                        // Find matching brace
+                        let depth = 1;
+                        let start = index + 1;
+                        let end = start;
+                        while (end < str.length && depth > 0) {
+                            if (str[end] === '{') depth++;
+                            else if (str[end] === '}') depth--;
+                            end++;
+                        }
+                        if (depth === 0) {
+                            lower = str.substring(start, end - 1);
+                            index = end;
+                        } else {
+                            lower = str.substring(start);
+                            index = str.length;
+                        }
+                    } else {
+                        // Single token: digit, char, or command
+                        const tokenMatch = str.substring(index).match(/^(-?\d+|[a-zA-Z]|\\[a-zA-Z]+)/);
+                        if (tokenMatch) {
+                            lower = tokenMatch[1];
+                            index += tokenMatch[0].length;
+                        }
+                    }
+                }
+
+                // Check for upper bound ^
+                consumeSpaces();
+                if (index < str.length && str[index] === '^') {
+                    index++; // skip ^
+                    consumeSpaces();
+                    if (index < str.length && str[index] === '{') {
+                        let depth = 1;
+                        let start = index + 1;
+                        let end = start;
+                        while (end < str.length && depth > 0) {
+                            if (str[end] === '{') depth++;
+                            else if (str[end] === '}') depth--;
+                            end++;
+                        }
+                        if (depth === 0) {
+                            upper = str.substring(start, end - 1);
+                            index = end;
+                        } else {
+                            upper = str.substring(start);
+                            index = str.length;
+                        }
+                    } else {
+                        const tokenMatch = str.substring(index).match(/^(-?\d+|[a-zA-Z]|\\[a-zA-Z]+)/);
+                        if (tokenMatch) {
+                            upper = tokenMatch[1];
+                            index += tokenMatch[0].length;
+                        }
+                    }
+                }
+
+                return { lower, upper, bodyStartIndex: index };
+            };
+
+            const { lower: rawLower, upper: rawUpper, bodyStartIndex } = parseBounds(clean);
+            
+            let lowerBound = rawLower;
+            let upperBound = rawUpper;
 
             if (lowerBound) lowerBound = lowerBound.replace(/\\left\s*/g, '').replace(/\\right\s*/g, '').trim();
             if (upperBound) upperBound = upperBound.replace(/\\left\s*/g, '').replace(/\\right\s*/g, '').trim();
@@ -270,7 +337,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
             const hasBounds = lowerBound !== null && upperBound !== null;
 
             // Extract body
-            let body = boundsMatch ? clean.substring(boundsMatch[0].length).trim() : clean.substring(4).trim();
+            let body = clean.substring(bodyStartIndex).trim();
 
             // Extract differential variable
             let diffVar = 'x';
@@ -356,7 +423,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
     };
 
     return (
-        <div className={`absolute top-4 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] min-w-[220px] max-w-[400px] w-auto' : 'w-auto h-auto'}`}>
+        <div className={`absolute top-4 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] min-w-[220px] max-w-[calc(100vw-2rem)] sm:max-w-[400px] md:max-w-[600px] lg:max-w-[300px] w-auto' : 'w-auto h-auto'}`}>
             <div
                 className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 border-b border-border/50"
                 onClick={() => setLegendOpen(!legendOpen)}
@@ -373,7 +440,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
 
             {legendOpen && (
                 <div className="p-3 pt-2 overflow-y-auto space-y-4">
-                    {expressions.filter(e => e.latex.trim()).map((expr, i) => {
+                    {expressions.filter(e => e.latex && typeof e.latex === 'string' && e.latex.trim().length > 0).map((expr, i) => {
                         const items = getLegendData(expr.latex);
                         // Apply color inversion for dark mode to match Desmos graph colors
                         const displayColor = invertColorForDarkMode(expr.color, isDark);
@@ -397,22 +464,22 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                                                     <div className="w-full h-3 rounded-[2px] opacity-40 border border-transparent" style={{ backgroundColor: displayColor }}></div>
                                                 )}
                                             </div>
-                                            <div className="min-w-0 overflow-x-auto max-w-full">
+                                            <div className="min-w-0 overflow-x-auto max-w-full scrollbar-none" style={{ WebkitOverflowScrolling: 'touch' }}>
                                                 {item.math ? (
                                                     /* @ts-ignore */
                                                     <math-field read-only style={{
                                                         fontSize: '0.85rem',
                                                         backgroundColor: 'transparent',
                                                         color: 'inherit',
-                                                        padding: 0,
+                                                        padding: '4px 0',
                                                         margin: 0,
                                                         border: 'none',
                                                         outline: 'none',
                                                         '--caret-color': 'transparent',
                                                         display: 'inline-block',
-                                                        maxWidth: '100%',
-                                                        overflowX: 'auto',
-                                                        whiteSpace: 'nowrap',
+                                                        minWidth: '100%',
+                                                        width: 'fit-content',
+                                                        overflowX: 'hidden',
                                                     }}>{item.label}</math-field>
                                                 ) : (
                                                     <span className="opacity-70 truncate block">{item.label}</span>
@@ -425,7 +492,7 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
                         );
                     })}
 
-                    {expressions.every(e => !e.latex.trim()) && (
+                    {expressions.every(e => !e.latex || typeof e.latex !== 'string' || !e.latex.trim()) && (
                         <div className="text-muted-foreground italic text-center py-2 opacity-50">No graphs active</div>
                     )}
                 </div>

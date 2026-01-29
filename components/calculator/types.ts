@@ -32,4 +32,7 @@ export interface MathExpression {
     color: string;
     visible: boolean; // Simple show/hide for basic expressions
     visibilityMode: VisibilityMode; // Granular control for multi-curve expressions
+    missingVariables?: string[];
+    sliderBounds?: { min: string; max: string; step: string };
+    isPlaying?: boolean;
 }

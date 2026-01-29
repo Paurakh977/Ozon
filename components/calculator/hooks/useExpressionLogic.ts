@@ -22,7 +22,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     // ==========================================
     //      THE LOGIC: SMART TRANSFORMER
     // ==========================================
-    const processExpression = (id: string, rawLatex: string, color: string, visible: boolean = true, visibilityMode: VisibilityMode = 'all') => {
+    const processExpression = (id: string, rawLatex: string, color: string, visible: boolean = true, visibilityMode: VisibilityMode = 'all', sliderBounds?: { min: string, max: string, step: string }) => {
         // CRITICAL: Skip if visibility update is in progress
         if (visibilityUpdateInProgress.current.has(id)) {
             return;
@@ -50,7 +50,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             delete helpersRef.current[safeId];
         }
 
-        if (!rawLatex.trim()) {
+        if (!rawLatex || typeof rawLatex !== 'string' || !rawLatex.trim()) {
             setExpressions(prev => prev.map(e => e.id === id ? { ...e, result: undefined } : e));
             Calc.removeExpression({ id: id });
             return;
@@ -497,7 +497,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                 latex: finalLatex,
                 color: color,
                 showLabel: true,
-                hidden: visibilityMode === 'none' || !visible
+                hidden: visibilityMode === 'none' || !visible,
+                ...(sliderBounds ? { sliderBounds } : {})
             });
             
             // Debug: Show all expressions in Desmos right now
@@ -507,26 +508,122 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             }, 100);
         }
 
-        // --- 4. Result Calculation (Universal Helper) ---
-        // Only create helper if NO free variables (like x, y) are present
-        // This prevents creating helpers for things like "f(x)" which might conflict with the function definition itself
+        // --- 4. Result Calculation & Variable Detection (Universal Helper) ---
         
-        // Fix: Robustly check for free variables by stripping LaTeX commands and common functions
-        // This ensures operators like \cdot dont trigger variable detection
+        // Helper to extract variables from latex
+        const extractVariables = (latex: string): string[] => {
+             // Remove differentials (dx, dy, dt) first
+             let s = latex.replace(/d[xyt\u03b8]/g, '');
+             
+             // Remove commands
+             s = s.replace(/\\[a-zA-Z]+/g, '');
+             // Remove known constants and functions
+             s = s.replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
+             // Remove independent variables that don't need sliders
+             // Note: x, y, r, t are context variables usually
+             s = s.replace(/(x|y|r|t)/g, '');
+             
+             // Find remaining single letters
+             const matches = s.match(/[a-zA-Z]/g);
+             return matches ? Array.from(new Set(matches)) : [];
+        };
+
+        const usedVars = extractVariables(clean);
+        
+        // Find undefined variables
+        const existingExprs = Calc.getExpressions();
+        // Get list of defined variables (LHS of assignments)
+        const definedVars = new Set<string>();
+        existingExprs.forEach((e: any) => {
+            // Check if it's a definition like a=... or f(x)=...
+            // Simple check: splitting by =
+            if (e.latex && e.latex.includes('=') && e.id !== id && e.id !== safeId) {
+                const lhs = e.latex.split('=')[0].trim();
+                // If LHS is simple variable like "a" or "z_1"
+                // Desmos allows subscripts. My extractVariables handles simple letters.
+                // Let's stick to simple letter logic for now for sliders
+                // Clean LHS potentially
+                 const cleanLhs = lhs.replace(/\\left|\\right/g, '').trim();
+                 // If it looks like a variable (not function f(x))
+                 if (/^[a-zA-Z](_\{?[a-zA-Z0-9]+\}?)?$/.test(cleanLhs)) {
+                     definedVars.add(cleanLhs);
+                 }
+            }
+        });
+
+        const missing = usedVars.filter(v => !definedVars.has(v));
+        
+        // Update state with missing variables
+        // We use a timeout to avoid react state update during render cycle issues if any,
+        // and to bundle updates? No, direct update.
+        // But we need to update ONLY if changed to avoid loops.
+        // We can't easily check 'prev' here inside processExpression without access to current state variable "expressions".
+        // But we can blindly update if we are careful. 
+        // Better: handleInput updates local state. processExpression is side effect.
+        // We can dispatch a state update.
+        setExpressions(prev => prev.map(e => e.id === id ? { ...e, missingVariables: missing } : e));
+
+        // Result Calculation Logic
+        // Only create helper if NO INDEPENDENT variables (like x, y) are present
+        
+        // Check for independent variables (graphing vars)
+        // Note: 'y' is allowed in implicit eq, but we want result for '2z'.
         const checkStr = clean
             .replace(/\\[a-zA-Z]+/g, '') 
             .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
         
-        const hasFreeVars = /[a-zA-Z]/.test(checkStr);
+        // We consider x, y, r, t, theta as graph paramters -> no scalar result
+        const hasGraphVars = /(x|y|r|t)/.test(checkStr);
         const isDefinition = clean.includes('=');
+
+        // Check for simple slider definition: "a = 2"
+        let isSliderDef = false;
+        let sliderVar = "";
+        if (isDefinition) {
+            // Match plain variable assignment: a = ... or a_{1} = ...
+            // Reject if it's a function f(x)= or if the var is x/y
+            const match = clean.match(/^([a-zA-Z](?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/);
+            if (match && !/^(x|y|r|t)$/.test(match[1])) {
+                isSliderDef = true;
+                sliderVar = match[1];
+            }
+        }
         
-        // Fix: If we handled the expression specially (summation, integral, etc.) and assigned a helper variable,
-        // we should observe it regardless of free variables in the original string.
-        const shouldObserve = (handled && helperLatex !== clean) || (!isDefinition && !hasFreeVars);
+        // Check for y = constant definition (e.g., y = 2a)
+        let isYConstant = false;
+        let constantRHS = "";
+        if (isDefinition) {
+             const yMatch = clean.match(/^y\s*=\s*(.*)$/);
+             if (yMatch) {
+                 const rhs = yMatch[1];
+                 // Check if RHS has graph vars (x, r, t) - excluding y since we are defining it
+                 // We remove text commands and constants first to avoid false positives
+                 const checkRHS = rhs
+                    .replace(/\\[a-zA-Z]+/g, '')
+                    .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta)/g, '');
+                 
+                 if (!/(x|r|t)/.test(checkRHS)) {
+                      isYConstant = true;
+                      constantRHS = rhs;
+                 }
+             }
+        }
+
+        // Observe if special handler used OR (not a definition AND not a function of x/y)
+        // OR if it is a slider definition (to sync value back)
+        // OR if it is a y=constant expression
+        const shouldObserve = (handled && helperLatex !== clean) 
+            || (!isDefinition && !hasGraphVars) 
+            || isSliderDef
+            || isYConstant;
 
         if (shouldObserve) {        
             try {
-                const helper = Calc.HelperExpression({ latex: helperLatex });
+                // If slider, watch the variable. 
+                // If y=constant, watch the RHS.
+                // Else watch the expression.
+                const exprToWatch = isSliderDef ? sliderVar : (isYConstant ? constantRHS : helperLatex);
+                const helper = Calc.HelperExpression({ latex: exprToWatch });
                 helpersRef.current[safeId] = helper;
 
                 helper.observe('numericValue', () => {
@@ -537,7 +634,16 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                                 const display = Math.abs(val) < 1e-10 ? "0" :
                                     Math.abs(val) > 1e10 ? val.toExponential(4) :
                                         parseFloat(val.toFixed(6)).toString();
-                                return { ...e, result: display };
+                                
+                                const update: Partial<MathExpression> = { result: display };
+                                
+                                // Sync slider value back to latex if playing
+                                // This allows the slider to move visually
+                                if (isSliderDef && e.isPlaying) {
+                                    update.latex = `${sliderVar}=${display}`;
+                                }
+                                
+                                return { ...e, ...update };
                             } else {
                                 return { ...e, result: undefined };
                             }
@@ -552,10 +658,13 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     };
 
     const handleInput = (id: string, value: string) => {
+        // Ensure value is a string (safeguard against non-string inputs)
+        const safeValue = typeof value === 'string' ? value : '';
+
         const expr = expressions.find(e => e.id === id);
         
         // Skip processing if latex hasn't changed (prevents re-processing on visibility changes)
-        if (expr && expr.latex === value) {
+        if (expr && expr.latex === safeValue) {
             return;
         }
         
@@ -567,19 +676,47 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         const currentColor = expr ? expr.color : "#2d70b3";
         const currentVisible = expr ? expr.visible : true;
         const currentMode = expr ? expr.visibilityMode : 'all';
-        setExpressions(prev => prev.map(e => e.id === id ? { ...e, latex: value } : e));
-        processExpression(id, value, currentColor, currentVisible, currentMode);
+        const currentSliderBounds = expr ? expr.sliderBounds : undefined;
+        
+        setExpressions(prev => prev.map(e => e.id === id ? { ...e, latex: safeValue } : e));
+        processExpression(id, safeValue, currentColor, currentVisible, currentMode, currentSliderBounds);
     };
 
     const handleColorChange = (id: string, newColor: string) => {
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, color: newColor } : e));
         const expr = expressions.find(e => e.id === id);
-        if (expr) processExpression(id, expr.latex, newColor, expr.visible, expr.visibilityMode);
+        if (expr) processExpression(id, expr.latex, newColor, expr.visible, expr.visibilityMode, expr.sliderBounds);
     };
 
-    const addExpr = () => {
+    const updateSliderBounds = (id: string, min: string, max: string, step: string = "") => {
+        const bounds = { min, max, step };
+        setExpressions(prev => prev.map(e => e.id === id ? { ...e, sliderBounds: bounds } : e));
+        if (calculatorInstance.current) {
+             calculatorInstance.current.setExpression({ id, sliderBounds: bounds });
+        }
+    };
+    
+    const setExpressionPlaying = (id: string, playing: boolean) => {
+        setExpressions(prev => prev.map(e => e.id === id ? { ...e, isPlaying: playing } : e));
+        if (calculatorInstance.current) {
+             calculatorInstance.current.setExpression({ id, playing });
+        }
+    };
+
+    const addExpr = (initialLatex: string = "") => {
         const id = Math.random().toString(36).substr(2, 9);
-        setExpressions([...expressions, { id, latex: "", color: getRandomColor(), visible: true, visibilityMode: 'all' }]);
+        setExpressions(prev => [...prev, { 
+            id, 
+            latex: initialLatex, 
+            color: getRandomColor(), 
+            visible: true, 
+            visibilityMode: 'all',
+            missingVariables: [] 
+        }]);
+        // If we have initial latex, render it immediately
+        if (initialLatex) {
+             setTimeout(() => processExpression(id, initialLatex, "#2d70b3", true, 'all'), 0);
+        }
     };
 
     const toggleVisibility = (id: string) => {
@@ -739,6 +876,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         removeExpr,
         toggleVisibility,
         setVisibilityMode,
-        processExpression
+        processExpression,
+        updateSliderBounds,
+        setExpressionPlaying
     };
 };
