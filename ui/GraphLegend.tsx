@@ -83,6 +83,8 @@ const cleanLatexString = (rawLatex: string): string => {
         .replace(/\\differentialD/g, "d")
         .replace(/\\mathrm\{d\}/g, "d")
         .replace(/\\dfrac/g, "\\frac")
+        // Convert \operatorname{func} -> \func for proper processing
+        .replace(/\\operatorname\{([^}]+)\}/g, '\\$1')
         .trim();
 
     // Artifact cleaning (Critical Fix for () empty braces)
@@ -102,8 +104,12 @@ const cleanLatexString = (rawLatex: string): string => {
     // Fix Logarithm bases
     clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
-    // Normalize Trig Powers
+    // Normalize Trig Powers (hyperbolic FIRST to prevent \sinh -> \sin + h)
     clean = clean
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^(\d+)([a-zA-Z])/g, '\\$1^{$2}$3')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^(\d+)\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '\\$1^{$2}$3')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
