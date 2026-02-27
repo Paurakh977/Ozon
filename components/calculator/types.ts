@@ -35,4 +35,5 @@ export interface MathExpression {
     missingVariables?: string[];
     sliderBounds?: { min: string; max: string; step: string };
     isPlaying?: boolean;
+    isAreaMode?: boolean; // New flag for area calculation (integral)
 }
