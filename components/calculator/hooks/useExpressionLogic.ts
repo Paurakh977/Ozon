@@ -512,13 +512,36 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         
         // Helper to extract variables from latex
         const extractVariables = (latex: string): string[] => {
-             // Remove differentials (dx, dy, dt) first
-             let s = latex.replace(/d[xyt\u03b8]/g, '');
+             let s = latex;
+
+             // 1. Remove standard derivative notation FIRST: \frac{d}{dx}, \frac{d^2}{dx^2}
+             // This removes the entire derivative operator block so 'd' inside it is gone.
+             // Updated regex to handle \theta (d\theta) and other commands
+             s = s.replace(/\\frac\s*\{\s*d(\^\{?[0-9]+\}?)?\s*\}\s*\{\s*d(\\[a-zA-Z]+|[a-zA-Z])(\^\{?[0-9]+\}?)?\s*\}/g, '');
+             
+             // Remove partial derivatives: \frac{\partial}{\partial x}
+             s = s.replace(/\\frac\s*\{\s*\\partial(\^\{?[0-9]+\}?)?\s*\}\s*\{\s*\\partial(\\[a-zA-Z]+|[a-zA-Z])(\^\{?[0-9]+\}?)?\s*\}/g, '');
+
+             // 2. Remove standard differentials (dx, dy, dt, dtheta) that are likely operators
+             // Revert to safer specific list to avoid destroying words starting with d (like 'distance' -> 'istance' if i was in set)
+             // We use a list of common differentials.
+             const differentials = [
+                'dx', 'dy', 'dt', 'du', 'dv', 'dw', 'dz', 'dr', 'ds', 'dp', 'dq', 'dk', 'dn', 'dm', 
+                'd\\theta', 'd\\alpha', 'd\\beta', 'd\\gamma', 'd\\phi', 'd\\rho'
+             ];
+             differentials.forEach(diff => {
+                 // Use a global replace. Escape special regex chars if any (backslash is already double escaped in string)
+                 // straightforward replaceAll equivalent
+                 s = s.split(diff).join('');
+             });
              
              // Remove commands
              s = s.replace(/\\[a-zA-Z]+/g, '');
+             
              // Remove known constants and functions
-             s = s.replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
+             // Expanded list to be safer
+             s = s.replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|diff|limit|sum|prod|int|oint|iint|iiint|gd|arc|arsinh|arcosh|artanh|arcoth|arsech|arcsch|sinh|cosh|tanh|coth|sech|csch|step|sign|mod|nCr|nPr|gcd|lcm)/g, '');
+             
              // Remove independent variables that don't need sliders
              // Note: x, y, r, t are context variables usually
              s = s.replace(/(x|y|r|t)/g, '');
