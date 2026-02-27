@@ -17,7 +17,6 @@
     --popover-foreground: 240 10% 3.9%;
 
     --primary: 250 80% 54%;
-    /* Vibrant purple/indigo */
     --primary-foreground: 0 0% 98%;
 
     --secondary: 240 4.8% 95.9%;
@@ -39,10 +38,8 @@
 
     /* Mafs Light Mode Overrides */
     --mafs-bg: transparent;
-    /* Use parent background */
     --mafs-fg: #000;
     --mafs-grid-stroke: #e5e7eb;
-    /* tailwind gray-200 */
 
     /* MathLive Light Mode */
     --mathfield-text-color: #1a1a1a;
@@ -56,14 +53,12 @@
     --foreground: 0 0% 98%;
 
     --card: 240 10% 5%;
-    /* Slightly lighter than bg */
     --card-foreground: 0 0% 98%;
 
     --popover: 240 10% 3.9%;
     --popover-foreground: 0 0% 98%;
 
     --primary: 250 80% 60%;
-    /* Lighter purple for dark mode */
     --primary-foreground: 0 0% 98%;
 
     --secondary: 240 3.7% 15.9%;
@@ -84,10 +79,8 @@
 
     /* Mafs Dark Mode Overrides */
     --mafs-bg: transparent;
-    /* Use parent background */
     --mafs-fg: #fff;
     --mafs-grid-stroke: #27272a;
-    /* tailwind zinc-800 */
 
     /* MathLive Dark Mode */
     --mathfield-text-color: #ffffff;
@@ -110,6 +103,7 @@
 /* Custom Scrollbar */
 .custom-scrollbar::-webkit-scrollbar {
   width: 5px;
+  height: 5px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
@@ -136,14 +130,11 @@
 
 /* MathLive Math Field Styling */
 math-field {
-  /* Ensure smart fence (absolute value bars) are fully visible */
   --smart-fence-color: var(--mathfield-text-color, currentColor);
   --smart-fence-opacity: 1;
-
-  /* General mathfield styling */
   --caret-color: var(--mathfield-text-color, currentColor);
   color: var(--mathfield-text-color, inherit);
-  font-size: 1.1rem;
+  font-size: 1.15rem;
 
   /* Selection styling */
   --selection-background-color: hsl(var(--primary) / 0.2);
@@ -167,4 +158,38 @@ math-field {
   --smart-fence-opacity: 1;
   color: #ffffff;
   --mathfield-text-color: #ffffff;
+}
+
+/* Minimalistic Math Field that fluidly auto-scrolls similar to Desmos */
+math-field.math-field-custom {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  background-color: transparent;
+  outline: none;
+  padding: 6px 2px;
+  
+  overflow-x: auto;
+  overflow-y: hidden;
+  
+  /* Hide scrollbar completely to preserve minimalistic feel */
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+
+math-field.math-field-custom::-webkit-scrollbar {
+  display: none; /* Chrome/Safari */
+}
+
+math-field.math-field-custom::part(scroller) {
+  scrollbar-width: none;
+}
+math-field.math-field-custom::part(scroller)::-webkit-scrollbar {
+  display: none;
+}
+math-field.math-field-custom::part(container) {
+  scrollbar-width: none;
+}
+math-field.math-field-custom::part(container)::-webkit-scrollbar {
+  display: none;
 }

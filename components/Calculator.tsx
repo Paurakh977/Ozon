@@ -27,6 +27,7 @@ export function Calculator() {
         removeExpr,
         toggleVisibility,
         setVisibilityMode,
+        toggleAreaMode,
         updateSliderBounds,
         setExpressionPlaying
     } = useExpressionLogic(calculatorInstance);
@@ -52,6 +53,7 @@ export function Calculator() {
                         addExpr={addExpr}
                         toggleVisibility={toggleVisibility}
                         setVisibilityMode={setVisibilityMode}
+                        toggleAreaMode={toggleAreaMode}
                         updateSliderBounds={updateSliderBounds}
                         setExpressionPlaying={setExpressionPlaying}
                         debugInfo={debugInfo}

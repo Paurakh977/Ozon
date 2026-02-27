@@ -13,6 +13,9 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\cdot/g, '*')
         .replace(/\\times/g, '*');
 
+    // Convert \operatorname{func} -> \func for proper processing
+    expr = expr.replace(/\\operatorname\{([^}]+)\}/g, '\\$1');
+
     // ==========================================
     // ROBUST FRACTION HANDLING
     // ==========================================
@@ -135,23 +138,88 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\mathrm\{([^}]+)\}/g, '$1');
 
     // ==========================================
-    // TRIG FUNCTION WITH POWER BEFORE ARGUMENT (e.g., \sin^2x)
+    // TRIG/HYP FUNCTION WITH POWER BEFORE ARGUMENT (e.g., \sin^2x, \sinh^2x)
     // ==========================================
-    // CRITICAL: Handle \sin^2x, \cos^{3}y patterns BEFORE other trig handling
-    // \sin^2x means (sin(x))^2, not sin(x^2)
-    // \sin^{2}x also means (sin(x))^2
-    // Handle both braced and unbraced power formats
+    // CRITICAL: Handle hyperbolic powers BEFORE regular trig to prevent \sinh -> sin(h)
+    // \sinh^2x means (sinh(x))^2, \sin^2x means (sin(x))^2
     expr = expr
-        // \sin^{n}x -> (sin(x))^(n) - braced power with variable
+        // Hyperbolic powers: \sinh^{n}x, \sinh^nx, \sinh^{n}(expr), \sinh^n(expr)
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^\{([^}]+)\}([a-zA-Z])/g, '($1($3))^($2)')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^(\d+)([a-zA-Z])/g, '($1($3))^$2')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '($1($3))^($2)')
+        .replace(/\\(sinh|cosh|tanh|coth|sech|csch)\^(\d+)\s*\(([^)]+)\)/g, '($1($3))^$2')
+        // Regular trig powers: \sin^{n}x, \sin^nx, \sin^{n}(expr), \sin^n(expr)
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '($1($3))^($2)')
-        // \sin^nx -> (sin(x))^n - unbraced single/multi digit power with variable
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)([a-zA-Z])/g, '($1($3))^$2')
-        // \sin^{n}(expr) -> (sin(expr))^(n) - braced power with parenthesized argument
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '($1($3))^($2)')
-        // \sin^n(expr) -> (sin(expr))^n - unbraced power with parenthesized argument
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '($1($3))^$2');
 
-    // Handle trig functions - nerdamer uses sin(x), cos(x), etc.
+    // ==========================================
+    // INVERSE HYPERBOLIC FUNCTIONS (\arcsinh -> asinh, etc.)
+    // Must come BEFORE inverse trig and regular functions
+    // ==========================================
+    expr = expr
+        .replace(/\\arcsinh\s*\(([^)]+)\)/g, 'asinh($1)')
+        .replace(/\\arccosh\s*\(([^)]+)\)/g, 'acosh($1)')
+        .replace(/\\arctanh\s*\(([^)]+)\)/g, 'atanh($1)')
+        .replace(/\\arcsinh\s+([a-zA-Z])/g, 'asinh($1)')
+        .replace(/\\arccosh\s+([a-zA-Z])/g, 'acosh($1)')
+        .replace(/\\arctanh\s+([a-zA-Z])/g, 'atanh($1)')
+        .replace(/\\arcsinh([a-zA-Z])/g, 'asinh($1)')
+        .replace(/\\arccosh([a-zA-Z])/g, 'acosh($1)')
+        .replace(/\\arctanh([a-zA-Z])/g, 'atanh($1)');
+
+    // ==========================================
+    // INVERSE TRIG FUNCTIONS (\arcsin -> asin, etc.)
+    // Must come BEFORE regular trig to prevent \arcsin -> arc + sin(..)
+    // ==========================================
+    expr = expr
+        .replace(/\\arcsin\s*\(([^)]+)\)/g, 'asin($1)')
+        .replace(/\\arccos\s*\(([^)]+)\)/g, 'acos($1)')
+        .replace(/\\arctan\s*\(([^)]+)\)/g, 'atan($1)')
+        .replace(/\\arccot\s*\(([^)]+)\)/g, 'acot($1)')
+        .replace(/\\arcsec\s*\(([^)]+)\)/g, 'asec($1)')
+        .replace(/\\arccsc\s*\(([^)]+)\)/g, 'acsc($1)')
+        .replace(/\\arcsin\s+([a-zA-Z])/g, 'asin($1)')
+        .replace(/\\arccos\s+([a-zA-Z])/g, 'acos($1)')
+        .replace(/\\arctan\s+([a-zA-Z])/g, 'atan($1)')
+        .replace(/\\arccot\s+([a-zA-Z])/g, 'acot($1)')
+        .replace(/\\arcsec\s+([a-zA-Z])/g, 'asec($1)')
+        .replace(/\\arccsc\s+([a-zA-Z])/g, 'acsc($1)')
+        .replace(/\\arcsin([a-zA-Z])/g, 'asin($1)')
+        .replace(/\\arccos([a-zA-Z])/g, 'acos($1)')
+        .replace(/\\arctan([a-zA-Z])/g, 'atan($1)')
+        .replace(/\\arccot([a-zA-Z])/g, 'acot($1)')
+        .replace(/\\arcsec([a-zA-Z])/g, 'asec($1)')
+        .replace(/\\arccsc([a-zA-Z])/g, 'acsc($1)');
+
+    // ==========================================
+    // HYPERBOLIC FUNCTIONS (\sinh -> sinh, etc.)
+    // Must come BEFORE regular trig to prevent \sinh -> sin(h)
+    // ==========================================
+    expr = expr
+        .replace(/\\sinh\s*\(([^)]+)\)/g, 'sinh($1)')
+        .replace(/\\cosh\s*\(([^)]+)\)/g, 'cosh($1)')
+        .replace(/\\tanh\s*\(([^)]+)\)/g, 'tanh($1)')
+        .replace(/\\coth\s*\(([^)]+)\)/g, 'coth($1)')
+        .replace(/\\sech\s*\(([^)]+)\)/g, 'sech($1)')
+        .replace(/\\csch\s*\(([^)]+)\)/g, 'csch($1)')
+        .replace(/\\sinh\s+([a-zA-Z])/g, 'sinh($1)')
+        .replace(/\\cosh\s+([a-zA-Z])/g, 'cosh($1)')
+        .replace(/\\tanh\s+([a-zA-Z])/g, 'tanh($1)')
+        .replace(/\\coth\s+([a-zA-Z])/g, 'coth($1)')
+        .replace(/\\sech\s+([a-zA-Z])/g, 'sech($1)')
+        .replace(/\\csch\s+([a-zA-Z])/g, 'csch($1)')
+        .replace(/\\sinh([a-zA-Z])/g, 'sinh($1)')
+        .replace(/\\cosh([a-zA-Z])/g, 'cosh($1)')
+        .replace(/\\tanh([a-zA-Z])/g, 'tanh($1)')
+        .replace(/\\coth([a-zA-Z])/g, 'coth($1)')
+        .replace(/\\sech([a-zA-Z])/g, 'sech($1)')
+        .replace(/\\csch([a-zA-Z])/g, 'csch($1)');
+
+    // ==========================================
+    // REGULAR TRIG FUNCTIONS (\sin -> sin, etc.)
+    // ==========================================
     expr = expr
         .replace(/\\sin\s*\(([^)]+)\)/g, 'sin($1)')
         .replace(/\\cos\s*\(([^)]+)\)/g, 'cos($1)')
@@ -159,9 +227,6 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\cot\s*\(([^)]+)\)/g, 'cot($1)')
         .replace(/\\sec\s*\(([^)]+)\)/g, 'sec($1)')
         .replace(/\\csc\s*\(([^)]+)\)/g, 'csc($1)')
-        .replace(/\\arcsin\s*\(([^)]+)\)/g, 'asin($1)')
-        .replace(/\\arccos\s*\(([^)]+)\)/g, 'acos($1)')
-        .replace(/\\arctan\s*\(([^)]+)\)/g, 'atan($1)')
         // Handle trig without explicit parentheses (e.g., \sin x)
         .replace(/\\sin\s+([a-zA-Z])/g, 'sin($1)')
         .replace(/\\cos\s+([a-zA-Z])/g, 'cos($1)')
@@ -169,8 +234,7 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\cot\s+([a-zA-Z])/g, 'cot($1)')
         .replace(/\\sec\s+([a-zA-Z])/g, 'sec($1)')
         .replace(/\\csc\s+([a-zA-Z])/g, 'csc($1)')
-        // Handle trig where the argument might not be separated by space (common in substitutions)
-        // e.g. \sin(x) -> sin(x)
+        // Handle trig where the argument might not be separated by space
         .replace(/\\sin(\(|\[)/g, 'sin$1')
         .replace(/\\cos(\(|\[)/g, 'cos$1')
         .replace(/\\tan(\(|\[)/g, 'tan$1')
@@ -224,7 +288,13 @@ export const latexToNerdamer = (latex: string): string => {
     // IMPLICIT MULTIPLICATION HANDLING (Part 2)
     // ==========================================
     // After all function names are converted, add implicit multiplication
-    const funcNames = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log', 'log10', 'exp', 'sqrt', 'abs', 'asin', 'acos', 'atan'];
+    const funcNames = [
+        'sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch',
+        'asin', 'acos', 'atan', 'acot', 'asec', 'acsc',
+        'asinh', 'acosh', 'atanh',
+        'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
+        'log', 'log10', 'exp', 'sqrt', 'abs'
+    ];
     
     // Helper: Check if position is at end of a function name
     const isEndOfFunction = (str: string, pos: number): boolean => {
