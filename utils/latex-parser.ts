@@ -330,6 +330,63 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/e\^([a-zA-Z])(?![a-zA-Z0-9])/g, 'exp($1)')
         .replace(/e\^(\d+)(?![a-zA-Z0-9])/g, 'exp($1)');
 
+    // ==========================================
+    // CONVERT UNSUPPORTED INVERSE FUNCTIONS TO NERDAMER EQUIVALENTS
+    // ==========================================
+    // nerdamer doesn't natively support: asec, acsc, acot, asech, acsch, acoth
+    // Convert to equivalent expressions using supported functions:
+    //   asec(x) = acos(1/x), acsc(x) = asin(1/x), acot(x) = atan(1/x)
+    //   asech(x) = acosh(1/x), acsch(x) = asinh(1/x), acoth(x) = atanh(1/x)
+    const convertUnsupportedInverse = (str: string): string => {
+        // Longest names first to prevent partial matching (asech before asec)
+        const conversions: [string, (arg: string) => string][] = [
+            ['asech', (arg) => `acosh(1/(${arg}))`],
+            ['acsch', (arg) => `asinh(1/(${arg}))`],
+            ['acoth', (arg) => `atanh(1/(${arg}))`],
+            ['asec', (arg) => `acos(1/(${arg}))`],
+            ['acsc', (arg) => `asin(1/(${arg}))`],
+            ['acot', (arg) => `atan(1/(${arg}))`],
+        ];
+        for (const [funcName, converter] of conversions) {
+            let result = '';
+            let i = 0;
+            while (i < str.length) {
+                const remaining = str.substring(i);
+                if (remaining.startsWith(funcName + '(')) {
+                    // Ensure it's not part of a longer function name
+                    if (i > 0 && /[a-zA-Z]/.test(str[i - 1])) {
+                        result += str[i];
+                        i++;
+                        continue;
+                    }
+                    // Find the matching closing parenthesis (handles nested parens)
+                    const argStart = i + funcName.length + 1;
+                    let depth = 1;
+                    let j = argStart;
+                    while (j < str.length && depth > 0) {
+                        if (str[j] === '(') depth++;
+                        else if (str[j] === ')') depth--;
+                        j++;
+                    }
+                    if (depth === 0) {
+                        const arg = str.substring(argStart, j - 1);
+                        result += converter(arg);
+                        i = j;
+                    } else {
+                        result += str[i];
+                        i++;
+                    }
+                } else {
+                    result += str[i];
+                    i++;
+                }
+            }
+            str = result;
+        }
+        return str;
+    };
+    expr = convertUnsupportedInverse(expr);
+
     // Remove remaining backslashes and clean up
     expr = expr
         .replace(/\\/g, '')
@@ -418,36 +475,36 @@ export const nerdamerToLatex = (result: any): string => {
             .replace(/\s+/g, ' ')
             .trim();
 
-        // Convert nerdamer inverse hyperbolic functions back to LaTeX
-        // nerdamer outputs: asinh, acosh, atanh, acoth, asech, acsch
-        // standard LaTeX uses: \arcsinh (or \operatorname{arcsinh})
-        // MathLive prefers: \arcsinh, \arccosh, etc.
+        // Convert nerdamer function names back to proper LaTeX
+        // CRITICAL: Use negative lookbehind (?<![a-zA-Z]) to prevent cascading replacements.
+        // Without it, replacing "sech" would corrupt "arcsech" inside \operatorname{arcsech}.
+        // Process longest names first, then shorter ones.
         tex = tex
             // Handle inverse hyperbolic functions
-            .replace(/\\?asinh\b/g, '\\operatorname{arcsinh}')
-            .replace(/\\?acosh\b/g, '\\operatorname{arccosh}')
-            .replace(/\\?atanh\b/g, '\\operatorname{arctanh}')
-            .replace(/\\?acoth\b/g, '\\operatorname{arccoth}')
-            .replace(/\\?asech\b/g, '\\operatorname{arcsech}')
-            .replace(/\\?acsch\b/g, '\\operatorname{arccsch}')
-            // Handle inverse trig functions (some nerdamer versions might output asin instead of arcsin)
-            .replace(/\\?asin\b/g, '\\arcsin')
-            .replace(/\\?acos\b/g, '\\arccos')
-            .replace(/\\?atan\b/g, '\\arctan')
-            .replace(/\\?acot\b/g, '\\arccot')
-            .replace(/\\?asec\b/g, '\\arcsec')
-            .replace(/\\?acsc\b/g, '\\arccsc')
-            // Handle regular hyperbolic functions if needed (usually fine, but just in case)
-            .replace(/\\?sinh\b/g, '\\sinh')
-            .replace(/\\?cosh\b/g, '\\cosh')
-            .replace(/\\?tanh\b/g, '\\tanh')
-            .replace(/\\?coth\b/g, '\\coth')
-            .replace(/\\?sech\b/g, '\\sech')
-            .replace(/\\?csch\b/g, '\\csch')
+            .replace(/(?<![a-zA-Z])\\?asinh\b/g, '\\operatorname{arcsinh}')
+            .replace(/(?<![a-zA-Z])\\?acosh\b/g, '\\operatorname{arccosh}')
+            .replace(/(?<![a-zA-Z])\\?atanh\b/g, '\\operatorname{arctanh}')
+            .replace(/(?<![a-zA-Z])\\?acoth\b/g, '\\operatorname{arccoth}')
+            .replace(/(?<![a-zA-Z])\\?asech\b/g, '\\operatorname{arcsech}')
+            .replace(/(?<![a-zA-Z])\\?acsch\b/g, '\\operatorname{arccsch}')
+            // Handle inverse trig functions (some nerdamer versions output asin instead of arcsin)
+            .replace(/(?<![a-zA-Z])\\?asin\b/g, '\\arcsin')
+            .replace(/(?<![a-zA-Z])\\?acos\b/g, '\\arccos')
+            .replace(/(?<![a-zA-Z])\\?atan\b/g, '\\arctan')
+            .replace(/(?<![a-zA-Z])\\?acot\b/g, '\\arccot')
+            .replace(/(?<![a-zA-Z])\\?asec\b/g, '\\arcsec')
+            .replace(/(?<![a-zA-Z])\\?acsc\b/g, '\\arccsc')
+            // Handle regular hyperbolic functions (prevent matching inside arc* names)
+            .replace(/(?<![a-zA-Z])\\?sinh\b/g, '\\sinh')
+            .replace(/(?<![a-zA-Z])\\?cosh\b/g, '\\cosh')
+            .replace(/(?<![a-zA-Z])\\?tanh\b/g, '\\tanh')
+            .replace(/(?<![a-zA-Z])\\?coth\b/g, '\\coth')
+            .replace(/(?<![a-zA-Z])\\?sech\b/g, '\\sech')
+            .replace(/(?<![a-zA-Z])\\?csch\b/g, '\\csch')
+            // Handle log10 BEFORE log to prevent log matching the log prefix of log10
+            .replace(/(?<![a-zA-Z])\\?log10\b/g, '\\log_{10}')
             // Handle standard log in nerdamer (which is natural log)
-            .replace(/\\?log\b/g, '\\ln')
-            // Handle log10 if present
-            .replace(/\\?log10\b/g, '\\log_{10}');
+            .replace(/(?<![a-zA-Z])\\?log\b/g, '\\ln');
 
         // Fix potential double backslashes
         tex = tex.replace(/\\\\/g, '\\');

@@ -34,8 +34,10 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // 1. Generate Safe Variable ID
         const safeId = `E${id.replace(/-/g, "")}`;
 
-        // 2. Clear All Associated Expressions
+        // 2. Clear All Associated Expressions (including main id to prevent stale curves
+        //    when switching from plain expression to derivative/integral mode)
         const cleanupList = [
+            id,
             `curve-${safeId}`, `shade-${safeId}`,
             `val-${safeId}`, `func-${safeId}`, `label-${safeId}`,
             `funcD-${safeId}`,
