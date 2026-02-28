@@ -13,8 +13,47 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\cdot/g, '*')
         .replace(/\\times/g, '*');
 
+    // ==========================================
+    // FIX MATHLIVE BROKEN FUNCTION NAMES (for nerdamer)
+    // ==========================================
+    // Fix broken hyperbolic assemblies from MathLive
+    expr = expr
+        .replace(/cs\\operatorname\{\\mathrm\{ch\}\}/g, '\\csch')
+        .replace(/se\\operatorname\{\\mathrm\{ch\}\}/g, '\\sech')
+        .replace(/co\\operatorname\{\\mathrm\{th\}\}/g, '\\coth');
+
+    // Handle nested \operatorname{\mathrm{...}} → \...
+    expr = expr.replace(/\\operatorname\{\\mathrm\{([^}]+)\}\}/g, '\\$1');
+
+    // Handle \operatorname{\func} → \func
+    expr = expr.replace(/\\operatorname\{(\\[a-zA-Z]+)\}/g, '$1');
+
+    // Handle \operatorname{arc} → arc
+    expr = expr.replace(/\\operatorname\{arc\}/g, 'arc');
+
     // Convert \operatorname{func} -> \func for proper processing
     expr = expr.replace(/\\operatorname\{([^}]+)\}/g, '\\$1');
+
+    // Reassemble broken inverse trig/hyp: arc\func → \arcfunc
+    expr = expr
+        .replace(/arc\\(sinh|cosh|tanh|coth|sech|csch)/g, '\\arc$1')
+        .replace(/arc\\(sin|cos|tan|cot|sec|csc)/g, '\\arc$1');
+
+    // Handle "arc coth" space pattern if user typed it literally or MathLive separated it
+    expr = expr
+        .replace(/arc\s+(sinh|cosh|tanh|coth|sech|csch)/g, '\\arc$1')
+        .replace(/arc\s+(sin|cos|tan|cot|sec|csc)/g, '\\arc$1');
+
+    // Fix bare broken hyp: cs\ch → \csch etc.
+    expr = expr
+        .replace(/(^|[^a-zA-Z\\])cs\\ch/g, '$1\\csch')
+        .replace(/(^|[^a-zA-Z\\])se\\ch/g, '$1\\sech')
+        .replace(/(^|[^a-zA-Z\\])co\\th/g, '$1\\coth');
+
+    // Reassemble broken \trig<space>h → \trigh (hyperbolic functions)
+    expr = expr
+        .replace(/\\(arcsin|arccos|arctan|arccot|arcsec|arccsc)(\s+)h/g, '\\$1h')
+        .replace(/\\(sin|cos|tan|cot|sec|csc)(\s+)h/g, '\\$1h');
 
     // ==========================================
     // ROBUST FRACTION HANDLING
@@ -162,12 +201,23 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\arcsinh\s*\(([^)]+)\)/g, 'asinh($1)')
         .replace(/\\arccosh\s*\(([^)]+)\)/g, 'acosh($1)')
         .replace(/\\arctanh\s*\(([^)]+)\)/g, 'atanh($1)')
+        .replace(/\\arccoth\s*\(([^)]+)\)/g, 'acoth($1)')
+        .replace(/\\arcsech\s*\(([^)]+)\)/g, 'asech($1)')
+        .replace(/\\arccsch\s*\(([^)]+)\)/g, 'acsch($1)')
+        // Handle no parenthesis case
         .replace(/\\arcsinh\s+([a-zA-Z])/g, 'asinh($1)')
         .replace(/\\arccosh\s+([a-zA-Z])/g, 'acosh($1)')
         .replace(/\\arctanh\s+([a-zA-Z])/g, 'atanh($1)')
+        .replace(/\\arccoth\s+([a-zA-Z])/g, 'acoth($1)')
+        .replace(/\\arcsech\s+([a-zA-Z])/g, 'asech($1)')
+        .replace(/\\arccsch\s+([a-zA-Z])/g, 'acsch($1)')
+        // Handle immediate variable case
         .replace(/\\arcsinh([a-zA-Z])/g, 'asinh($1)')
         .replace(/\\arccosh([a-zA-Z])/g, 'acosh($1)')
-        .replace(/\\arctanh([a-zA-Z])/g, 'atanh($1)');
+        .replace(/\\arctanh([a-zA-Z])/g, 'atanh($1)')
+        .replace(/\\arccoth([a-zA-Z])/g, 'acoth($1)')
+        .replace(/\\arcsech([a-zA-Z])/g, 'asech($1)')
+        .replace(/\\arccsch([a-zA-Z])/g, 'acsch($1)');
 
     // ==========================================
     // INVERSE TRIG FUNCTIONS (\arcsin -> asin, etc.)
@@ -180,12 +230,14 @@ export const latexToNerdamer = (latex: string): string => {
         .replace(/\\arccot\s*\(([^)]+)\)/g, 'acot($1)')
         .replace(/\\arcsec\s*\(([^)]+)\)/g, 'asec($1)')
         .replace(/\\arccsc\s*\(([^)]+)\)/g, 'acsc($1)')
+        // Handle no parenthesis case
         .replace(/\\arcsin\s+([a-zA-Z])/g, 'asin($1)')
         .replace(/\\arccos\s+([a-zA-Z])/g, 'acos($1)')
         .replace(/\\arctan\s+([a-zA-Z])/g, 'atan($1)')
         .replace(/\\arccot\s+([a-zA-Z])/g, 'acot($1)')
         .replace(/\\arcsec\s+([a-zA-Z])/g, 'asec($1)')
         .replace(/\\arccsc\s+([a-zA-Z])/g, 'acsc($1)')
+        // Handle immediate variable case
         .replace(/\\arcsin([a-zA-Z])/g, 'asin($1)')
         .replace(/\\arccos([a-zA-Z])/g, 'acos($1)')
         .replace(/\\arctan([a-zA-Z])/g, 'atan($1)')
@@ -291,10 +343,11 @@ export const latexToNerdamer = (latex: string): string => {
     const funcNames = [
         'sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch',
         'asin', 'acos', 'atan', 'acot', 'asec', 'acsc',
-        'asinh', 'acosh', 'atanh',
+        'asinh', 'acosh', 'atanh', 'acoth', 'asech', 'acsch', // Added arc hyperbolic functions
         'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
         'log', 'log10', 'exp', 'sqrt', 'abs'
     ];
+
     
     // Helper: Check if position is at end of a function name
     const isEndOfFunction = (str: string, pos: number): boolean => {
@@ -352,6 +405,7 @@ export const latexToNerdamer = (latex: string): string => {
 
 /**
  * Convert nerdamer result back to LaTeX
+ * IMPROVED: Handles standard LaTeX function names for inverse hyperbolic functions
  */
 export const nerdamerToLatex = (result: any): string => {
     try {
@@ -363,6 +417,40 @@ export const nerdamerToLatex = (result: any): string => {
             // Clean up multiple spaces
             .replace(/\s+/g, ' ')
             .trim();
+
+        // Convert nerdamer inverse hyperbolic functions back to LaTeX
+        // nerdamer outputs: asinh, acosh, atanh, acoth, asech, acsch
+        // standard LaTeX uses: \arcsinh (or \operatorname{arcsinh})
+        // MathLive prefers: \arcsinh, \arccosh, etc.
+        tex = tex
+            // Handle inverse hyperbolic functions
+            .replace(/\\?asinh\b/g, '\\operatorname{arcsinh}')
+            .replace(/\\?acosh\b/g, '\\operatorname{arccosh}')
+            .replace(/\\?atanh\b/g, '\\operatorname{arctanh}')
+            .replace(/\\?acoth\b/g, '\\operatorname{arccoth}')
+            .replace(/\\?asech\b/g, '\\operatorname{arcsech}')
+            .replace(/\\?acsch\b/g, '\\operatorname{arccsch}')
+            // Handle inverse trig functions (some nerdamer versions might output asin instead of arcsin)
+            .replace(/\\?asin\b/g, '\\arcsin')
+            .replace(/\\?acos\b/g, '\\arccos')
+            .replace(/\\?atan\b/g, '\\arctan')
+            .replace(/\\?acot\b/g, '\\arccot')
+            .replace(/\\?asec\b/g, '\\arcsec')
+            .replace(/\\?acsc\b/g, '\\arccsc')
+            // Handle regular hyperbolic functions if needed (usually fine, but just in case)
+            .replace(/\\?sinh\b/g, '\\sinh')
+            .replace(/\\?cosh\b/g, '\\cosh')
+            .replace(/\\?tanh\b/g, '\\tanh')
+            .replace(/\\?coth\b/g, '\\coth')
+            .replace(/\\?sech\b/g, '\\sech')
+            .replace(/\\?csch\b/g, '\\csch')
+            // Handle standard log in nerdamer (which is natural log)
+            .replace(/\\?log\b/g, '\\ln')
+            // Handle log10 if present
+            .replace(/\\?log10\b/g, '\\log_{10}');
+
+        // Fix potential double backslashes
+        tex = tex.replace(/\\\\/g, '\\');
 
         return tex;
     } catch {
