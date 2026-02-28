@@ -479,28 +479,34 @@ export const nerdamerToLatex = (result: any): string => {
         // CRITICAL: Use negative lookbehind (?<![a-zA-Z]) to prevent cascading replacements.
         // Without it, replacing "sech" would corrupt "arcsech" inside \operatorname{arcsech}.
         // Process longest names first, then shorter ones.
+        //
+        // MathLive natively supports: \sin \cos \tan \cot \sec \csc \sinh \cosh \tanh
+        //   \arcsin \arccos \arctan \ln \log \exp
+        // Everything else MUST use \operatorname{} to render without visible backslash.
         tex = tex
-            // Handle inverse hyperbolic functions
+            // Handle inverse hyperbolic functions → \operatorname{}
             .replace(/(?<![a-zA-Z])\\?asinh\b/g, '\\operatorname{arcsinh}')
             .replace(/(?<![a-zA-Z])\\?acosh\b/g, '\\operatorname{arccosh}')
             .replace(/(?<![a-zA-Z])\\?atanh\b/g, '\\operatorname{arctanh}')
             .replace(/(?<![a-zA-Z])\\?acoth\b/g, '\\operatorname{arccoth}')
             .replace(/(?<![a-zA-Z])\\?asech\b/g, '\\operatorname{arcsech}')
             .replace(/(?<![a-zA-Z])\\?acsch\b/g, '\\operatorname{arccsch}')
-            // Handle inverse trig functions (some nerdamer versions output asin instead of arcsin)
+            // Handle inverse trig: arcsin/arccos/arctan are MathLive-native,
+            // but arccot/arcsec/arccsc are NOT → \operatorname{}
             .replace(/(?<![a-zA-Z])\\?asin\b/g, '\\arcsin')
             .replace(/(?<![a-zA-Z])\\?acos\b/g, '\\arccos')
             .replace(/(?<![a-zA-Z])\\?atan\b/g, '\\arctan')
-            .replace(/(?<![a-zA-Z])\\?acot\b/g, '\\arccot')
-            .replace(/(?<![a-zA-Z])\\?asec\b/g, '\\arcsec')
-            .replace(/(?<![a-zA-Z])\\?acsc\b/g, '\\arccsc')
-            // Handle regular hyperbolic functions (prevent matching inside arc* names)
+            .replace(/(?<![a-zA-Z])\\?acot\b/g, '\\operatorname{arccot}')
+            .replace(/(?<![a-zA-Z])\\?asec\b/g, '\\operatorname{arcsec}')
+            .replace(/(?<![a-zA-Z])\\?acsc\b/g, '\\operatorname{arccsc}')
+            // Handle regular hyperbolic: sinh/cosh/tanh are MathLive-native,
+            // but coth/sech/csch are NOT → \operatorname{}
             .replace(/(?<![a-zA-Z])\\?sinh\b/g, '\\sinh')
             .replace(/(?<![a-zA-Z])\\?cosh\b/g, '\\cosh')
             .replace(/(?<![a-zA-Z])\\?tanh\b/g, '\\tanh')
-            .replace(/(?<![a-zA-Z])\\?coth\b/g, '\\coth')
-            .replace(/(?<![a-zA-Z])\\?sech\b/g, '\\sech')
-            .replace(/(?<![a-zA-Z])\\?csch\b/g, '\\csch')
+            .replace(/(?<![a-zA-Z])\\?coth\b/g, '\\operatorname{coth}')
+            .replace(/(?<![a-zA-Z])\\?sech\b/g, '\\operatorname{sech}')
+            .replace(/(?<![a-zA-Z])\\?csch\b/g, '\\operatorname{csch}')
             // Handle log10 BEFORE log to prevent log matching the log prefix of log10
             .replace(/(?<![a-zA-Z])\\?log10\b/g, '\\log_{10}')
             // Handle standard log in nerdamer (which is natural log)

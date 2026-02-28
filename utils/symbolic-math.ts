@@ -20,6 +20,13 @@ export const computeSymbolicDerivative = (expression: string, variable: string =
         }
 
         const tex = nerdamerToLatex(result);
+
+        // If result still contains 'diff' or 'integrate', nerdamer couldn't evaluate it
+        const raw = result.toString();
+        if (/\bdiff\b/.test(raw) || /\bintegrate\b/.test(raw)) {
+            return null;
+        }
+
         return tex;
     } catch {
         return null;
@@ -35,6 +42,13 @@ export const computeSymbolicIntegral = (expression: string, variable: string = '
 
         const result = nerdamer.integrate(nerdamerExpr, variable);
         const tex = nerdamerToLatex(result);
+
+        // If result still contains 'integrate' or '\int', nerdamer couldn't fully evaluate it
+        const raw = result.toString();
+        if (/\bintegrate\b/.test(raw) || /\bint\b/.test(raw) || tex.includes('\\int')) {
+            return null;
+        }
+
         return tex;
     } catch {
         return null;
