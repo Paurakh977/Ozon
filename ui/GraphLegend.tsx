@@ -102,6 +102,8 @@ const cleanLatexString = (rawLatex: string): string => {
 
     // Handle \operatorname{arc} → arc
     clean = clean.replace(/\\operatorname\{arc\}/g, 'arc');
+    clean = clean.replace(/\\text\{arc\}\s*/g, 'arc');
+    clean = clean.replace(/\\mathrm\{arc\}\s*/g, 'arc');
 
     // Convert \operatorname{func} → \func for proper processing
     clean = clean.replace(/\\operatorname\{([^}]+)\}/g, '\\$1');
