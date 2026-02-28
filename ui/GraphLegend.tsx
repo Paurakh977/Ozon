@@ -83,9 +83,51 @@ const cleanLatexString = (rawLatex: string): string => {
         .replace(/\\differentialD/g, "d")
         .replace(/\\mathrm\{d\}/g, "d")
         .replace(/\\dfrac/g, "\\frac")
-        // Convert \operatorname{func} -> \func for proper processing
-        .replace(/\\operatorname\{([^}]+)\}/g, '\\$1')
         .trim();
+
+    // ==========================================
+    // FIX MATHLIVE BROKEN FUNCTION NAMES
+    // ==========================================
+    // Fix broken hyperbolic assemblies from MathLive
+    clean = clean
+        .replace(/cs\\operatorname\{\\mathrm\{ch\}\}/g, '\\csch')
+        .replace(/se\\operatorname\{\\mathrm\{ch\}\}/g, '\\sech')
+        .replace(/co\\operatorname\{\\mathrm\{th\}\}/g, '\\coth');
+
+    // Handle nested \operatorname{\mathrm{...}} → \...
+    clean = clean.replace(/\\operatorname\{\\mathrm\{([^}]+)\}\}/g, '\\$1');
+
+    // Handle \operatorname{\func} → \func
+    clean = clean.replace(/\\operatorname\{(\\[a-zA-Z]+)\}/g, '$1');
+
+    // Handle \operatorname{arc} → arc
+    clean = clean.replace(/\\operatorname\{arc\}/g, 'arc');
+
+    // Convert \operatorname{func} → \func for proper processing
+    clean = clean.replace(/\\operatorname\{([^}]+)\}/g, '\\$1');
+
+    // Reassemble broken inverse trig/hyp: arc\func → \arcfunc
+    clean = clean
+        .replace(/arc\\(sinh|cosh|tanh|coth|sech|csch)/g, '\\arc$1')
+        .replace(/arc\\(sin|cos|tan|cot|sec|csc)/g, '\\arc$1');
+    
+    // Check for "arc coth" space pattern if user typed it literally or MathLive separated it
+    clean = clean
+        .replace(/arc\s+(sinh|cosh|tanh|coth|sech|csch)/g, '\\arc$1')
+        .replace(/arc\s+(sin|cos|tan|cot|sec|csc)/g, '\\arc$1');
+
+    // Fix bare broken hyp: cs\ch → \csch etc.
+    clean = clean
+        .replace(/(^|[^a-zA-Z\\])cs\\ch/g, '$1\\csch')
+        .replace(/(^|[^a-zA-Z\\])se\\ch/g, '$1\\sech')
+        .replace(/(^|[^a-zA-Z\\])co\\th/g, '$1\\coth');
+
+    // Reassemble broken \trig<space>h → \trigh (hyperbolic functions)
+    // MathLive splits \coth → \cot + h, \arctanh → \arctan + h, etc.
+    // Safe: MathLive-known hyp commands (\sinh, \cosh, \tanh) output as one token (no space)
+    clean = clean
+        .replace(/\\(arcsin|arccos|arctan|arccot|arcsec|arccsc)(\s+)h/g, '\\$1h')
+        .replace(/\\(sin|cos|tan|cot|sec|csc)(\s+)h/g, '\\$1h');
 
     // Artifact cleaning (Critical Fix for () empty braces)
     clean = clean
@@ -99,7 +141,9 @@ const cleanLatexString = (rawLatex: string): string => {
         .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\^\{?([^}\s]+)\}?([a-zA-Z])\s*d\}/g, '\\$1^{$2}$3 d')
         .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)([a-zA-Z])\s*d\}/g, '\\$1 $2 d')
         .replace(/\\mathrm\{\\?(sin|cos|tan|cot|sec|csc)\s*\(([^)]+)\)\s*d\}/g, '\\$1($2) d')
-        .replace(/\\mathrm\{([^}]+)d\}([a-zA-Z])$/g, '$1 d$2');
+        .replace(/\\mathrm\{([^}]+)d\}([a-zA-Z])$/g, '$1 d$2')
+        // Generic fallback: remove remaining \mathrm{} wrappers
+        .replace(/\\mathrm\{([^}]+)\}/g, '$1');
 
     // Fix Logarithm bases
     clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
@@ -114,6 +158,30 @@ const cleanLatexString = (rawLatex: string): string => {
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}([a-zA-Z])/g, '(\\$1 $3)^{$2}')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^\{([^}]+)\}\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}')
         .replace(/\\(sin|cos|tan|cot|sec|csc)\^(\d+)\s*\(([^)]+)\)/g, '(\\$1($3))^{$2}');
+
+    // ==========================================
+    // SEPARATE FUNCTION NAMES FROM BARE ARGUMENTS
+    // ==========================================
+    // After assembly/mathrm cleanup, patterns like \cschx or cschx can appear.
+    // Step 1: Handle backslash-prefixed: \cschx → \csch x
+    clean = clean.replace(/\\(arcsinh|arccosh|arctanh|arccoth|arcsech|arccsch|arcsin|arccos|arctan|arccot|arcsec|arccsc|sinh|cosh|tanh|coth|sech|csch|sin|cos|tan|cot|sec|csc|ln|log|exp)([a-zA-Z])/g, '\\$1 $2');
+    // Step 2: Handle bare (no backslash) names from mathrm stripping: cschx → csch x
+    // Then prefix bare function names with backslash (longest first to prevent sinh→sin+h)
+    ['arcsinh','arccosh','arctanh','arccoth','arcsech','arccsch',
+     'arcsin','arccos','arctan','arccot','arcsec','arccsc',
+     'sinh','cosh','tanh','coth','sech','csch',
+     'sin','cos','tan','cot','sec','csc','ln','log','exp'].forEach(f => {
+        clean = clean.replace(new RegExp(`(^|[^a-zA-Z\\\\])${f}([a-zA-Z])`, 'g'), `$1${f} $2`);
+        clean = clean.replace(new RegExp(`(^|[^\\\\a-zA-Z])${f}(?![a-zA-Z])`, 'g'), `$1\\${f}`);
+    });
+
+    // ==========================================
+    // CONVERT NON-STANDARD FUNCTIONS FOR MATHLIVE
+    // ==========================================
+    // MathLive natively supports: \sin \cos \tan \cot \sec \csc \sinh \cosh \tanh
+    //   \arcsin \arccos \arctan \ln \log \exp
+    // Everything else needs \operatorname{} to render without visible backslash
+    clean = clean.replace(/\\(arccoth|arcsech|arccsch|arcsinh|arccosh|arctanh|arccot|arcsec|arccsc|coth|sech|csch)(?![a-zA-Z])/g, '\\operatorname{$1}');
     
     return clean;
 };

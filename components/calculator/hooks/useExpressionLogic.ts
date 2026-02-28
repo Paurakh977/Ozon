@@ -1,7 +1,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { MathExpression, VisibilityMode } from "../types";
-import { getRandomColor } from "../../../utils/colors";
+import { getNextColor } from "../../../utils/colors";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
 
 // Helper to determine if parent curve should be visible based on mode
@@ -73,10 +73,60 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\text\{d\}/g, "d")  // \text{d}x -> dx
             .replace(/\\operatorname\{d\}([a-zA-Z])/g, "d$1")  // \operatorname{d}x -> dx
             .replace(/\\operatorname\{d\}/g, "d")  // \operatorname{d} -> d (fallback)
-            // Convert \operatorname{func} -> \func for inverse trig/hyperbolic Desmos compatibility
-            .replace(/\\operatorname\{((?:arc)?(?:sin|cos|tan|cot|sec|csc)h?|sinh|cosh|tanh|coth|sech|csch)\}/g, '\\$1')
             .replace(/\\dfrac/g, "\\frac")
             .trim();
+
+        // ==========================================
+        // FIX MATHLIVE BROKEN FUNCTION NAMES
+        // ==========================================
+        // MathLive sometimes breaks up or wraps function names in complex ways
+        // e.g., \operatorname{\mathrm{arccsc}}, arc\cot, cs\operatorname{\mathrm{ch}}
+
+        // Fix broken hyperbolic assemblies: cs\operatorname{\mathrm{ch}} → \csch etc.
+        clean = clean
+            .replace(/cs\\operatorname\{\\mathrm\{ch\}\}/g, '\\csch')
+            .replace(/se\\operatorname\{\\mathrm\{ch\}\}/g, '\\sech')
+            .replace(/co\\operatorname\{\\mathrm\{th\}\}/g, '\\coth');
+
+        // Handle nested \operatorname{\mathrm{...}} → \... (MathLive wraps unknown funcs)
+        clean = clean.replace(/\\operatorname\{\\mathrm\{([^}]+)\}\}/g, '\\$1');
+
+        // Handle \operatorname{\func} → \func (another MathLive variant)
+        clean = clean.replace(/\\operatorname\{(\\[a-zA-Z]+)\}/g, '$1');
+
+        // Handle \operatorname{arc} → arc (plain text prefix)
+        clean = clean.replace(/\\operatorname\{arc\}/g, 'arc');
+
+        // Convert \operatorname{func} → \func for trig/hyperbolic Desmos compatibility
+        clean = clean.replace(/\\operatorname\{((?:arc)?(?:sin|cos|tan|cot|sec|csc)h?|sinh|cosh|tanh|coth|sech|csch)\}/g, '\\$1');
+
+        // Reassemble broken inverse trig/hyp: arc\func → \arcfunc
+        // Handle hyperbolic FIRST to prevent partial matching (arcsinh before arcsin)
+        clean = clean
+            .replace(/arc\\(sinh|cosh|tanh|coth|sech|csch)/g, '\\arc$1')
+            .replace(/arc\\(sin|cos|tan|cot|sec|csc)/g, '\\arc$1');
+
+        // Fix bare broken hyp after operatorname cleanup: cs\ch → \csch etc.
+        clean = clean
+            .replace(/(^|[^a-zA-Z\\])cs\\ch/g, '$1\\csch')
+            .replace(/(^|[^a-zA-Z\\])se\\ch/g, '$1\\sech')
+            .replace(/(^|[^a-zA-Z\\])co\\th/g, '$1\\coth');
+
+        // Reassemble broken \trig<space>h → \trigh (hyperbolic functions)
+        // MathLive splits \coth → \cot + h, \arctanh → \arctan + h, etc.
+        // Safe: MathLive-known hyp commands (\sinh, \cosh, \tanh) have no space
+        // Inverse forms first (longer match prevents \arcsin h matching before \arcsec h)
+        clean = clean
+            .replace(/\\(arcsin|arccos|arctan|arccot|arcsec|arccsc)(\s+)h/g, '\\$1h')
+            .replace(/\\(sin|cos|tan|cot|sec|csc)(\s+)h/g, '\\$1h');
+
+        // Ensure reassembled hyperbolic names don't stick to their argument variable
+        // \cothx → \coth x, \arctanhx → \arctanh x
+        clean = clean.replace(/\\(arcsinh|arccosh|arctanh|arccoth|arcsech|arccsch|sinh|cosh|tanh|coth|sech|csch)([a-zA-Z])/g, '\\$1 $2');
+
+        // Ensure e^ exponents are properly braced for Desmos (safety normalization)
+        // e^x → e^{x} for single char without braces
+        clean = clean.replace(/(^|[^a-zA-Z\\])e\^([a-zA-Z0-9])(?=[^a-zA-Z0-9{]|$)/g, '$1e^{$2}');
 
         // Fix Logarithm bases: \log_5 10 -> \log_{$1} 10
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
@@ -807,18 +857,20 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
     const addExpr = (initialLatex: string = "") => {
         const id = Math.random().toString(36).substr(2, 9);
+        const lastExpr = expressions[expressions.length - 1];
+        const newColor = getNextColor(lastExpr?.color);
         setExpressions(prev => [...prev, { 
             id, 
             latex: initialLatex, 
-            color: getRandomColor(), 
+            color: newColor, 
             visible: true, 
             visibilityMode: 'all',
             missingVariables: [],
-            isAreaMode: false // Default to false
+            isAreaMode: false
         }]);
         // If we have initial latex, render it immediately
         if (initialLatex) {
-             setTimeout(() => processExpression(id, initialLatex, "#2d70b3", true, 'all'), 0);
+             setTimeout(() => processExpression(id, initialLatex, newColor, true, 'all'), 0);
         }
     };
 
