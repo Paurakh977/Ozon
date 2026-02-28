@@ -30,6 +30,8 @@ export const latexToNerdamer = (latex: string): string => {
 
     // Handle \operatorname{arc} → arc
     expr = expr.replace(/\\operatorname\{arc\}/g, 'arc');
+    expr = expr.replace(/\\text\{arc\}\s*/g, 'arc');
+    expr = expr.replace(/\\mathrm\{arc\}\s*/g, 'arc');
 
     // Convert \operatorname{func} -> \func for proper processing
     expr = expr.replace(/\\operatorname\{([^}]+)\}/g, '\\$1');
