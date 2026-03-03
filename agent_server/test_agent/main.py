@@ -8,80 +8,79 @@ from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import InMemoryRunner
 from google.genai import types
 
-# Import the agent you defined in agent.py
 import agent
 
 app = FastAPI()
-
-# Mount the 'static' folder so we can serve index.html directly
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Runner created once at startup — shared across all connections, no re-init per request
+APP_NAME = 'math_diffusion_web'
+runner = InMemoryRunner(agent=agent.root_agent, app_name=APP_NAME)
+
 
 @app.get("/")
 async def root():
-    """Redirects the base URL to your beautiful HTML interface."""
     return RedirectResponse(url="/static/index.html")
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    app_name = 'math_diffusion_web'
+
     user_id = f"user_{uuid.uuid4().hex[:8]}"
-    
-    # Initialize the ADK runner and session
-    runner = InMemoryRunner(agent=agent.root_agent, app_name=app_name)
+
+    # Session created ONCE per WebSocket connection (i.e. once per conversation)
     session = await runner.session_service.create_session(
-        app_name=app_name,
+        app_name=APP_NAME,
         user_id=user_id,
     )
 
     try:
-        # Wait for the user's prompt sent via JavaScript
-        prompt = await websocket.receive_text()
-        
-        content = types.Content(
-            role='user',
-            parts=[types.Part.from_text(text=prompt)],
-        )
+        # Keep the connection open — handle every message in the same session
+        while True:
+            prompt = await websocket.receive_text()
 
-        saw_partial_text = False
+            content = types.Content(
+                role='user',
+                parts=[types.Part.from_text(text=prompt)],
+            )
 
-        # Run the agent with SSE Streaming enabled
-        async for event in runner.run_async(
-            user_id=user_id,
-            session_id=session.id,
-            new_message=content,
-            run_config=RunConfig(streaming_mode=StreamingMode.SSE),
-        ):
-            if not event.content:
-                continue
-            
-            # Extract the generated text chunk
-            text = ''.join(part.text for part in event.content.parts if part.text)
-            if not text:
-                continue
+            saw_partial_text = False
 
-            # Stream intermediate partial diffusing chunks back to the browser
-            if getattr(event, "partial", False):
-                await websocket.send_json({"type": "chunk", "text": text})
-                saw_partial_text = True
-                continue
+            async for event in runner.run_async(
+                user_id=user_id,
+                session_id=session.id,
+                new_message=content,
+                run_config=RunConfig(streaming_mode=StreamingMode.SSE),
+            ):
+                if not event.content:
+                    continue
 
-            # If SSE gives us the final string without partials
-            if not saw_partial_text:
-                await websocket.send_json({"type": "chunk", "text": text})
+                text = ''.join(part.text for part in event.content.parts if part.text)
+                if not text:
+                    continue
 
-        # Notify the browser that the stream has finished
-        await websocket.send_json({"type": "done"})
+                if getattr(event, "partial", False):
+                    await websocket.send_json({"type": "chunk", "text": text})
+                    saw_partial_text = True
+                    continue
+
+                if not saw_partial_text:
+                    await websocket.send_json({"type": "chunk", "text": text})
+
+            # Signal end-of-turn so the UI can re-enable input
+            await websocket.send_json({"type": "done"})
 
     except WebSocketDisconnect:
         print(f"Client {user_id} disconnected.")
     except Exception as e:
-        print(f"Error: {e}")
-        await websocket.send_json({"type": "error", "text": str(e)})
+        print(f"Error for {user_id}: {e}")
+        try:
+            await websocket.send_json({"type": "error", "text": str(e)})
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
-    # Start the server on port 8000
-    print("🚀 Server starting! Open http://127.0.0.1:8000 in your browser.")
+    print("Server starting at http://127.0.0.1:8000")
     uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)

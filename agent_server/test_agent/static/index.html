@@ -3,162 +3,324 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Inception: Standard vs Diffusion (Math Edition)</title>
+<title>Agent Chat</title>
 
-<!-- Included Marked (Markdown) -->
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-
-<!-- Included KaTeX (Math Rendering) -->
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
 
 <style>
-    body { font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #f4f4f9; color: #333; }
-    #container { max-width: 900px; margin: auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); position: relative; }
-    
-    textarea, button { 
-        width: 100%; padding: 12px; margin: 8px 0; 
-        border: 1px solid #ddd; border-radius: 6px; 
-        font-size: 16px; box-sizing: border-box; 
-    }
-    
-    button { background: #000; color: #fff; cursor: pointer; font-weight: bold; transition: opacity 0.2s; border: none; }
-    button:hover { opacity: 0.8; }
-    button:disabled { background: #888; cursor: not-allowed; }
-    
-    #output-wrapper { position: relative; margin-top: 20px; }
-    #content { 
-        padding: 20px; 
-        border: 1px solid #eee; border-radius: 8px; 
-        min-height: 200px; line-height: 1.7; background: #fafafa;
-        overflow-x: auto;
-    }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-    #content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.95em; }
-    #content th, #content td { border: 1px solid #ddd; padding: 10px; text-align: left; }
-    #content th { background-color: #f2f2f2; font-weight: bold; }
-    #content tr:nth-child(even) { background-color: #f9f9f9; }
-    
-    #content pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 6px; overflow-x: auto; }
-    #content code { background: #e0e0e0; padding: 2px 5px; border-radius: 4px; font-family: monospace; color: #d63384; }
-    #content pre code { background: transparent; color: inherit; padding: 0; }
-    
-    .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f0f0f0;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
 
-    #copyBtn {
-        position: absolute; top: 10px; right: 10px;
-        background: #eee; color: #333; border: 1px solid #ccc;
-        padding: 5px 10px; font-size: 12px; border-radius: 4px;
-        width: auto; cursor: pointer; display: none; z-index: 10;
-    }
-    #copyBtn:hover { background: #ddd; }
+  #app {
+    width: 100%;
+    max-width: 760px;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-left: 1px solid #e5e5e5;
+    border-right: 1px solid #e5e5e5;
+  }
+
+  /* Header */
+  #header {
+    padding: 14px 20px;
+    border-bottom: 1px solid #e5e5e5;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #fff;
+  }
+  #header h1 { font-size: 15px; font-weight: 600; }
+
+  #status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: #ccc;
+    flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  #status-dot.connected    { background: #22c55e; }
+  #status-dot.connecting   { background: #f59e0b; }
+  #status-dot.disconnected { background: #ef4444; }
+  #status-label { font-size: 12px; color: #888; }
+
+  /* Messages */
+  #messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scroll-behavior: smooth;
+  }
+
+  .msg { display: flex; flex-direction: column; max-width: 82%; gap: 4px; }
+  .msg.user  { align-self: flex-end; align-items: flex-end; }
+  .msg.agent { align-self: flex-start; align-items: flex-start; }
+
+  .bubble {
+    padding: 10px 14px;
+    border-radius: 16px;
+    font-size: 14px;
+    line-height: 1.65;
+    word-break: break-word;
+  }
+  .msg.user  .bubble { background: #000; color: #fff; border-bottom-right-radius: 4px; }
+  .msg.agent .bubble { background: #f4f4f5; color: #111; border-bottom-left-radius: 4px; min-width: 60px; }
+  .msg.agent .bubble.streaming { opacity: 0.85; }
+
+  /* Markdown inside bubbles */
+  .bubble p  { margin: 0 0 8px; }
+  .bubble p:last-child { margin-bottom: 0; }
+  .bubble h1,.bubble h2,.bubble h3 { margin: 10px 0 4px; font-size: 1em; font-weight: 700; }
+  .bubble ul,.bubble ol { padding-left: 18px; margin: 4px 0; }
+  .bubble li { margin: 2px 0; }
+  .bubble pre { background: #1e1e1e; color: #d4d4d4; padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; font-size: 13px; }
+  .bubble code { background: rgba(0,0,0,0.08); padding: 1px 5px; border-radius: 4px; font-size: 13px; font-family: monospace; }
+  .bubble pre code { background: transparent; padding: 0; color: inherit; }
+  .bubble table { border-collapse: collapse; margin: 8px 0; font-size: 13px; width: 100%; }
+  .bubble th,.bubble td { border: 1px solid #d1d5db; padding: 6px 10px; }
+  .bubble th { background: #f3f4f6; font-weight: 600; }
+  .bubble tr:nth-child(even) td { background: #fafafa; }
+  .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
+
+  /* Typing cursor */
+  .cursor::after {
+    content: '▋';
+    animation: blink 0.7s step-end infinite;
+    color: #555; font-size: 12px;
+  }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+  /* Input area */
+  #input-area {
+    border-top: 1px solid #e5e5e5;
+    padding: 12px 16px;
+    display: flex;
+    gap: 8px;
+    background: #fff;
+    align-items: flex-end;
+  }
+  #prompt {
+    flex: 1; resize: none;
+    border: 1px solid #d1d5db; border-radius: 10px;
+    padding: 9px 12px; font-size: 14px; font-family: inherit;
+    line-height: 1.5; outline: none;
+    max-height: 160px; overflow-y: auto;
+    transition: border-color 0.2s;
+  }
+  #prompt:focus { border-color: #888; }
+
+  #sendBtn {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: #000; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: opacity 0.2s;
+  }
+  #sendBtn:disabled { opacity: 0.3; cursor: not-allowed; }
+  #sendBtn svg { fill: #fff; width: 16px; height: 16px; }
+
+  /* Empty state */
+  #empty {
+    flex: 1; display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 8px; color: #aaa; font-size: 14px; pointer-events: none;
+  }
+  #empty svg { opacity: 0.25; }
 </style>
 </head>
 <body>
 
-<div id="container">
-    <h2>Inception API: Math & Diffusion</h2>
-    
-    <textarea id="prompt" placeholder="Type a prompt..." rows="3">Prove the quadratic formula and show a table of values for x^2.</textarea>
-    
-    <button id="runBtn">Generate</button>
-    
-    <div id="output-wrapper">
-        <button id="copyBtn" onclick="copyToClipboard()">Copy Response</button>
-        <div id="content"></div>
+<div id="app">
+  <div id="header">
+    <div id="status-dot" class="connecting"></div>
+    <h1>Agent</h1>
+    <span id="status-label">Connecting…</span>
+  </div>
+
+  <div id="messages">
+    <div id="empty">
+      <svg width="36" height="36" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+      Send a message to start
     </div>
+  </div>
+
+  <div id="input-area">
+    <textarea id="prompt" placeholder="Message…" rows="1" disabled></textarea>
+    <button id="sendBtn" disabled title="Send">
+      <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+    </button>
+  </div>
 </div>
 
 <script>
-let lastFullContent = "";
-let ws = null;
+marked.setOptions({ breaks: true });
+
+// ── Helpers ──────────────────────────────────────────────────────────────
 
 function renderContent(text) {
-    const mathSegments = [];
-    let protectedText = text.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$[^\n$]*?(?<!\\)\$)/g, (match) => {
-        mathSegments.push(match);
-        return `%%%MATH${mathSegments.length - 1}%%%`;
-    });
+  const segments = [];
+  const protected_ = text.replace(
+    /(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$[^\n$]*?(?<!\\)\$)/g,
+    (m) => { segments.push(m); return `%%%M${segments.length - 1}%%%`; }
+  );
 
-    let html = marked.parse(protectedText);
+  let html = marked.parse(protected_);
 
-    html = html.replace(/%%%MATH(\d+)%%%/g, (match, index) => {
-        const originalMath = mathSegments[parseInt(index)];
-        let cleanMath = originalMath;
-        let isDisplayMode = false;
+  html = html.replace(/%%%M(\d+)%%%/g, (_, i) => {
+    const raw = segments[+i];
+    let math = raw, display = false;
+    if (raw.startsWith('$$'))       { math = raw.slice(2, -2); display = true; }
+    else if (raw.startsWith('\\[')) { math = raw.slice(2, -2); display = true; }
+    else if (raw.startsWith('\\(')) { math = raw.slice(2, -2); }
+    else if (raw.startsWith('$'))   { math = raw.slice(1, -1); }
+    try { return katex.renderToString(math, { displayMode: display, throwOnError: false }); }
+    catch { return raw; }
+  });
 
-        if (originalMath.startsWith('$$')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = true; } 
-        else if (originalMath.startsWith('\\[')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = true; } 
-        else if (originalMath.startsWith('\\(')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = false; } 
-        else if (originalMath.startsWith('$')) { cleanMath = originalMath.slice(1, -1); isDisplayMode = false; }
-
-        try {
-            return katex.renderToString(cleanMath, { displayMode: isDisplayMode, throwOnError: false, output: 'html' });
-        } catch (e) {
-            return originalMath;
-        }
-    });
-
-    return html;
+  return html;
 }
 
-document.getElementById('runBtn').addEventListener('click', () => {
-    const prompt = document.getElementById('prompt').value.trim();
-    const contentElement = document.getElementById('content');
-    const copyBtn = document.getElementById('copyBtn');
-    const runBtn = document.getElementById('runBtn');
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+}
 
-    if (!prompt) return;
+function scrollBottom() {
+  const m = document.getElementById('messages');
+  m.scrollTop = m.scrollHeight;
+}
 
-    // Reset UI
-    contentElement.innerHTML = '<span style="color:#888">Thinking...</span>';
-    copyBtn.style.display = 'none';
-    runBtn.disabled = true;
-    lastFullContent = "";
+// ── State ────────────────────────────────────────────────────────────────
 
-    // Connect to FastAPI WebSocket
-    ws = new WebSocket(`ws://${location.host}/ws`);
+let ws = null;
+let busy = false;
+let currentAgentBubble = null;
 
-    ws.onopen = () => {
-        // Send the prompt to the backend
-        ws.send(prompt);
-    };
+const messagesEl = document.getElementById('messages');
+const emptyEl    = document.getElementById('empty');
+const promptEl   = document.getElementById('prompt');
+const sendBtn    = document.getElementById('sendBtn');
+const statusDot  = document.getElementById('status-dot');
+const statusLbl  = document.getElementById('status-label');
 
-    ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
+function setStatus(state, label) {
+  statusDot.className = state;
+  statusLbl.textContent = label;
+}
 
-        if (data.type === 'chunk') {
-            // Because Diffusion provides full replacement text per chunk, we overwrite
-            lastFullContent = data.text;
-            contentElement.innerHTML = renderContent(lastFullContent);
-        } 
-        else if (data.type === 'done') {
-            if (lastFullContent) copyBtn.style.display = 'block';
-            runBtn.disabled = false;
-            ws.close();
-        } 
-        else if (data.type === 'error') {
-            contentElement.innerHTML = `<strong style="color:red">Error:</strong> ${data.text}`;
-            runBtn.disabled = false;
-            ws.close();
-        }
-    };
+function addMessage(role, html, streaming = false) {
+  emptyEl.style.display = 'none';
+  const wrap   = document.createElement('div');
+  wrap.className = `msg ${role}`;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble' + (streaming ? ' streaming cursor' : '');
+  bubble.innerHTML = html;
+  wrap.appendChild(bubble);
+  messagesEl.appendChild(wrap);
+  scrollBottom();
+  return bubble;
+}
 
-    ws.onerror = () => {
-        contentElement.innerHTML = `<strong style="color:red">WebSocket Connection Error</strong>`;
-        runBtn.disabled = false;
-    };
+function setReady(ready) {
+  promptEl.disabled = !ready;
+  sendBtn.disabled  = !ready || busy;
+  if (ready && !busy) promptEl.focus();
+}
+
+// ── WebSocket — one connection for the whole conversation ─────────────────
+
+function connect() {
+  setStatus('connecting', 'Connecting…');
+  setReady(false);
+  ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onopen = () => {
+    setStatus('connected', 'Connected');
+    setReady(true);
+  };
+
+  ws.onmessage = ({ data }) => {
+    const msg = JSON.parse(data);
+
+    if (msg.type === 'chunk') {
+      if (!currentAgentBubble) {
+        currentAgentBubble = addMessage('agent', '', true);
+      }
+      currentAgentBubble.innerHTML = renderContent(msg.text);
+      scrollBottom();
+    }
+    else if (msg.type === 'done') {
+      if (currentAgentBubble) {
+        currentAgentBubble.classList.remove('streaming', 'cursor');
+        currentAgentBubble = null;
+      }
+      busy = false;
+      setReady(true);
+    }
+    else if (msg.type === 'error') {
+      if (currentAgentBubble) {
+        currentAgentBubble.classList.remove('streaming', 'cursor');
+        currentAgentBubble = null;
+      }
+      addMessage('agent', `<span style="color:#ef4444">Error: ${msg.text}</span>`);
+      busy = false;
+      setReady(true);
+    }
+  };
+
+  ws.onclose = () => {
+    setStatus('disconnected', 'Disconnected — refresh to reconnect');
+    setReady(false);
+    busy = false;
+  };
+
+  ws.onerror = () => {
+    setStatus('disconnected', 'Connection error');
+  };
+}
+
+// ── Send ─────────────────────────────────────────────────────────────────
+
+function send() {
+  const text = promptEl.value.trim();
+  if (!text || busy || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+  addMessage('user', marked.parse(text));
+  promptEl.value = '';
+  autoResize(promptEl);
+
+  busy = true;
+  currentAgentBubble = null;
+  sendBtn.disabled = true;
+
+  ws.send(text);
+  scrollBottom();
+}
+
+sendBtn.addEventListener('click', send);
+
+promptEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
 
-function copyToClipboard() {
-    if (!lastFullContent) return;
-    navigator.clipboard.writeText(lastFullContent).then(() => {
-        const btn = document.getElementById('copyBtn');
-        const orig = btn.innerText;
-        btn.innerText = "Copied!";
-        setTimeout(() => btn.innerText = orig, 2000);
-    });
-}
+promptEl.addEventListener('input', () => autoResize(promptEl));
+
+// ── Boot — establish connection on page load ──────────────────────────────
+
+connect();
 </script>
 </body>
 </html>
