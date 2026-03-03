@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inception: Standard vs Diffusion (Math Edition)</title>
+
+<!-- 1. Include Marked (Markdown) -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- 2. Include KaTeX (Math Rendering) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+
+<style>
+    body { font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #f4f4f9; color: #333; }
+    #container { max-width: 900px; margin: auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); position: relative; }
+    
+    /* Inputs */
+    input[type="password"], textarea, button { 
+        width: 100%; padding: 12px; margin: 8px 0; 
+        border: 1px solid #ddd; border-radius: 6px; 
+        font-size: 16px; box-sizing: border-box; 
+    }
+    
+    button { background: #000; color: #fff; cursor: pointer; font-weight: bold; transition: opacity 0.2s; border: none; }
+    button:hover { opacity: 0.8; }
+    
+    /* Controls */
+    .controls { display: flex; align-items: center; justify-content: space-between; margin: 15px 0; background: #eee; padding: 10px; border-radius: 8px;}
+    .toggle-container { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+    
+    /* Output Box */
+    #output-wrapper { position: relative; margin-top: 20px; }
+    #content { 
+        padding: 20px; 
+        border: 1px solid #eee; border-radius: 8px; 
+        min-height: 200px; line-height: 1.7; background: #fafafa;
+        overflow-x: auto;
+    }
+
+    /* Stats */
+    #stats { margin-top: 10px; font-size: 13px; color: #666; font-family: monospace; display: flex; gap: 15px; }
+
+    /* --- MATH & MARKDOWN STYLING --- */
+    
+    /* Tables: Professional Look */
+    #content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.95em; }
+    #content th, #content td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    #content th { background-color: #f2f2f2; font-weight: bold; }
+    #content tr:nth-child(even) { background-color: #f9f9f9; }
+    
+    /* Code Blocks */
+    #content pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 6px; overflow-x: auto; }
+    #content code { background: #e0e0e0; padding: 2px 5px; border-radius: 4px; font-family: monospace; color: #d63384; }
+    #content pre code { background: transparent; color: inherit; padding: 0; }
+    
+    /* Block Math spacing */
+    .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+
+    /* Copy Button */
+    #copyBtn {
+        position: absolute; top: 10px; right: 10px;
+        background: #eee; color: #333; border: 1px solid #ccc;
+        padding: 5px 10px; font-size: 12px; border-radius: 4px;
+        width: auto; cursor: pointer; display: none; z-index: 10;
+    }
+    #copyBtn:hover { background: #ddd; }
+</style>
+</head>
+<body>
+
+<div id="container">
+    <h2>Inception API: Math & Diffusion</h2>
+    
+    <input type="password" id="apiKey" placeholder="Enter API Key (sk-...)" />
+    <textarea id="prompt" placeholder="Type a prompt..." rows="3">Prove the quadratic formula and show a table of values for x^2.</textarea>
+    
+    <div class="controls">
+        <label class="toggle-container">
+            <input type="checkbox" id="diffusionToggle" checked>
+            <strong>Enable Diffusion Effect</strong>
+        </label>
+        <span style="font-size: 0.9em; color: #555;">(Best for math visualization)</span>
+    </div>
+
+    <button id="runBtn">Generate</button>
+    
+    <div id="output-wrapper">
+        <button id="copyBtn" onclick="copyToClipboard()">Copy Response</button>
+        <div id="content"></div>
+    </div>
+    
+    <div id="stats">
+        <span>In: <b id="inTok">0</b></span>
+        <span>Out: <b id="outTok">0</b></span>
+        <span>Total: <b id="totalTok">0</b></span>
+    </div>
+</div>
+
+<script>
+let lastFullContent = ""; // Stores raw markdown for copying
+
+// --- MATH RENDERING LOGIC ---
+// This function safeguards math from Markdown parsing, renders Markdown, then puts Math back via KaTeX
+function renderContent(text) {
+    // 1. Tokenize Math: Find $$...$$ and $...$ and \[...\] and \(...\)
+    const mathSegments = [];
+    let protectedText = text.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$[^\n$]*?(?<!\\)\$)/g, (match) => {
+        // Store the math expression
+        mathSegments.push(match);
+        // Return a unique placeholder
+        return `%%%MATH${mathSegments.length - 1}%%%`;
+    });
+
+    // 2. Parse Markdown (Tables, bold, lists, etc.)
+    let html = marked.parse(protectedText);
+
+    // 3. Restore and Render Math using KaTeX
+    html = html.replace(/%%%MATH(\d+)%%%/g, (match, index) => {
+        const originalMath = mathSegments[parseInt(index)];
+        
+        // Strip delimiters for KaTeX
+        let cleanMath = originalMath;
+        let isDisplayMode = false;
+
+        if (originalMath.startsWith('$$')) {
+            cleanMath = originalMath.slice(2, -2);
+            isDisplayMode = true;
+        } else if (originalMath.startsWith('\\[')) {
+            cleanMath = originalMath.slice(2, -2);
+            isDisplayMode = true;
+        } else if (originalMath.startsWith('\\(')) {
+            cleanMath = originalMath.slice(2, -2);
+            isDisplayMode = false;
+        } else if (originalMath.startsWith('$')) {
+            cleanMath = originalMath.slice(1, -1);
+            isDisplayMode = false;
+        }
+
+        try {
+            return katex.renderToString(cleanMath, {
+                displayMode: isDisplayMode,
+                throwOnError: false,
+                output: 'html', // Generate HTML (copyable text hidden inside)
+            });
+        } catch (e) {
+            return originalMath; // Fallback if error
+        }
+    });
+
+    return html;
+}
+
+// --- MAIN BUTTON LOGIC ---
+document.getElementById('runBtn').addEventListener('click', async () => {
+    const apiKey = document.getElementById('apiKey').value.trim();
+    const prompt = document.getElementById('prompt').value.trim();
+    const isDiffusion = document.getElementById('diffusionToggle').checked;
+    const contentElement = document.getElementById('content');
+    const copyBtn = document.getElementById('copyBtn');
+
+    // Reset UI
+    document.getElementById('inTok').innerText = '0';
+    document.getElementById('outTok').innerText = '0';
+    document.getElementById('totalTok').innerText = '0';
+    contentElement.innerHTML = '<span style="color:#888">Thinking...</span>';
+    copyBtn.style.display = 'none';
+    lastFullContent = "";
+
+    if (!apiKey) { alert('Please enter API Key'); return; }
+
+    try {
+        const response = await fetch('https://api.inceptionlabs.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'mercury-2',
+                messages: [{ role: 'user', content: prompt }],
+                max_tokens: 10000,
+                stream: true,
+                diffusing: isDiffusion,
+                stream_options: { include_usage: true },
+                reasoning_effort: "high"
+            })
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        let buffer = '';
+        let accumulatedText = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); 
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data: ')) continue;
+                if (trimmed === 'data: [DONE]') continue;
+                
+                try {
+                    const jsonStr = trimmed.substring(6);
+                    const data = JSON.parse(jsonStr);
+                    const delta = data.choices?.[0]?.delta;
+
+                    if (delta && delta.content) {
+                        if (isDiffusion) {
+                            // Mode 1: Diffusion (Replace)
+                            lastFullContent = delta.content; // Save for copy
+                            contentElement.innerHTML = renderContent(delta.content);
+                        } else {
+                            // Mode 2: Standard (Append)
+                            accumulatedText += delta.content;
+                            lastFullContent = accumulatedText; // Save for copy
+                            contentElement.innerHTML = renderContent(accumulatedText);
+                        }
+                    }
+
+                    if (data.usage) {
+                        document.getElementById('inTok').innerText = data.usage.prompt_tokens;
+                        document.getElementById('outTok').innerText = data.usage.completion_tokens;
+                        document.getElementById('totalTok').innerText = data.usage.total_tokens;
+                    }
+
+                } catch (e) {
+                    console.warn('JSON Parse error', e);
+                }
+            }
+        }
+        // Show copy button when done
+        if(lastFullContent) copyBtn.style.display = 'block';
+
+    } catch (err) {
+        contentElement.innerHTML = `<strong style="color:red">Error:</strong> ${err.message}`;
+    }
+});
+
+function copyToClipboard() {
+    if (!lastFullContent) return;
+    navigator.clipboard.writeText(lastFullContent).then(() => {
+        const btn = document.getElementById('copyBtn');
+        const orig = btn.innerText;
+        btn.innerText = "Copied!";
+        setTimeout(() => btn.innerText = orig, 2000);
+    });
+}
+</script>
+
+</body>
+</html>
