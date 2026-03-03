@@ -1,0 +1,37 @@
+# Byte-code files
+*.pyc
+__pycache__/
+*.$py.class
+
+# Temporary files
+*.swp
+*.bak
+*.tmp
+
+# IDE-specific files and directories
+# VS Code
+.vscode/
+# PyCharm/IntelliJ
+.idea/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Build artifacts and distributions
+dist/
+build/
+*.egg-info/
+.coverage
+
+# Installer logs
+pip-log.txt
+pip-delete-this-line.txt
+
+# OS-generated files
+.DS_Store # macOS
+Thumbs.db # Windows
