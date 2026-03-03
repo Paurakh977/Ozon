@@ -10,9 +10,11 @@ Mercury_2_model= LiteLlm(
     model="openai/mercury-2",
     api_key=api_key,
     api_base="https://api.inceptionlabs.ai/v1",
-    stream=True, # Streaming MUST be true to use the diffusing effect
+    max_tokens=5000,
+    stream=True, 
     extra_body={
-        "diffusing": True # Pass the custom diffusing parameter here
+        "diffusing": True ,
+        "reasoning_effort": "instant",  
     }
 )
 

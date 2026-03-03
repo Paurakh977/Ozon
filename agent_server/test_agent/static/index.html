@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inception: Standard vs Diffusion (Math Edition)</title>
+
+<!-- Included Marked (Markdown) -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- Included KaTeX (Math Rendering) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+
+<style>
+    body { font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px; background: #f4f4f9; color: #333; }
+    #container { max-width: 900px; margin: auto; background: #fff; padding: 30px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); position: relative; }
+    
+    textarea, button { 
+        width: 100%; padding: 12px; margin: 8px 0; 
+        border: 1px solid #ddd; border-radius: 6px; 
+        font-size: 16px; box-sizing: border-box; 
+    }
+    
+    button { background: #000; color: #fff; cursor: pointer; font-weight: bold; transition: opacity 0.2s; border: none; }
+    button:hover { opacity: 0.8; }
+    button:disabled { background: #888; cursor: not-allowed; }
+    
+    #output-wrapper { position: relative; margin-top: 20px; }
+    #content { 
+        padding: 20px; 
+        border: 1px solid #eee; border-radius: 8px; 
+        min-height: 200px; line-height: 1.7; background: #fafafa;
+        overflow-x: auto;
+    }
+
+    #content table { width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 0.95em; }
+    #content th, #content td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+    #content th { background-color: #f2f2f2; font-weight: bold; }
+    #content tr:nth-child(even) { background-color: #f9f9f9; }
+    
+    #content pre { background: #2d2d2d; color: #f8f8f2; padding: 15px; border-radius: 6px; overflow-x: auto; }
+    #content code { background: #e0e0e0; padding: 2px 5px; border-radius: 4px; font-family: monospace; color: #d63384; }
+    #content pre code { background: transparent; color: inherit; padding: 0; }
+    
+    .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; }
+
+    #copyBtn {
+        position: absolute; top: 10px; right: 10px;
+        background: #eee; color: #333; border: 1px solid #ccc;
+        padding: 5px 10px; font-size: 12px; border-radius: 4px;
+        width: auto; cursor: pointer; display: none; z-index: 10;
+    }
+    #copyBtn:hover { background: #ddd; }
+</style>
+</head>
+<body>
+
+<div id="container">
+    <h2>Inception API: Math & Diffusion</h2>
+    
+    <textarea id="prompt" placeholder="Type a prompt..." rows="3">Prove the quadratic formula and show a table of values for x^2.</textarea>
+    
+    <button id="runBtn">Generate</button>
+    
+    <div id="output-wrapper">
+        <button id="copyBtn" onclick="copyToClipboard()">Copy Response</button>
+        <div id="content"></div>
+    </div>
+</div>
+
+<script>
+let lastFullContent = "";
+let ws = null;
+
+function renderContent(text) {
+    const mathSegments = [];
+    let protectedText = text.replace(/(\$\$[\s\S]*?\$\$|\\\[[\s\S]*?\\\]|\\\([\s\S]*?\\\)|(?<!\\)\$[^\n$]*?(?<!\\)\$)/g, (match) => {
+        mathSegments.push(match);
+        return `%%%MATH${mathSegments.length - 1}%%%`;
+    });
+
+    let html = marked.parse(protectedText);
+
+    html = html.replace(/%%%MATH(\d+)%%%/g, (match, index) => {
+        const originalMath = mathSegments[parseInt(index)];
+        let cleanMath = originalMath;
+        let isDisplayMode = false;
+
+        if (originalMath.startsWith('$$')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = true; } 
+        else if (originalMath.startsWith('\\[')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = true; } 
+        else if (originalMath.startsWith('\\(')) { cleanMath = originalMath.slice(2, -2); isDisplayMode = false; } 
+        else if (originalMath.startsWith('$')) { cleanMath = originalMath.slice(1, -1); isDisplayMode = false; }
+
+        try {
+            return katex.renderToString(cleanMath, { displayMode: isDisplayMode, throwOnError: false, output: 'html' });
+        } catch (e) {
+            return originalMath;
+        }
+    });
+
+    return html;
+}
+
+document.getElementById('runBtn').addEventListener('click', () => {
+    const prompt = document.getElementById('prompt').value.trim();
+    const contentElement = document.getElementById('content');
+    const copyBtn = document.getElementById('copyBtn');
+    const runBtn = document.getElementById('runBtn');
+
+    if (!prompt) return;
+
+    // Reset UI
+    contentElement.innerHTML = '<span style="color:#888">Thinking...</span>';
+    copyBtn.style.display = 'none';
+    runBtn.disabled = true;
+    lastFullContent = "";
+
+    // Connect to FastAPI WebSocket
+    ws = new WebSocket(`ws://${location.host}/ws`);
+
+    ws.onopen = () => {
+        // Send the prompt to the backend
+        ws.send(prompt);
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === 'chunk') {
+            // Because Diffusion provides full replacement text per chunk, we overwrite
+            lastFullContent = data.text;
+            contentElement.innerHTML = renderContent(lastFullContent);
+        } 
+        else if (data.type === 'done') {
+            if (lastFullContent) copyBtn.style.display = 'block';
+            runBtn.disabled = false;
+            ws.close();
+        } 
+        else if (data.type === 'error') {
+            contentElement.innerHTML = `<strong style="color:red">Error:</strong> ${data.text}`;
+            runBtn.disabled = false;
+            ws.close();
+        }
+    };
+
+    ws.onerror = () => {
+        contentElement.innerHTML = `<strong style="color:red">WebSocket Connection Error</strong>`;
+        runBtn.disabled = false;
+    };
+});
+
+function copyToClipboard() {
+    if (!lastFullContent) return;
+    navigator.clipboard.writeText(lastFullContent).then(() => {
+        const btn = document.getElementById('copyBtn');
+        const orig = btn.innerText;
+        btn.innerText = "Copied!";
+        setTimeout(() => btn.innerText = orig, 2000);
+    });
+}
+</script>
+</body>
+</html>
