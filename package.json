@@ -11,9 +11,9 @@
   "dependencies": {
     "clsx": "^2.1.1",
     "desmos": "^1.5.4",
-    "framer-motion": "^12.26.2",
+    "framer-motion": "^12.34.5",
     "lodash": "^4.17.21",
-    "lucide-react": "^0.562.0",
+    "lucide-react": "^0.576.0",
     "mafs": "^0.21.0",
     "mathjs": "^15.1.0",
     "mathlive": "^0.108.2",
@@ -22,6 +22,10 @@
     "next-themes": "^0.4.6",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "tailwind-merge": "^3.4.0"
   },
   "devDependencies": {
