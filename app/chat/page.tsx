@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import remarkGfm from 'remark-gfm';
@@ -69,7 +69,7 @@ function MathBlock({ children }: { children: React.ReactNode }) {
 }
 
 // --- Markdown Renderer ---
-function AgentContent({ content, isUser }: { content: string; isUser: boolean }) {
+const AgentContent = React.memo(function AgentContent({ content, isUser }: { content: string; isUser: boolean }) {
   return (
     <div className={cn(
       'text-[15px] leading-[1.75] prose max-w-none break-words',
@@ -168,9 +168,165 @@ function AgentContent({ content, isUser }: { content: string; isUser: boolean })
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 // --- Main Page ---
+const ChatMessage = React.memo(({ msg, i }: { msg: Message, i: number }) => (
+  <motion.div
+    key={i}
+    variants={msgVariants}
+    initial="hidden"
+    animate="visible"
+    className={cn('flex w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}
+  >
+    {/* Avatar dot */}
+    {msg.role === 'agent' && (
+      <div className="flex-none mr-3 mt-1">
+        <div className="w-7 h-7 rounded-full flex items-center justify-center
+          bg-gradient-to-br from-violet-500 to-indigo-600 dark:from-violet-600 dark:to-indigo-700
+          text-white shadow-sm shadow-violet-200 dark:shadow-violet-900/30">
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+              d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5" />
+          </svg>
+        </div>
+      </div>
+    )}
+
+    <div className={cn(
+      'relative min-w-0',
+      msg.role === 'user'
+        ? 'max-w-[70%] xl:max-w-[60%]'
+        : 'max-w-[78%] xl:max-w-[72%] 2xl:max-w-[68%] flex-1',
+    )}>
+      <div className={cn(
+        'rounded-2xl px-5 py-4',
+        msg.role === 'user'
+          ? [
+              'rounded-tr-sm',
+              'bg-gradient-to-br from-zinc-900 to-zinc-800',
+              'dark:from-zinc-100 dark:to-zinc-200',
+              'text-white dark:text-zinc-900',
+              'shadow-sm',  
+            ].join(' ')
+          : [
+              'rounded-tl-sm',
+              'bg-white dark:bg-zinc-900/80',
+              'border border-zinc-200/70 dark:border-zinc-700/40',
+              'shadow-[0_2px_12px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.2)]',
+            ].join(' '),
+      )}>
+        <AgentContent content={msg.content} isUser={msg.role === 'user'} />
+
+        {/* Streaming indicator */}
+        {msg.isStreaming && (
+          <div className="flex items-center gap-1 mt-3 ml-0.5">
+            {[0, 1, 2].map((j) => (
+              <motion.span
+                key={j}
+                animate={getDotAnim(j).animate}
+                className="w-1.5 h-1.5 rounded-full bg-violet-400 dark:bg-violet-500 block"
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  </motion.div>
+));
+
+const ChatInput = React.memo(({ 
+  input, 
+  setInput, 
+  handleSend, 
+  handleKeyDown, 
+  isBusy, 
+  status, 
+  textareaRef 
+}: { 
+  input: string; 
+  setInput: (v: string) => void; 
+  handleSend: () => void; 
+  handleKeyDown: (e: React.KeyboardEvent) => void; 
+  isBusy: boolean; 
+  status: ConnectionStatus; 
+  textareaRef: React.RefObject<HTMLTextAreaElement>;
+}) => {
+  return (
+    <div className="fixed bottom-0 left-0 right-0 z-40
+      px-4 sm:px-6 md:px-10 lg:px-16 xl:px-24 2xl:px-32
+      pb-5 pt-8
+      bg-gradient-to-t from-[#f8f8f7] via-[#f8f8f7]/95 to-transparent
+      dark:from-[#0c0c0d] dark:via-[#0c0c0d]/95 dark:to-transparent
+      pointer-events-none">
+      <div className="pointer-events-auto w-full">
+        <motion.div
+          initial={{ y: 20, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          transition={{ delay: 0.3, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className={cn(
+            'relative flex items-end gap-2 w-full rounded-2xl p-2 transition-all duration-300',
+            'bg-white dark:bg-zinc-900',
+            'border border-zinc-200/80 dark:border-zinc-700/50',
+            'shadow-[0_8px_40px_rgba(0,0,0,0.07)] dark:shadow-[0_8px_40px_rgba(0,0,0,0.4)]',
+            'focus-within:border-violet-300 dark:focus-within:border-violet-600/60',
+            'focus-within:shadow-[0_12px_48px_rgba(109,40,217,0.08)] dark:focus-within:shadow-[0_12px_48px_rgba(109,40,217,0.2)]',
+          )}
+        >
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            disabled={status !== 'connected'}
+            placeholder="Ask a mathematical question..."
+            className={cn(
+              'flex-1 min-h-[48px] max-h-[180px] resize-none bg-transparent',
+              'py-3 pl-4 pr-2 text-[15px] leading-relaxed',
+              'text-zinc-900 dark:text-zinc-100',
+              'placeholder:text-zinc-400 dark:placeholder:text-zinc-600',
+              'focus:outline-none disabled:opacity-40',
+            )}
+          />
+
+          <motion.button
+            onClick={handleSend}
+            disabled={!input.trim() || isBusy || status !== 'connected'}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.93 }}
+            className={cn(
+              'flex-none mb-1 w-9 h-9 rounded-[10px] flex items-center justify-center transition-all duration-200',
+              input.trim() && !isBusy && status === 'connected'
+                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed',
+            )}
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              {isBusy ? (
+                <motion.span key="spin"
+                  initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+                  className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
+              ) : (
+                <motion.svg key="send"
+                  initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+                  xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                  <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
+                </motion.svg>
+              )}
+            </AnimatePresence>
+          </motion.button>
+        </motion.div>
+
+        <p className="mt-2 text-center text-[10px] font-medium tracking-widest uppercase
+          text-zinc-400 dark:text-zinc-600 select-none">
+          Math Agent · {status === 'connected' ? 'Online' : status === 'connecting' ? 'Connecting…' : 'Offline'}
+        </p>
+      </div>
+    </div>
+  );
+});
+
 export default function ChatPage() {
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [messages, setMessages] = useState<Message[]>([]);
@@ -223,7 +379,7 @@ export default function ChatPage() {
     }
   }, [input]);
 
-  const handleSend = () => {
+  const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
     setMessages((prev) => [...prev, { role: 'user', content: text }]);
@@ -231,11 +387,11 @@ export default function ChatPage() {
     setIsBusy(true);
     ws.current.send(text);
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  };
+  }, [input, isBusy]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
-  };
+  }, [handleSend]);
 
   const statusColor = status === 'connected' ? 'bg-emerald-500' : status === 'connecting' ? 'bg-amber-400' : 'bg-red-500';
 
@@ -334,145 +490,22 @@ export default function ChatPage() {
         <div className="w-full space-y-8 pb-[120px]">
           <AnimatePresence initial={false}>
             {messages.map((msg, i) => (
-              <motion.div
-                key={i}
-                variants={msgVariants}
-                initial="hidden"
-                animate="visible"
-                className={cn('flex w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}
-              >
-                {/* Avatar dot */}
-                {msg.role === 'agent' && (
-                  <div className="flex-none mr-3 mt-1">
-                    <div className="w-7 h-7 rounded-full flex items-center justify-center
-                      bg-gradient-to-br from-violet-500 to-indigo-600 dark:from-violet-600 dark:to-indigo-700
-                      text-white shadow-sm shadow-violet-200 dark:shadow-violet-900/30">
-                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                          d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5" />
-                      </svg>
-                    </div>
-                  </div>
-                )}
-
-                <div className={cn(
-                  'relative min-w-0',
-                  msg.role === 'user'
-                    ? 'max-w-[70%] xl:max-w-[60%]'
-                    : 'max-w-[78%] xl:max-w-[72%] 2xl:max-w-[68%] flex-1',
-                )}>
-                  <div className={cn(
-                    'rounded-2xl px-5 py-4',
-                    msg.role === 'user'
-                      ? [
-                          'rounded-tr-sm',
-                          'bg-gradient-to-br from-zinc-900 to-zinc-800',
-                          'dark:from-zinc-100 dark:to-zinc-200',
-                          'text-white dark:text-zinc-900',
-                          'shadow-sm',
-                        ].join(' ')
-                      : [
-                          'rounded-tl-sm',
-                          'bg-white dark:bg-zinc-900/80',
-                          'border border-zinc-200/70 dark:border-zinc-700/40',
-                          'shadow-[0_2px_12px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.2)]',
-                        ].join(' '),
-                  )}>
-                    <AgentContent content={msg.content} isUser={msg.role === 'user'} />
-
-                    {/* Streaming indicator */}
-                    {msg.isStreaming && (
-                      <div className="flex items-center gap-1 mt-3 ml-0.5">
-                        {[0, 1, 2].map((j) => (
-                          <motion.span
-                            key={j}
-                            animate={getDotAnim(j).animate}
-                            className="w-1.5 h-1.5 rounded-full bg-violet-400 dark:bg-violet-500 block"
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </motion.div>
+              <ChatMessage key={i} msg={msg} i={i} />
             ))}
           </AnimatePresence>
           <div ref={messagesEndRef} />
         </div>
       </div>
 
-      {/* ── Floating Input Bar ── */}
-      <div className="fixed bottom-0 left-0 right-0 z-40
-        px-4 sm:px-6 md:px-10 lg:px-16 xl:px-24 2xl:px-32
-        pb-5 pt-8
-        bg-gradient-to-t from-[#f8f8f7] via-[#f8f8f7]/95 to-transparent
-        dark:from-[#0c0c0d] dark:via-[#0c0c0d]/95 dark:to-transparent
-        pointer-events-none">
-        <div className="pointer-events-auto w-full">
-          <motion.div
-            initial={{ y: 20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.3, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-            className={cn(
-              'relative flex items-end gap-2 w-full rounded-2xl p-2 transition-all duration-300',
-              'bg-white dark:bg-zinc-900',
-              'border border-zinc-200/80 dark:border-zinc-700/50',
-              'shadow-[0_8px_40px_rgba(0,0,0,0.07)] dark:shadow-[0_8px_40px_rgba(0,0,0,0.4)]',
-              'focus-within:border-violet-300 dark:focus-within:border-violet-600/60',
-              'focus-within:shadow-[0_12px_48px_rgba(109,40,217,0.08)] dark:focus-within:shadow-[0_12px_48px_rgba(109,40,217,0.2)]',
-            )}
-          >
-            <textarea
-              ref={textareaRef}
-              rows={1}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              disabled={status !== 'connected'}
-              placeholder="Ask a mathematical question..."
-              className={cn(
-                'flex-1 min-h-[48px] max-h-[180px] resize-none bg-transparent',
-                'py-3 pl-4 pr-2 text-[15px] leading-relaxed',
-                'text-zinc-900 dark:text-zinc-100',
-                'placeholder:text-zinc-400 dark:placeholder:text-zinc-600',
-                'focus:outline-none disabled:opacity-40',
-              )}
-            />
-
-            <motion.button
-              onClick={handleSend}
-              disabled={!input.trim() || isBusy || status !== 'connected'}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.93 }}
-              className={cn(
-                'flex-none mb-1 w-9 h-9 rounded-[10px] flex items-center justify-center transition-all duration-200',
-                input.trim() && !isBusy && status === 'connected'
-                  ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm'
-                  : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed',
-              )}
-            >
-              <AnimatePresence mode="wait" initial={false}>
-                {isBusy ? (
-                  <motion.span key="spin"
-                    initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
-                    className="w-4 h-4 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
-                ) : (
-                  <motion.svg key="send"
-                    initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
-                    xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
-                    <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
-                  </motion.svg>
-                )}
-              </AnimatePresence>
-            </motion.button>
-          </motion.div>
-
-          <p className="mt-2 text-center text-[10px] font-medium tracking-widest uppercase
-            text-zinc-400 dark:text-zinc-600 select-none">
-            Math Agent · {status === 'connected' ? 'Online' : status === 'connecting' ? 'Connecting…' : 'Offline'}
-          </p>
-        </div>
-      </div>
+      <ChatInput
+        input={input}
+        setInput={setInput}
+        handleSend={handleSend}
+        handleKeyDown={handleKeyDown}
+        isBusy={isBusy}
+        status={status}
+        textareaRef={textareaRef}
+      />
     </div>
   );
 }
