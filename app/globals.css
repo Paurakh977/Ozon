@@ -119,6 +119,30 @@
   background-color: hsl(var(--muted-foreground) / 0.5);
 }
 
+/* ── KaTeX Dark Mode ── */
+.dark .katex { color: #e8e8f0; }
+.dark .katex .mord,
+.dark .katex .minner,
+.dark .katex .mop,
+.dark .katex .mbin,
+.dark .katex .mrel,
+.dark .katex .mopen,
+.dark .katex .mclose,
+.dark .katex .mpunct,
+.dark .katex .mspace,
+.dark .katex .base { color: #e8e8f0; }
+.dark .katex .katex-html { color: #e8e8f0; }
+.dark .katex-display { color: #e8e8f0; }
+/* KaTeX scroll container */
+.katex-display { overflow-x: auto; overflow-y: hidden; padding: 4px 0; }
+.katex-display > .katex { max-width: 100%; }
+
+/* ── Chat scrollbar ── */
+.chat-scroll::-webkit-scrollbar { width: 4px; height: 4px; }
+.chat-scroll::-webkit-scrollbar-track { background: transparent; }
+.chat-scroll::-webkit-scrollbar-thumb { background: rgba(120,120,140,0.18); border-radius: 9999px; }
+.dark .chat-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.08); }
+
 /* Glass Utilities */
 .glass {
   @apply bg-background/70 backdrop-blur-xl border border-white/20 dark:border-white/10 shadow-xl;
