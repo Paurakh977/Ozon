@@ -128,7 +128,7 @@ function AgentContent({ content, isUser }: { content: string; isUser: boolean })
               </code>
             );
           },
-          p: ({ children }) => <p className="mb-3.5 last:mb-0 leading-[1.75]">{children}</p>,
+          p: ({ children }) => <div className="mb-3.5 last:mb-0 leading-[1.75]">{children}</div>,
           ul: ({ children }) => <ul className="list-disc pl-5 mb-3.5 space-y-1.5">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal pl-5 mb-3.5 space-y-1.5">{children}</ol>,
           li: ({ children }) => <li className="leading-relaxed">{children}</li>,
