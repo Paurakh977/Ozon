@@ -35,3 +35,5 @@ pip-delete-this-line.txt
 # OS-generated files
 .DS_Store # macOS
 Thumbs.db # Windows
+
+.adk
