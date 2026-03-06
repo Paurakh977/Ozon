@@ -516,7 +516,7 @@ export default function ChatPage() {
               </div>
               <h2 className="text-2xl font-semibold tracking-tight mb-2.5
                 text-zinc-900 dark:text-zinc-100">
-                Mathematical Reasoning Agent
+                Ozone Calculus Agent
               </h2>
               <p className="text-[15px] text-zinc-400 dark:text-zinc-500 max-w-md leading-relaxed">
                 Ask anything — calculus, linear algebra, proofs, logic, statistics.
