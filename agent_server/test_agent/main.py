@@ -1,3 +1,18 @@
+import logging
+import sys
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] [%(name)s] %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler("token_log.log", encoding="utf-8"),
+    ],
+)
+
+# Ensure token_tracker messages are visible
+logging.getLogger("token_tracker").setLevel(logging.INFO)
+
 import uuid
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -83,4 +98,4 @@ async def websocket_endpoint(websocket: WebSocket):
 
 if __name__ == '__main__':
     print("Server starting at http://127.0.0.1:8000")
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
