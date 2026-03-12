@@ -1,6 +1,11 @@
 from google.adk.agents.llm_agent import Agent, LlmAgent
 from google.adk.agents import LlmAgent
 from google.adk.models.lite_llm import LiteLlm
+
+from google.adk.tools.mcp_tool import McpToolset
+from google.adk.tools.mcp_tool.mcp_session_manager import StdioConnectionParams
+from google.adk.tools.mcp_tool.mcp_session_manager import StreamableHTTPServerParams
+from mcp import StdioServerParameters
 import os
 from dotenv import load_dotenv
 load_dotenv()
@@ -155,4 +160,22 @@ Response rules:
 
     description="A concise, expert Calculus tutor that solves student problems step-by-step.",
     after_model_callback=[log_token_usage],
+    tools=[
+        McpToolset(
+            connection_params=StdioConnectionParams(
+                server_params=StdioServerParameters(
+                    command="npx",
+                    args=[
+                        "-y",
+                        "tavily-mcp@latest",
+                    ],
+                    env={
+                        "TAVILY_API_KEY": os.environ["TAVILY_API_KEY"],
+                        "DEFAULT_PARAMETERS":DEFAULT_PARAMS  ,
+                    }
+                ),
+                timeout=30,
+            ),
+        )
+    ],
 )
