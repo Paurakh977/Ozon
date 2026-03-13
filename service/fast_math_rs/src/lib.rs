@@ -116,7 +116,7 @@ fn find_sign_changes<'py>(
 /// Much faster than differential evolution for 1D problems
 #[pyfunction]
 fn brent_minimize(
-    py: Python<'_>,
+    _py: Python<'_>,
     func: PyObject,
     a: f64,
     b: f64,

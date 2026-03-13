@@ -56,37 +56,91 @@ class SymbolicTimeoutError(Exception):
     """Custom timeout exception for symbolic computations"""
     pass
 
-def run_with_timeout(func, timeout_seconds, default=None):
+import queue
+
+def _worker_loop(q_in, q_out):
+    while True:
+        try:
+            msg = q_in.get()
+            if msg is None:
+                break
+            task_type, args = msg
+            
+            if task_type == 'domain':
+                from sympy.calculus.util import continuous_domain
+                res = continuous_domain(*args)
+            elif task_type == 'range':
+                from sympy.calculus.util import function_range
+                res = function_range(*args)
+            elif task_type == 'min_max':
+                from sympy.calculus.util import minimum, maximum
+                from sympy import S
+                f, x, domain = args
+                search_dom = domain if domain.is_subset(S.Reals) else S.Reals
+                mn = minimum(f, x, search_dom)
+                mx = maximum(f, x, search_dom)
+                res = (mn, mx)
+            elif task_type == 'limit':
+                from algo import analyze_function_behavior
+                res = analyze_function_behavior(*args)
+            elif task_type == 'solveset_empty':
+                from sympy import solveset, S, EmptySet
+                f, x, val = args
+                res = (solveset(f - val, x, S.Reals) == EmptySet)
+            else:
+                res = None
+            q_out.put(('ok', res))
+        except Exception as e:
+            q_out.put(('err', str(e)))
+
+class SympyWorker:
+    def __init__(self):
+        import multiprocessing
+        self.q_in = multiprocessing.Queue()
+        self.q_out = multiprocessing.Queue()
+        self.p = multiprocessing.Process(target=_worker_loop, args=(self.q_in, self.q_out), daemon=True)
+        self.p.start()
+
+_sympy_worker = None
+
+def get_worker():
+    global _sympy_worker
+    if _sympy_worker is None:
+        _sympy_worker = SympyWorker()
+    return _sympy_worker
+
+def run_with_timeout(task_type, args, timeout_seconds, default=None):
     """
-    Run a function with a timeout. Windows-compatible using time-based checking.
-    NOTE: This doesn't truly interrupt the function, but allows the caller to 
-    proceed if the function takes too long. The function continues in background.
+    Run a task with a timeout using a persistent worker process.
     Returns (result, timed_out) tuple.
     """
-    import threading
+    worker = get_worker()
     
-    result_container = {'result': default, 'exception': None, 'done': False}
-    
-    def wrapper():
+    # Clear any stale messages from previous cancelled tasks
+    while not worker.q_out.empty():
         try:
-            result_container['result'] = func()
-        except Exception as e:
-            result_container['exception'] = e
-        finally:
-            result_container['done'] = True
+            worker.q_out.get_nowait()
+        except queue.Empty:
+            break
+            
+    worker.q_in.put((task_type, args))
     
-    thread = threading.Thread(target=wrapper, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout_seconds)
-    
-    if not result_container['done']:
-        debug_print(f"TIMEOUT after {timeout_seconds}s - switching to numerical fallback", Fore.YELLOW)
+    try:
+        status, value = worker.q_out.get(timeout=timeout_seconds)
+        if status == 'err':
+            return default, False
+        return value, False
+    except queue.Empty:
+        # Timeout occurred! Kill the hanging process
+        worker.p.terminate()
+        worker.p.join()
+        debug_print(f"TIMEOUT after {timeout_seconds}s - process killed and restarting", Fore.YELLOW)
+        
+        # Start a fresh worker
+        global _sympy_worker
+        _sympy_worker = SympyWorker()
+        
         return default, True
-    
-    if result_container['exception'] is not None:
-        return default, False
-    
-    return result_container['result'], False
 
 class Timer:
     """Context manager for timing code blocks"""
@@ -123,28 +177,26 @@ class TimingStats:
 
 def _rationalize_float_exponents(expr):
     """Convert float exponents close to simple fractions into exact Rationals.
-    e.g. x**0.333333 -> x**(1/3), x**0.2 -> x**(1/5)"""
+    Only rationalizes even denominators to avoid silently changing domains for odd roots."""
+    from sympy import Pow, Integer, Rational
     replacements = {}
     for sub in expr.atoms(Pow):
         e = sub.exp
         if e.is_Float or (e.is_Number and not isinstance(e, (Integer, Rational))):
-            r = _float_to_odd_rational(e)
-            if r is not None:
-                replacements[sub] = Pow(sub.base, r)
-            else:
-                # Also try even denominators for completeness: 1/2, 1/4, 3/4, etc.
-                for q in [2, 4, 6, 8]:
-                    for p in range(1, 2 * q):
-                        target = p / q
-                        if abs(float(e) - target) < 1e-6:
-                            replacements[sub] = Pow(sub.base, Rational(p, q))
-                            break
-                        if abs(float(e) + target) < 1e-6:
-                            replacements[sub] = Pow(sub.base, Rational(-p, q))
-                            break
-                    else:
-                        continue
-                    break
+            # Only try even denominators for completeness: 1/2, 1/4, 3/4, etc.
+            # Avoid odd denominators like 1/3, 1/5 as they silently change domains.
+            for q in [2, 4, 6, 8]:
+                for p in range(1, 2 * q):
+                    target = p / q
+                    if abs(float(e) - target) < 1e-6:
+                        replacements[sub] = Pow(sub.base, Rational(p, q))
+                        break
+                    if abs(float(e) + target) < 1e-6:
+                        replacements[sub] = Pow(sub.base, Rational(-p, q))
+                        break
+                else:
+                    continue
+                break
     for old, new in replacements.items():
         expr = expr.subs(old, new)
     return expr
@@ -170,6 +222,7 @@ PERIODIC_GAPPED_FUNCS = {sec, csc}
 
 from sympy import sin as sym_sin, cos as sym_cos
 
+@lru_cache(maxsize=128)
 def _has_reciprocal_trig(f, var):
     """Detect patterns like 1/sin(x), 1/cos(x), a/sin(x), etc.
     These have range (-oo,-1]U[1,oo) or similar gapped ranges."""
@@ -227,8 +280,10 @@ def has_real_odd_root(expr, var):
                     return True
             elif sub.exp.is_Float or sub.exp.is_Number:
                 r = _float_to_odd_rational(sub.exp)
-                if r is not None and r.q % 2 == 1 and r.q > 1:
-                    return True
+                if r is not None:
+                    q = getattr(r, 'q', None)
+                    if q is not None and q % 2 == 1 and q > 1:
+                        return True
     return False
 
 def rewrite_real_roots(expr, var):
@@ -244,8 +299,9 @@ def rewrite_real_roots(expr, var):
                 rat_exp = _float_to_odd_rational(sub.exp)
             
             if rat_exp is not None:
-                p, q = rat_exp.p, rat_exp.q
-                if q % 2 == 1 and q > 1:
+                p = getattr(rat_exp, 'p', None)
+                q = getattr(rat_exp, 'q', None)
+                if q is not None and p is not None and q % 2 == 1 and q > 1:
                     if p % 2 == 1:  # odd numerator: sign matters
                         replacements[sub] = sign(sub.base) * Abs(sub.base)**rat_exp
                     else:  # even numerator: always positive
@@ -323,9 +379,9 @@ def get_symbolic_limits(f, x, domain):
             all_sups = []
             for arg in domain.args:
                 if hasattr(arg, 'inf'):
-                    all_infs.append(arg.inf)
+                    all_infs.append(getattr(arg, 'inf'))
                 if hasattr(arg, 'sup'):
-                    all_sups.append(arg.sup)
+                    all_sups.append(getattr(arg, 'sup'))
             left_bound = min(all_infs) if all_infs else -oo
             right_bound = max(all_sups) if all_sups else oo
         elif hasattr(domain, 'inf'):
@@ -608,13 +664,17 @@ def detect_unbounded_oscillation(f_num, gen_min, gen_max):
     
     return has_inf_neg, has_inf_pos
 
-def snap_to_clean_value(val, tolerance=1e-6):
+def snap_to_clean_value(val, tolerance=None):
     """
     Snap numerical values to nearby mathematically significant values.
     This cleans up results like 0.000001 -> 0, 0.999999 -> 1, etc.
     """
     if not np.isfinite(val):
         return val
+        
+    if tolerance is None:
+        magnitude = max(abs(val), 1e-10)
+        tolerance = magnitude * 1e-6
     
     # Common clean values to snap to
     clean_values = [
@@ -638,7 +698,7 @@ def snap_to_clean_value(val, tolerance=1e-6):
     return val
 
 
-def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15):
+def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.05):
     """
     Find significant gaps in observed y-values.
     
@@ -646,15 +706,9 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
         y_values_sorted: Pre-processed (e.g. clipped) sorted y-values for gap candidate detection.
         all_y_sorted: Full (unclipped) sorted y-values for verification. If None, uses y_values_sorted.
         min_gap_fraction: Minimum gap size as fraction of total range.
-    
-    Uses a two-pass approach:
-    1. First pass: find candidate gaps using adaptive threshold on clipped data
-    2. Second pass: verify each gap against the FULL dataset — a true gap must
-       have zero samples in the full dataset inside it.
-    Returns list of (gap_start, gap_end) tuples.
     """
     n = len(y_values_sorted)
-    if n < 200:
+    if n < 50:
         return []
     
     total_range = y_values_sorted[-1] - y_values_sorted[0]
@@ -668,16 +722,15 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
     
     # Statistical threshold: gap must be significantly larger than typical spacing
     median_diff = np.median(diffs)
-    # A true gap should be at least 10x the median spacing AND at least 0.3 absolute
-    stat_threshold = max(median_diff * 10.0, 0.3)
+    # A true gap should be at least 5x the median spacing AND at least 0.1 absolute
+    stat_threshold = max(median_diff * 5.0, 0.1)
     
     # Also require minimum fraction of total range
     abs_threshold = min_gap_fraction * total_range
     
     # Use the larger of stat_threshold and a capped version of abs_threshold.
-    # The cap at 2.0 ensures narrow but real gaps (like (-1,1) in 1/sin(x)) 
-    # aren't missed when total_range is large.
-    threshold = max(stat_threshold, min(abs_threshold, 2.0))
+    # The cap at 0.5 ensures narrow but real gaps aren't missed when total_range is large.
+    threshold = max(stat_threshold, min(abs_threshold, 0.5))
     
     gaps = []
     for i in range(len(diffs)):
@@ -696,15 +749,10 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
         gaps = merged
     
     # Verify gaps against the FULL (unclipped) dataset.
-    # A true mathematical gap (like (-1,1) in csc(x)) will have ZERO samples
-    # even in the full dataset. Sampling artifacts (gaps between branches due to
-    # finite grid) will have samples from other branches filling them in.
     verified = []
     for gs, ge in gaps:
-        # Count samples strictly inside the gap in the FULL dataset
         inside = np.searchsorted(all_y_sorted, ge, 'left') - np.searchsorted(all_y_sorted, gs, 'right')
         gap_width = ge - gs
-        # True gap: zero or at most 1 sample (numerical noise) in the full dataset
         if inside <= 1 and gap_width > median_diff * 5:
             verified.append((gs, ge))
     
@@ -825,9 +873,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         # --- EARLY EXIT: Reciprocal trig with known gap structure ---
         # For 1/sin(x), 1/cos(x), sec(x), csc(x) etc. that are unbounded
         # in both directions: sample one period densely to find the gap.
-        # This is far more accurate than trying to detect gaps from sparse
-        # multi-period grid sampling.
-        if might_have_gaps and has_inf_neg and has_inf_pos:
+        if might_have_gaps:
             try:
                 # Sample one period very densely near origin
                 # For 1/sin(x), one period is (0, pi); for 1/cos(x), (-pi/2, pi/2)
@@ -1066,6 +1112,11 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             refined_max = max(refined_max, max(all_y_values))
 
         # --- STEP 6: APPLY INFINITY BOUNDS ---
+        if refined_min < -1e5:
+            has_inf_neg = True
+        if refined_max > 1e5:
+            has_inf_pos = True
+            
         final_min = refined_min if not has_inf_neg else -np.inf
         final_max = refined_max if not has_inf_pos else np.inf
 
@@ -1081,6 +1132,17 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             if abs(val) > 1e10: return f"{val:.2e}"
             return f"{val:.6f}".rstrip('0').rstrip('.')
 
+        def check_openness(val):
+            if np.isinf(val): return True
+            try:
+                # Use a very short timeout for solveset to avoid hanging
+                result, timed_out = run_with_timeout('solveset_empty', (f, x, val), 0.1)
+                if not timed_out and result is True:
+                    return True
+            except:
+                pass
+            return False
+
         # --- STEP 8: DETECT RANGE GAPS (FEAT-03 / EDGE-02) ---
         # For functions like 1/sin(x), detect that (-1, 1) is not in the range.
         # Allow gap detection even for doubly-unbounded functions if they might
@@ -1090,24 +1152,22 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         if run_gap_detection and (not both_inf or might_have_gaps):
             y_arr = np.array(all_y_values)
             
-            # For gap detection, clip extreme outliers that create artificial gaps.
-            # Use the central 98% of the data (by value) to avoid extreme tails
-            # from singularities or large-x behavior dominating gap detection.
-            finite_y = y_arr[np.isfinite(y_arr)]
-            if len(finite_y) > 200:
-                p1, p99 = np.percentile(finite_y, [1, 99])
-                # Expand the range a bit so we don't miss real gaps near extremes
-                iqr_range = p99 - p1
-                clip_lo = p1 - 0.5 * iqr_range
-                clip_hi = p99 + 0.5 * iqr_range
-                clipped_y = finite_y[(finite_y >= clip_lo) & (finite_y <= clip_hi)]
+            if might_have_gaps:
+                # for reciprocal trigs, the interesting part is usually in [-100, 100]
+                finite_y = y_arr[(np.isfinite(y_arr)) & (np.abs(y_arr) < 100)]
             else:
-                clipped_y = finite_y
-            
-            if len(clipped_y) > 200:
-                sorted_y = np.sort(clipped_y)
+                finite_y = y_arr[np.isfinite(y_arr)]
+                if len(finite_y) > 200:
+                    p1, p99 = np.percentile(finite_y, [1, 99])
+                    iqr_range = p99 - p1
+                    clip_lo = p1 - 0.5 * iqr_range
+                    clip_hi = p99 + 0.5 * iqr_range
+                    finite_y = finite_y[(finite_y >= clip_lo) & (finite_y <= clip_hi)]
+
+            if len(finite_y) > 50:
+                sorted_y = np.sort(finite_y)
                 # Pass full sorted dataset for gap verification
-                all_y_sorted = np.sort(finite_y)
+                all_y_sorted = np.sort(y_arr[np.isfinite(y_arr)])
                 gaps = detect_range_gaps(sorted_y, all_y_sorted=all_y_sorted)
                 if gaps:
                     debug_print(f"Detected {len(gaps)} gap(s) in range", Fore.CYAN)
@@ -1133,7 +1193,17 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                             parts.append(f"Interval({lo_s}, {hi_s})")
                         return "Union(" + ", ".join(parts) + ")", "Hybrid Analysis (gap detected)"
 
-        return f"Interval[{fmt(final_min)}, {fmt(final_max)}]", "Hybrid Analysis"
+        left_open = check_openness(final_min)
+        right_open = check_openness(final_max)
+        
+        if left_open and right_open:
+            return f"Interval.open({fmt(final_min)}, {fmt(final_max)})", "Hybrid Analysis"
+        elif left_open:
+            return f"Interval.Lopen({fmt(final_min)}, {fmt(final_max)})", "Hybrid Analysis"
+        elif right_open:
+            return f"Interval.Ropen({fmt(final_min)}, {fmt(final_max)})", "Hybrid Analysis"
+        else:
+            return f"Interval({fmt(final_min)}, {fmt(final_max)})", "Hybrid Analysis"
 
     except Exception as e:
         return f"Numerical Error: {e}", "Error"
@@ -1196,7 +1266,7 @@ def solve(func_str, show_timing=True):
     # 1. DOMAIN (with timeout guard — BUG-03 fix)
     with Timer("domain") as t:
         domain_result, domain_timed_out = run_with_timeout(
-            lambda: continuous_domain(f, x, S.Reals),
+            'domain', (f, x, S.Reals),
             timeout_seconds=3.0,
             default=S.Reals
         )
@@ -1251,13 +1321,10 @@ def solve(func_str, show_timing=True):
                 return SYMBOLIC_TOTAL_BUDGET - (time.perf_counter() - budget_start)
             
             # Strategy A: Pure Calculus (SymPy function_range)
-            def try_function_range():
-                return function_range(f, x, domain)
-            
             timeout_a = min(SYMBOLIC_TIMEOUT, remaining_budget())
             if timeout_a > 0.1:
                 debug_print(f"Attempting SymPy function_range (timeout={timeout_a:.1f}s)...", Fore.BLUE)
-                result, timed_out = run_with_timeout(try_function_range, timeout_a)
+                result, timed_out = run_with_timeout('range', (f, x, domain), timeout_a)
                 
                 if timed_out:
                     any_symbolic_timed_out = True
@@ -1269,15 +1336,9 @@ def solve(func_str, show_timing=True):
 
             # Strategy B: Symbolic Min/Max — runs independently of A (BUG-01 fix)
             if range_res is None and remaining_budget() > 0.2:
-                def try_min_max():
-                    search_dom = domain if domain.is_subset(S.Reals) else S.Reals
-                    mn = minimum(f, x, search_dom)
-                    mx = maximum(f, x, search_dom)
-                    return mn, mx
-                
                 timeout_b = min(SYMBOLIC_TIMEOUT, remaining_budget())
                 debug_print(f"Attempting SymPy min/max (timeout={timeout_b:.1f}s)...", Fore.BLUE)
-                result, timed_out = run_with_timeout(try_min_max, timeout_b)
+                result, timed_out = run_with_timeout('min_max', (f, x, domain), timeout_b)
                 
                 if timed_out:
                     any_symbolic_timed_out = True
@@ -1303,12 +1364,9 @@ def solve(func_str, show_timing=True):
 
             # Strategy C: Try symbolic limits — runs independently of A and B (BUG-01 fix)
             if range_res is None and remaining_budget() > 0.2:
-                def try_limit_analysis():
-                    return analyze_function_behavior(f, x, domain)
-                
                 timeout_c = min(SYMBOLIC_TIMEOUT, remaining_budget())
                 debug_print(f"Attempting SymPy limit analysis (timeout={timeout_c:.1f}s)...", Fore.BLUE)
-                result, timed_out = run_with_timeout(try_limit_analysis, timeout_c)
+                result, timed_out = run_with_timeout('limit', (f, x, domain), timeout_c)
                 
                 if timed_out:
                     any_symbolic_timed_out = True
