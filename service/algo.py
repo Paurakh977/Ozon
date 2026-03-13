@@ -22,6 +22,8 @@ try:
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
+    minimize_scalar = None
+    minimize = None
 
 # Try to import Rust acceleration module
 try:
@@ -29,6 +31,7 @@ try:
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
+    fast_math_rs = None
 
 colorama.init(autoreset=True)
 warnings.filterwarnings('ignore')
@@ -937,9 +940,19 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         # Use Rust module if available for faster grid generation
         if RUST_AVAILABLE:
             try:
-                X_grid = np.array(fast_math_rs.generate_multi_scale_grid(
-                    gen_min, gen_max, [10.0, 100.0], 800
-                ))
+                generate_multi_scale_grid = getattr(fast_math_rs, 'generate_multi_scale_grid', None)
+                if generate_multi_scale_grid:
+                    domain_inf = getattr(domain_sympy, 'inf', None)
+                    domain_sup = getattr(domain_sympy, 'sup', None)
+                    inf_val = float(domain_inf) if domain_inf is not None and getattr(domain_inf, 'is_finite', False) else float(gen_min)
+                    sup_val = float(domain_sup) if domain_sup is not None and getattr(domain_sup, 'is_finite', False) else float(gen_max)
+                    
+                    X_grid = np.array(generate_multi_scale_grid(
+                        float(gen_min), float(gen_max), 2000, 
+                        inf_val, sup_val
+                    ))
+                else:
+                    X_grid = None
             except:
                 X_grid = None
         else:
@@ -954,12 +967,14 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 
                 if isinstance(domain, Union):
                     for interval in domain.args:
-                        if hasattr(interval, 'inf') and hasattr(interval, 'sup'):
-                            low = float(interval.inf) if interval.inf.is_finite else -100
-                            high = float(interval.sup) if interval.sup.is_finite else 100
+                        interval_inf = getattr(interval, 'inf', None)
+                        interval_sup = getattr(interval, 'sup', None)
+                        if interval_inf is not None and interval_sup is not None:
+                            low = float(interval_inf) if getattr(interval_inf, 'is_finite', False) else -100
+                            high = float(interval_sup) if getattr(interval_sup, 'is_finite', False) else 100
                             # Add buffer to avoid exact boundary
-                            low = low + 1e-8 if interval.inf.is_finite else low
-                            high = high - 1e-8 if interval.sup.is_finite else high
+                            low = low + 1e-8 if getattr(interval_inf, 'is_finite', False) else low
+                            high = high - 1e-8 if getattr(interval_sup, 'is_finite', False) else high
                             if low < high:
                                 # OPTIMIZED: Reduced from 2000 to 500 per interval
                                 points.extend(np.linspace(max(low, -100), min(high, 100), 500).tolist())
@@ -996,22 +1011,26 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                         if np.isscalar(df_vals):
                             df_vals = np.full_like(X_grid, df_vals)
                         df_vals = np.asarray(df_vals, dtype=float)
-                        sign_change_idxs = fast_math_rs.find_sign_changes(df_vals)
-                        if len(sign_change_idxs) > 0:
-                            critical_xs = X_grid[np.array(sign_change_idxs)].tolist()
-                            # Generate denser grid near critical points
-                            X_dense = np.array(fast_math_rs.adaptive_grid(
-                                float(gen_min), float(gen_max), 0, critical_xs, 0.1
-                            ))
-                            if len(X_dense) > 0:
-                                Y_dense = f_num(X_dense)
-                                if np.isscalar(Y_dense):
-                                    Y_dense = np.full_like(X_dense, Y_dense, dtype=float)
-                                Y_dense = np.asarray(Y_dense, dtype=float)
-                                dense_mask = np.isfinite(Y_dense)
-                                if np.any(dense_mask):
-                                    all_y_values.extend(Y_dense[dense_mask].tolist())
-                                    debug_print(f"Adaptive grid added {np.sum(dense_mask)} points near {len(critical_xs)} critical regions", Fore.CYAN)
+                        find_sign_changes = getattr(fast_math_rs, 'find_sign_changes', None)  # type: ignore
+                        if find_sign_changes:
+                            sign_change_idxs = find_sign_changes(df_vals)
+                            if len(sign_change_idxs) > 0:
+                                critical_xs = X_grid[np.array(sign_change_idxs)].tolist()
+                                # Generate denser grid near critical points
+                                adaptive_grid = getattr(fast_math_rs, 'adaptive_grid', None)  # type: ignore
+                                if adaptive_grid:
+                                    X_dense = np.array(adaptive_grid(
+                                        float(gen_min), float(gen_max), 0, critical_xs, 0.1
+                                    ))
+                                    if len(X_dense) > 0:
+                                        Y_dense = f_num(X_dense)
+                                        if np.isscalar(Y_dense):
+                                            Y_dense = np.full_like(X_dense, Y_dense, dtype=float)
+                                        Y_dense = np.asarray(Y_dense, dtype=float)
+                                        dense_mask = np.isfinite(Y_dense)
+                                        if np.any(dense_mask):
+                                            all_y_values.extend(Y_dense[dense_mask].tolist())
+                                            debug_print(f"Adaptive grid added {np.sum(dense_mask)} points near {len(critical_xs)} critical regions", Fore.CYAN)
                     except:
                         pass
             except:
@@ -1026,8 +1045,9 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         if isinstance(domain_sympy, Union):
             # Find gaps in domain (excluded points)
             for i, interval in enumerate(domain_sympy.args[:-1]):
-                if hasattr(interval, 'sup'):
-                    gap_point = float(interval.sup)
+                interval_sup = getattr(interval, 'sup', None)
+                if interval_sup is not None:
+                    gap_point = float(interval_sup)
                     # Sample approaching the gap from both sides
                     for eps in [1e-3, 1e-5, 1e-7]:
                         special_points.extend([gap_point - eps, gap_point + eps])
@@ -1079,27 +1099,29 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             
             # Find minimum using minimize_scalar (fast, C-level Brent's method)
             try:
-                result_min = minimize_scalar(
-                    safe_f_opt,
-                    bounds=(bounds_lo, bounds_hi),
-                    method='bounded',
-                    options={'maxiter': 200, 'xatol': 1e-7}
-                )
-                if result_min.success and np.isfinite(result_min.fun):
-                    refined_min = min(refined_min, result_min.fun)
+                if minimize_scalar is not None:
+                    result_min = minimize_scalar(  # type: ignore
+                        safe_f_opt,
+                        bounds=(bounds_lo, bounds_hi),
+                        method='bounded',
+                        options={'maxiter': 200, 'xatol': 1e-7}
+                    )
+                    if result_min.success and np.isfinite(result_min.fun):
+                        refined_min = min(refined_min, result_min.fun)
             except:
                 pass
             
             # Find maximum (minimize negative)
             try:
-                result_max = minimize_scalar(
-                    lambda x_val: -safe_f_opt(x_val),
-                    bounds=(bounds_lo, bounds_hi),
-                    method='bounded',
-                    options={'maxiter': 200, 'xatol': 1e-7}
-                )
-                if result_max.success and np.isfinite(result_max.fun):
-                    refined_max = max(refined_max, -result_max.fun)
+                if minimize_scalar is not None:
+                    result_max = minimize_scalar(
+                        lambda x_val: -safe_f_opt(x_val),
+                        bounds=(bounds_lo, bounds_hi),
+                        method='bounded',
+                        options={'maxiter': 200, 'xatol': 1e-7}
+                    )
+                    if result_max.success and np.isfinite(result_max.fun):
+                        refined_max = max(refined_max, -result_max.fun)
             except:
                 pass
                 
