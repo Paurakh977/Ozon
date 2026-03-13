@@ -1,4 +1,5 @@
 import sys
+import multiprocessing
 import numpy as np
 import warnings
 import time
@@ -56,37 +57,168 @@ class SymbolicTimeoutError(Exception):
     """Custom timeout exception for symbolic computations"""
     pass
 
-def run_with_timeout(func, timeout_seconds, default=None):
+# =============================================================================
+# SAFE POWER FOR LAMBDIFY (Fix 4: x**(1/3) real odd-root support)
+# =============================================================================
+
+def _safe_pow(base, exp):
     """
-    Run a function with a timeout. Windows-compatible using time-based checking.
-    NOTE: This doesn't truly interrupt the function, but allows the caller to 
-    proceed if the function takes too long. The function continues in background.
+    Numpy-safe power for lambdify that handles odd-root fractional exponents.
+
+    numpy.power(-8, 1/3) returns nan because 1/3 ≈ 0.3333… is not an integer.
+    For fractional exponents 1/q with odd q we use sign(x)*|x|^(1/q) instead,
+    which is the real-valued qth root and is defined for all real x.
+    """
+    try:
+        if np.isscalar(exp) and np.isfinite(exp) and 0.0 < abs(exp) < 1.0:
+            inv = 1.0 / abs(exp)
+            q = int(round(inv))
+            if 3 <= q <= 21 and q % 2 == 1 and abs(inv - q) < 1e-7:
+                # exp ≈ 1/q with odd q → real q-th root (sign-preserving)
+                return np.sign(base) * np.power(np.abs(base), abs(exp))
+    except Exception:
+        pass
+    return np.power(base, exp)
+
+
+# Module map for lambdify: routes Pow through _safe_pow so odd roots work
+_LAMBDIFY_MODULES = [{'Pow': _safe_pow}, 'numpy']
+
+
+def _fix_real_roots(expr):
+    """
+    Walk a SymPy expression tree and replace every ``Pow(base, p/q)`` node
+    where *q* is a small odd integer and ``0 < p/q < 1`` with the equivalent
+    real-valued form ``sign(base) * Abs(base)**(p/q)``.
+
+    This is necessary because SymPy's ``lambdify`` generates ``base**exp``
+    using Python's ``**`` operator for simple float exponents.  For a
+    negative base that operator returns the complex principal root, not the
+    real odd root, so e.g. ``(-8.0)**0.333… = (1+1.73j)`` instead of ``-2``.
+    After the transformation lambdify emits ``sign(x)*abs(x)**exp``, which
+    numpy evaluates correctly for all real inputs. (Fix 4)
+    """
+    from fractions import Fraction as PFraction
+    from sympy import Pow, sign as sym_sign, Abs, Rational
+
+    if expr.is_Atom:
+        return expr
+
+    new_args = [_fix_real_roots(arg) for arg in expr.args]
+    expr = expr.func(*new_args)
+
+    if not isinstance(expr, Pow):
+        return expr
+
+    base, exp = expr.args
+
+    # Try to identify exp as p/q with small odd denominator
+    exp_rat = None
+    if exp.is_Rational:
+        exp_rat = exp
+    elif exp.is_Float:
+        ev = float(exp)
+        if 0.0 < ev < 1.0:
+            try:
+                frac = PFraction(ev).limit_denominator(21)
+                if abs(ev - float(frac)) < 1e-7:
+                    exp_rat = Rational(frac.numerator, frac.denominator)
+            except Exception:
+                pass
+
+    if (exp_rat is not None
+            and 0 < exp_rat < 1
+            and int(exp_rat.q) % 2 == 1):
+        return sym_sign(base) * Abs(base) ** exp_rat
+
+    return expr
+
+# =============================================================================
+# MODULE-LEVEL WRAPPERS FOR MULTIPROCESSING (Fix 1: must be picklable)
+# =============================================================================
+
+def _mp_worker(queue, func, args):
+    """Top-level worker function so multiprocessing can pickle the target."""
+    try:
+        result = func(*args)
+        queue.put(('ok', result))
+    except Exception:
+        queue.put(('error', None))
+
+
+def _sympy_continuous_domain(f, x):
+    """Module-level wrapper: compute continuous domain over the reals."""
+    return continuous_domain(f, x, S.Reals)
+
+
+def _sympy_min_max(f, x, domain):
+    """Module-level wrapper: return (minimum, maximum) as a tuple."""
+    search_dom = domain if domain.is_subset(S.Reals) else S.Reals
+    mn = minimum(f, x, search_dom)
+    mx = maximum(f, x, search_dom)
+    return (mn, mx)
+
+
+# =============================================================================
+# TIMEOUT UTILITY
+# =============================================================================
+
+def run_with_timeout(func, args, timeout_seconds, default=None):
+    """
+    Run func(*args) with a hard timeout.
+
+    * On Unix (Linux / macOS): spawns a forked child process that can be
+      *killed* on timeout, so no CPU-spinning ghost threads are left behind
+      (Fix 1).
+    * On Windows: falls back to a daemon thread – threads cannot be killed
+      but the daemon flag ensures they do not prevent interpreter exit.
+
     Returns (result, timed_out) tuple.
     """
-    import threading
-    
-    result_container = {'result': default, 'exception': None, 'done': False}
-    
-    def wrapper():
-        try:
-            result_container['result'] = func()
-        except Exception as e:
-            result_container['exception'] = e
-        finally:
-            result_container['done'] = True
-    
-    thread = threading.Thread(target=wrapper, daemon=True)
-    thread.start()
-    thread.join(timeout=timeout_seconds)
-    
-    if not result_container['done']:
-        debug_print(f"TIMEOUT after {timeout_seconds}s - switching to numerical fallback", Fore.YELLOW)
+    if sys.platform == 'win32':
+        # Windows fallback – thread-based (cannot kill, but daemon)
+        import threading
+        container = {'result': default, 'done': False}
+
+        def _run():
+            try:
+                container['result'] = func(*args)
+            except Exception:
+                pass
+            finally:
+                container['done'] = True
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+        t.join(timeout=timeout_seconds)
+        if not container['done']:
+            debug_print(f"TIMEOUT after {timeout_seconds}s - switching to numerical fallback",
+                        Fore.YELLOW)
+            return default, True
+        return container['result'], False
+
+    # Unix path – fork-based process (can be terminated)
+    ctx = multiprocessing.get_context('fork')
+    queue = ctx.Queue()
+    process = ctx.Process(target=_mp_worker, args=(queue, func, args), daemon=True)
+    process.start()
+    process.join(timeout=timeout_seconds)
+
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        debug_print(f"TIMEOUT after {timeout_seconds}s – worker process killed", Fore.YELLOW)
         return default, True
-    
-    if result_container['exception'] is not None:
-        return default, False
-    
-    return result_container['result'], False
+
+    if not queue.empty():
+        try:
+            status, result = queue.get_nowait()
+            if status == 'ok':
+                return result, False
+        except Exception:
+            pass
+
+    return default, False
 
 class Timer:
     """Context manager for timing code blocks"""
@@ -456,6 +588,67 @@ def snap_to_clean_value(val, tolerance=1e-6):
     return val
 
 
+def _detect_range_gaps(y_values):
+    """
+    Detect significant gaps in a sorted collection of sampled y-values.
+
+    For functions like 1/sin(x) the range is (-∞, -1] ∪ [1, +∞); after
+    sampling, the sorted y-values have no entries in (-1, 1).  This gap
+    appears as a jump that is *locally* orders-of-magnitude wider than the
+    typical spacing of nearby neighbours.
+
+    The algorithm compares each candidate gap to the *local* density
+    (average step size of the K nearest neighbours on each side) rather
+    than the global median.  This rejects false-positive "gaps" in the
+    sparse tail of heavy-tailed distributions (e.g. near the asymptotes of
+    1/sin(x)) while reliably finding real gaps that separate two dense
+    clusters.
+
+    Returns a list of (gap_lo, gap_hi) tuples.
+    (Fix 6)
+    """
+    MIN_SAMPLES = 60       # need enough data to compute local density
+    MIN_EACH_SIDE = 30     # need samples on both sides of a claimed gap
+    LOCAL_K = 10           # neighbours on each side used for local density
+    RATIO_THRESHOLD = 50.0 # gap must be ≥ 50× local density to be real
+    ABS_MIN = 0.3          # gap must be at least this wide in absolute terms
+
+    if len(y_values) < MIN_SAMPLES:
+        return []
+
+    sorted_y = sorted(set(y_values))
+    n = len(sorted_y)
+    if n < MIN_SAMPLES:
+        return []
+
+    gaps = []
+    for i in range(n - 1):
+        diff = sorted_y[i + 1] - sorted_y[i]
+        if diff < ABS_MIN:
+            continue
+
+        # Enough room on both sides for a local density window
+        left_k = min(LOCAL_K, i)
+        right_k = min(LOCAL_K, n - i - 2)
+        if left_k < 5 or right_k < 5:
+            continue
+
+        local_left = sorted_y[i] - sorted_y[i - left_k]
+        local_right = sorted_y[i + 1 + right_k] - sorted_y[i + 1]
+        local_density = (local_left + local_right) / (left_k + right_k)
+
+        if local_density < 1e-12:
+            continue
+
+        if diff >= RATIO_THRESHOLD * local_density:
+            left_count = i + 1
+            right_count = n - i - 2
+            if left_count >= MIN_EACH_SIDE and right_count >= MIN_EACH_SIDE:
+                gaps.append((sorted_y[i], sorted_y[i + 1]))
+
+    return gaps
+
+
 def smart_numerical_range(f, x, domain_sympy):
     """
     Improved numerical range finder with proper infinity handling.
@@ -465,9 +658,17 @@ def smart_numerical_range(f, x, domain_sympy):
         return f"{Fore.YELLOW}Scipy missing.", "N/A"
 
     try:
+        # Fix 4: apply the real-root transformation early so BOTH SymPy's
+        # symbolic limit analysis and numpy evaluation use the correct real form.
+        f = _fix_real_roots(f)
         # Create a safe numerical function that handles complex results
         def make_safe_f_num(f, x):
-            f_num_raw = lambdify(x, f, modules=['numpy'])
+            # Fix 4: Transform the SymPy expression so that float-exponent
+            # Pow nodes with odd denominators (e.g. x**0.333 = x**(1/3)) are
+            # rewritten as sign(x)*abs(x)**(1/3) before lambdify.  This avoids
+            # Python's ** returning a complex principal root for negative bases.
+            f_transformed = _fix_real_roots(f)
+            f_num_raw = lambdify(x, f_transformed, modules=_LAMBDIFY_MODULES)
             def safe_f(val):
                 try:
                     result = f_num_raw(val)
@@ -581,10 +782,27 @@ def smart_numerical_range(f, x, domain_sympy):
         # Use Rust module if available for faster grid generation
         if RUST_AVAILABLE:
             try:
-                X_grid = np.array(fast_math_rs.generate_multi_scale_grid(
-                    gen_min, gen_max, [10.0, 100.0], 800
+                # Fix 11: use adaptive_grid so sampling is denser near singularities /
+                # domain boundaries (special points), which catches more extrema.
+                special_pts = []
+                try:
+                    if isinstance(domain_sympy, Union):
+                        for arg in domain_sympy.args:
+                            if hasattr(arg, 'inf') and arg.inf.is_finite:
+                                special_pts.append(float(arg.inf))
+                            if hasattr(arg, 'sup') and arg.sup.is_finite:
+                                special_pts.append(float(arg.sup))
+                    else:
+                        if hasattr(domain_sympy, 'inf') and domain_sympy.inf.is_finite:
+                            special_pts.append(float(domain_sympy.inf))
+                        if hasattr(domain_sympy, 'sup') and domain_sympy.sup.is_finite:
+                            special_pts.append(float(domain_sympy.sup))
+                except Exception:
+                    pass
+                X_grid = np.array(fast_math_rs.adaptive_grid(
+                    gen_min, gen_max, 1000, special_pts, 0.5
                 ))
-            except:
+            except Exception:
                 X_grid = None
         else:
             X_grid = None
@@ -621,12 +839,16 @@ def smart_numerical_range(f, x, domain_sympy):
         
         if len(X_grid) > 0:
             try:
-                # OPTIMIZED: Vectorized evaluation
-                Y_grid = np.vectorize(f_num)(X_grid)
+                # Fix 8: lambdify already returns a ufunc-like function; calling it
+                # directly on the whole array avoids the Python-level for-loop that
+                # np.vectorize introduces (≈ 10-100× slower for large grids).
+                Y_grid = f_num(X_grid)
+                if not isinstance(Y_grid, np.ndarray):
+                    Y_grid = np.full_like(X_grid, float(Y_grid))
                 mask = np.isfinite(Y_grid) & np.isreal(Y_grid)
                 if np.any(mask):
                     all_y_values.extend(Y_grid[mask].astype(float).tolist())
-            except:
+            except Exception:
                 pass
         
         # Also sample near boundaries and near important points
@@ -678,29 +900,6 @@ def smart_numerical_range(f, x, domain_sympy):
         # --- STEP 5: REFINE WITH OPTIMIZATION ---
         refined_min = rough_min
         refined_max = rough_max
-        
-        # OPTIMIZED: Use Rust Brent's method if available (much faster than differential_evolution)
-        if RUST_AVAILABLE:
-            try:
-                bounds_min = max(gen_min, -100)
-                bounds_max = min(gen_max, 100)
-                
-                # Find minimum using Rust Brent's method
-                x_min, f_min = fast_math_rs.brent_minimize(
-                    f_num, bounds_min, bounds_max, 1e-6, 100
-                )
-                if np.isfinite(f_min):
-                    refined_min = min(refined_min, f_min)
-                
-                # Find maximum (minimize negative)
-                neg_f_num = lambda x: -f_num(x)
-                x_max, neg_f_max = fast_math_rs.brent_minimize(
-                    neg_f_num, bounds_min, bounds_max, 1e-6, 100
-                )
-                if np.isfinite(neg_f_max):
-                    refined_max = max(refined_max, -neg_f_max)
-            except:
-                pass
         
         # Fallback to scipy optimization
         try:
@@ -787,11 +986,17 @@ def smart_numerical_range(f, x, domain_sympy):
             refined_min = min(refined_min, min(all_y_values))
             refined_max = max(refined_max, max(all_y_values))
 
-        # --- STEP 6: APPLY INFINITY BOUNDS ---
+        # --- STEP 6: DETECT GAPS IN RANGE (Fix 6) ---
+        # e.g. 1/sin(x) has range (-∞,-1] ∪ [1,+∞) – the gap (-1,1) shows up
+        # as a very large jump in the sorted finite y-values.
+        finite_y = [v for v in all_y_values if np.isfinite(v)]
+        gaps = _detect_range_gaps(finite_y)
+
+        # --- STEP 7: APPLY INFINITY BOUNDS ---
         final_min = refined_min if not has_inf_neg else -np.inf
         final_max = refined_max if not has_inf_pos else np.inf
 
-        # --- STEP 7: SNAP TO CLEAN VALUES ---
+        # --- STEP 8: SNAP TO CLEAN VALUES ---
         # Clean up values like 0.000001 -> 0, 0.999999 -> 1, etc.
         final_min = snap_to_clean_value(final_min)
         final_max = snap_to_clean_value(final_max)
@@ -802,6 +1007,22 @@ def smart_numerical_range(f, x, domain_sympy):
             if abs(val) < 1e-9: return "0"
             if abs(val) > 1e10: return f"{val:.2e}"
             return f"{val:.6f}".rstrip('0').rstrip('.')
+
+        # Build Union result if significant gaps were detected (Fix 6)
+        if gaps:
+            clean_gaps = [
+                (snap_to_clean_value(lo), snap_to_clean_value(hi))
+                for lo, hi in gaps
+            ]
+            # Reconstruct contiguous segments separated by the gaps
+            segment_lo = final_min
+            segments = []
+            for g_lo, g_hi in sorted(clean_gaps):
+                segments.append((segment_lo, g_lo))
+                segment_lo = g_hi
+            segments.append((segment_lo, final_max))
+            interval_strs = [f"Interval[{fmt(lo)}, {fmt(hi)}]" for lo, hi in segments]
+            return " U ".join(interval_strs), "Hybrid Analysis"
 
         return f"Interval[{fmt(final_min)}, {fmt(final_max)}]", "Hybrid Analysis"
 
@@ -834,20 +1055,73 @@ def solve(func_str, show_timing=True):
     if f in [zoo, oo, -oo, nan]:
         print(f"{Fore.RED}[FAIL] Infinite/Undefined Expression"); print("-" * 40); return None
 
-    # 1. DOMAIN
-    with Timer("domain") as t:
+    # --- Fix 7: constant function fast-path via simplify ---
+    # e.g. sin(x)**2 + cos(x)**2 simplifies to 1 in < 1 ms; without this the
+    # symbolic range strategies spin for the full timeout on each strategy.
+    with Timer("simplify_check") as t:
         try:
-            domain = continuous_domain(f, x, S.Reals)
+            simplified_f, simplify_timed_out = run_with_timeout(
+                simplify, (f,), SYMBOLIC_TIMEOUT, default=None
+            )
+            if not simplify_timed_out and simplified_f is not None and simplified_f.is_number:
+                # Constant function: domain = ℝ minus singularities of original f
+                domain_result, _ = run_with_timeout(
+                    _sympy_continuous_domain, (f, x), SYMBOLIC_TIMEOUT, default=None
+                )
+                domain = domain_result if domain_result is not None else S.Reals
+                print(f"{Fore.GREEN}Domain: {domain}")
+                range_res = FiniteSet(simplified_f)
+                method = "Exact (constant, simplified)"
+                print(f"{Fore.GREEN}Range:  {range_res}")
+                print(f"{Style.DIM}Method: {method}")
+                stats.total_time = time.perf_counter() - total_start
+                if show_timing:
+                    print(f"{Fore.BLUE}{Style.DIM}{stats}")
+                print("-" * 40)
+                return stats
+        except Exception:
+            pass
+
+    # --- Fix 5: floor/ceiling always maps to integers ---
+    # floor(expr) and ceiling(expr) are defined wherever expr is defined, and
+    # their range is always a subset of ℤ (for any real-valued argument).
+    if isinstance(f, (floor, ceiling)):
+        with Timer("domain") as t:
+            domain_result, _ = run_with_timeout(
+                _sympy_continuous_domain, (f.args[0], x), SYMBOLIC_TIMEOUT, default=None
+            )
+            domain = domain_result if domain_result is not None else S.Reals
             print(f"{Fore.GREEN}Domain: {domain}")
-        except:
+        stats.domain_time = t.elapsed
+        range_res = S.Integers
+        method = "Exact (floor/ceiling → ℤ)"
+        print(f"{Fore.GREEN}Range:  {range_res}")
+        print(f"{Style.DIM}Method: {method}")
+        stats.total_time = time.perf_counter() - total_start
+        if show_timing:
+            print(f"{Fore.BLUE}{Style.DIM}{stats}")
+        print("-" * 40)
+        return stats
+
+    # 1. DOMAIN — Fix 3: wrap continuous_domain with the same timeout guard
+    with Timer("domain") as t:
+        domain_result, domain_timed_out = run_with_timeout(
+            _sympy_continuous_domain, (f, x), SYMBOLIC_TIMEOUT, default=None
+        )
+        if domain_result is not None:
+            domain = domain_result
+            print(f"{Fore.GREEN}Domain: {domain}")
+        else:
             domain = S.Reals
-            print(f"{Fore.YELLOW}Domain: Assumed Reals (Calc failed)")
+            if domain_timed_out:
+                print(f"{Fore.YELLOW}Domain: Assumed Reals (Computation timed out)")
+            else:
+                print(f"{Fore.YELLOW}Domain: Assumed Reals (Calc failed)")
     stats.domain_time = t.elapsed
 
     # 2. RANGE STRATEGY
     range_res = None
     method = ""
-    symbolic_timed_out = False
     
     def is_valid_range(result):
         """Check if the result is a valid range (Interval or Union of Intervals, not just the expression)"""
@@ -867,17 +1141,16 @@ def solve(func_str, show_timing=True):
 
     # Symbolic range computation with timing AND TIMEOUT
     with Timer("symbolic_range") as t:
+        # Fix 2: each strategy gets its own timeout flag so a timeout in
+        # strategy A no longer suppresses strategies B and C.
+
         # Strategy A: Pure Calculus (SymPy function_range) - WITH TIMEOUT
         # This is reliable when it works, but can hang on complex functions
-        def try_function_range():
-            return function_range(f, x, domain)
-        
         debug_print(f"Attempting SymPy function_range (timeout={SYMBOLIC_TIMEOUT}s)...", Fore.BLUE)
-        result, timed_out = run_with_timeout(try_function_range, SYMBOLIC_TIMEOUT)
+        result, timed_out_a = run_with_timeout(function_range, (f, x, domain), SYMBOLIC_TIMEOUT)
         
-        if timed_out:
-            symbolic_timed_out = True
-            debug_print("SymPy function_range TIMED OUT - will use numerical fallback", Fore.YELLOW)
+        if timed_out_a:
+            debug_print("SymPy function_range TIMED OUT - trying next strategy", Fore.YELLOW)
         elif result is not None and is_valid_range(result):
             range_res = result
             method = "Exact (function_range)"
@@ -885,19 +1158,14 @@ def solve(func_str, show_timing=True):
 
         # Strategy B: Symbolic Min/Max (SymPy minimum/maximum) - WITH TIMEOUT
         # Good for functions like abs(x), piecewise
-        if range_res is None and not symbolic_timed_out:
-            def try_min_max():
-                search_dom = domain if domain.is_subset(S.Reals) else S.Reals
-                mn = minimum(f, x, search_dom)
-                mx = maximum(f, x, search_dom)
-                return mn, mx
-            
+        if range_res is None:
             debug_print(f"Attempting SymPy min/max (timeout={SYMBOLIC_TIMEOUT}s)...", Fore.BLUE)
-            result, timed_out = run_with_timeout(try_min_max, SYMBOLIC_TIMEOUT)
-            
-            if timed_out:
-                symbolic_timed_out = True
-                debug_print("SymPy min/max TIMED OUT - will use numerical fallback", Fore.YELLOW)
+            result, timed_out_b = run_with_timeout(
+                _sympy_min_max, (f, x, domain), SYMBOLIC_TIMEOUT
+            )
+
+            if timed_out_b:
+                debug_print("SymPy min/max TIMED OUT - trying next strategy", Fore.YELLOW)
             elif result is not None:
                 mn, mx = result
                 # Validate the results are actual numbers or infinity
@@ -918,24 +1186,29 @@ def solve(func_str, show_timing=True):
                     debug_print(f"SymPy min/max SUCCESS: [{mn}, {mx}]", Fore.GREEN)
 
         # Strategy C: Try symbolic limits for unbounded behavior - WITH TIMEOUT
-        if range_res is None and not symbolic_timed_out:
-            def try_limit_analysis():
-                return analyze_function_behavior(f, x, domain)
-            
+        # Fix 2: uses its own timed_out_c flag, independent of A and B.
+        if range_res is None:
             debug_print(f"Attempting SymPy limit analysis (timeout={SYMBOLIC_TIMEOUT}s)...", Fore.BLUE)
-            result, timed_out = run_with_timeout(try_limit_analysis, SYMBOLIC_TIMEOUT)
-            
-            if timed_out:
-                symbolic_timed_out = True
+            result, timed_out_c = run_with_timeout(
+                analyze_function_behavior, (f, x, domain), SYMBOLIC_TIMEOUT
+            )
+
+            if timed_out_c:
                 debug_print("SymPy limit analysis TIMED OUT - will use numerical fallback", Fore.YELLOW)
             elif result is not None:
                 has_neg_inf, has_pos_inf, left_lim, right_lim = result
                 
-                # If we can determine the limits symbolically
+                # If we can determine the limits symbolically.
+                # NOTE: "unbounded in both directions" does NOT mean the range
+                # is all of ℝ – the function might skip a region (e.g. 1/sin(x)
+                # has no values in (-1, 1)).  Fall through to Strategy D (which
+                # has gap detection) instead of asserting Interval(-oo, oo).
                 if has_neg_inf and has_pos_inf:
-                    range_res = Interval(-oo, oo)
-                    method = "Exact (limit analysis)"
-                    debug_print("Limit analysis: unbounded in both directions", Fore.GREEN)
+                    # Leave range_res = None → Strategy D will detect any gap
+                    debug_print(
+                        "Limit analysis: unbounded both ways – using numerical "
+                        "gap detection (Strategy D)", Fore.CYAN
+                    )
                 elif has_neg_inf:
                     # Need to find the maximum numerically
                     try:
@@ -943,7 +1216,7 @@ def solve(func_str, show_timing=True):
                         if mx is not None and mx != oo and (mx.is_number or mx in [oo, -oo]):
                             range_res = Interval(-oo, mx)
                             method = "Hybrid (limits + max)"
-                    except:
+                    except Exception:
                         pass
                 elif has_pos_inf:
                     # Need to find the minimum numerically
@@ -952,7 +1225,7 @@ def solve(func_str, show_timing=True):
                         if mn is not None and mn != -oo and (mn.is_number or mn in [oo, -oo]):
                             range_res = Interval(mn, oo)
                             method = "Hybrid (limits + min)"
-                    except:
+                    except Exception:
                         pass
     stats.symbolic_range_time = t.elapsed
 
@@ -960,10 +1233,7 @@ def solve(func_str, show_timing=True):
     # This is the fallback when symbolic methods fail or timeout
     with Timer("numerical_range") as t:
         if range_res is None:
-            if symbolic_timed_out:
-                debug_print("Using RUST/Numerical fallback due to symbolic timeout", Fore.CYAN)
-            else:
-                debug_print("Using RUST/Numerical fallback (symbolic methods returned no result)", Fore.CYAN)
+            debug_print("Using RUST/Numerical fallback (symbolic methods returned no result)", Fore.CYAN)
             range_res, method = smart_numerical_range(f, x, domain)
             if RUST_AVAILABLE:
                 method = method + " [Rust]"

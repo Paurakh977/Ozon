@@ -145,7 +145,7 @@ fn brent_minimize(
             return Ok((x, fx));
         }
         
-        let d: f64;
+    let mut d: f64 = 0.0;  // will be set by the parabolic or golden-section branch
         
         // Try parabolic interpolation
         if e.abs() > tol1 {
@@ -163,8 +163,9 @@ fn brent_minimize(
                 e = d;
                 let u = x + d;
                 if u - a < tol2 || b - u < tol2 {
-                    // d is already set, but we need a new value
+                    // Step would land too close to a boundary; nudge by ±tol1.
                     let d_new = if x < midpoint { tol1 } else { -tol1 };
+                    d = d_new;  // Fix 10: update d, not just e
                     e = d_new;
                 }
             } else {
