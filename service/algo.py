@@ -147,7 +147,13 @@ def _mp_worker(queue, func, args):
 
 
 def _sympy_continuous_domain(f, x):
-    """Module-level wrapper: compute continuous domain over the reals."""
+    """
+    Module-level wrapper around ``continuous_domain``.
+
+    Must be module-level (not a closure) so it is pickle-able when passed as
+    the ``func`` argument to ``run_with_timeout``, which uses
+    ``multiprocessing.Process`` on Unix platforms.
+    """
     return continuous_domain(f, x, S.Reals)
 
 
@@ -663,12 +669,9 @@ def smart_numerical_range(f, x, domain_sympy):
         f = _fix_real_roots(f)
         # Create a safe numerical function that handles complex results
         def make_safe_f_num(f, x):
-            # Fix 4: Transform the SymPy expression so that float-exponent
-            # Pow nodes with odd denominators (e.g. x**0.333 = x**(1/3)) are
-            # rewritten as sign(x)*abs(x)**(1/3) before lambdify.  This avoids
-            # Python's ** returning a complex principal root for negative bases.
-            f_transformed = _fix_real_roots(f)
-            f_num_raw = lambdify(x, f_transformed, modules=_LAMBDIFY_MODULES)
+            # f has already been transformed by _fix_real_roots above;
+            # no need to call it again here.
+            f_num_raw = lambdify(x, f, modules=_LAMBDIFY_MODULES)
             def safe_f(val):
                 try:
                     result = f_num_raw(val)
@@ -844,7 +847,12 @@ def smart_numerical_range(f, x, domain_sympy):
                 # np.vectorize introduces (≈ 10-100× slower for large grids).
                 Y_grid = f_num(X_grid)
                 if not isinstance(Y_grid, np.ndarray):
-                    Y_grid = np.full_like(X_grid, float(Y_grid))
+                    # Scalar result (constant function or single-point domain)
+                    try:
+                        scalar_val = float(Y_grid)
+                    except (TypeError, ValueError):
+                        scalar_val = np.nan
+                    Y_grid = np.full_like(X_grid, scalar_val)
                 mask = np.isfinite(Y_grid) & np.isreal(Y_grid)
                 if np.any(mask):
                     all_y_values.extend(Y_grid[mask].astype(float).tolist())
@@ -1201,13 +1209,14 @@ def solve(func_str, show_timing=True):
                 # If we can determine the limits symbolically.
                 # NOTE: "unbounded in both directions" does NOT mean the range
                 # is all of ℝ – the function might skip a region (e.g. 1/sin(x)
-                # has no values in (-1, 1)).  Fall through to Strategy D (which
-                # has gap detection) instead of asserting Interval(-oo, oo).
+                # has no values in (-1, 1)).  Leave range_res = None and let
+                # the numerical fallback (Strategy D) detect any gaps.
                 if has_neg_inf and has_pos_inf:
-                    # Leave range_res = None → Strategy D will detect any gap
+                    # Leave range_res = None → Strategy D (numerical fallback)
+                    # will detect any gap in the range.
                     debug_print(
-                        "Limit analysis: unbounded both ways – using numerical "
-                        "gap detection (Strategy D)", Fore.CYAN
+                        "Limit analysis: unbounded both ways – deferring to "
+                        "numerical fallback for gap detection", Fore.CYAN
                     )
                 elif has_neg_inf:
                     # Need to find the maximum numerically
