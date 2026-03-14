@@ -186,12 +186,18 @@ def worker_loop(q_in, q_out):
                 res = _analyze_function_behavior_standalone(f, x, domain)
 
             elif task_type == 'solveset_empty':
-                from sympy import solveset, S, EmptySet
+                from sympy import solveset, S, EmptySet, nsimplify
                 from sympy.sets.conditionset import ConditionSet
                 f, x, val, domain = args
                 search_dom = domain if domain.is_subset(S.Reals) else S.Reals
                 try:
-                    sol = solveset(f - val, x, search_dom)
+                    # Convert float values to exact rationals/constants to avoid
+                    # solveset hangs or EmptySet false positives with floats.
+                    if getattr(val, 'is_Float', False) or isinstance(val, float):
+                        val_exact = nsimplify(val, rational=True)
+                    else:
+                        val_exact = val
+                    sol = solveset(f - val_exact, x, search_dom)
                     if sol == EmptySet:
                         res = True
                     elif isinstance(sol, ConditionSet):

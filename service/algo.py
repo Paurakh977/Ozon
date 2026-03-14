@@ -1000,6 +1000,54 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 # MAIN SOLVER
 # =============================================================================
 
+def format_math_set(obj):
+    if isinstance(obj, str):
+        if obj == "Reals":
+            return "(-oo, oo)"
+        elif obj == "Integers":
+            return "Integers"
+        try:
+            # We already have Interval, Union, oo in globals
+            obj = eval(obj, globals(), locals())
+        except Exception:
+            return obj
+
+    from sympy import S
+    if obj == S.Reals:
+        return "(-oo, oo)"
+    if obj == S.Integers:
+        return "Integers"
+    if obj == EmptySet:
+        return "EmptySet"
+        
+    if isinstance(obj, FiniteSet):
+        items = sorted([str(arg) for arg in obj.args])
+        return "{" + ", ".join(items) + "}"
+        
+    def fmt_interval(interv):
+        lo_str = str(interv.start)
+        hi_str = str(interv.end)
+        left_bracket = "(" if interv.left_open or lo_str == "-oo" else "["
+        right_bracket = ")" if interv.right_open or hi_str == "oo" else "]"
+        return f"{left_bracket}{lo_str}, {hi_str}{right_bracket}"
+        
+    if isinstance(obj, Interval):
+        return fmt_interval(obj)
+        
+    if isinstance(obj, Union):
+        parts = []
+        for arg in obj.args:
+            if isinstance(arg, Interval):
+                parts.append(fmt_interval(arg))
+            elif isinstance(arg, FiniteSet):
+                items = sorted([str(x) for x in arg.args])
+                parts.append("{" + ", ".join(items) + "}")
+            else:
+                parts.append(str(arg))
+        return " U ".join(parts)
+        
+    return str(obj)
+
 def solve(func_str, show_timing=True):
     stats = TimingStats()
     total_start = time.perf_counter()
@@ -1025,8 +1073,8 @@ def solve(func_str, show_timing=True):
 
     # --- CONSTANT FUNCTION DETECTION (EDGE-05) ---
     if f.is_number:
-        print(f"{Fore.GREEN}Domain: Reals")
-        print(f"{Fore.GREEN}Range:  {FiniteSet(f)}  (constant function)")
+        print(f"{Fore.GREEN}Domain: (-oo, oo)")
+        print(f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f))}  (constant function)")
         print(f"{Style.DIM}Method: Exact (constant)")
         stats.total_time = time.perf_counter() - total_start
         if show_timing: print(f"{Fore.BLUE}{Style.DIM}{stats}")
@@ -1038,8 +1086,8 @@ def solve(func_str, show_timing=True):
             from sympy import trigsimp
             f_ts = trigsimp(f)
             if f_ts.is_number:
-                print(f"{Fore.GREEN}Domain: Reals")
-                print(f"{Fore.GREEN}Range:  {FiniteSet(f_ts)}  (constant function)")
+                print(f"{Fore.GREEN}Domain: (-oo, oo)")
+                print(f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f_ts))}  (constant function)")
                 print(f"{Style.DIM}Method: Simplification (constant)")
                 stats.total_time = time.perf_counter() - total_start
                 if show_timing: print(f"{Fore.BLUE}{Style.DIM}{stats}")
@@ -1055,13 +1103,13 @@ def solve(func_str, show_timing=True):
         )
         if domain_timed_out:
             domain = S.Reals
-            print(f"{Fore.YELLOW}Domain: Assumed Reals (timeout)")
+            print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (timeout)")
         elif domain_result is not None:
             domain = domain_result
-            print(f"{Fore.GREEN}Domain: {domain}")
+            print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
         else:
             domain = S.Reals
-            print(f"{Fore.YELLOW}Domain: Assumed Reals (calc failed)")
+            print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (calc failed)")
     stats.domain_time = t.elapsed
 
     # --- RANGE ---
@@ -1152,11 +1200,18 @@ def solve(func_str, show_timing=True):
         if range_res is None:
             debug_print("Strategy D: numerical fallback" +
                         (" (after timeout)" if any_timed_out else ""), Fore.CYAN)
-            range_res, method = smart_numerical_range(
+            range_res_str, method = smart_numerical_range(
                 f, x, domain, behavior_info=behavior_info
             )
             if RUST_AVAILABLE:
                 method += " [Rust]"
+            if isinstance(range_res_str, str) and "Error" not in range_res_str:
+                try:
+                    range_res = eval(range_res_str)
+                except Exception:
+                    range_res = range_res_str
+            else:
+                range_res = range_res_str
     stats.numerical_range_time = t.elapsed
 
     # --- OUTPUT ---
@@ -1198,7 +1253,7 @@ def solve(func_str, show_timing=True):
     elif "Hybrid" in method:         col = Fore.CYAN
     else:                            col = Fore.YELLOW
 
-    print(f"{col}Range:  {range_res}")
+    print(f"{col}Range:  {format_math_set(range_res)}")
     print(f"{Style.DIM}Method: {method}")
 
     stats.total_time = time.perf_counter() - total_start
