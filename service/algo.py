@@ -1300,6 +1300,7 @@ def main():
     all_stats = []
 
     print(f"{Fore.WHITE}--- Standard Tests ---")
+    standard_stats = []
     for fn in [
         "abs(x)",         # [0, oo)
         "sin(x)/x",       # approx [-0.217, 1]
@@ -1314,9 +1315,16 @@ def main():
         "1/(1+x**2)",     # (0, 1]
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            standard_stats.append(s)
+    if standard_stats:
+        st_total = sum(s.total_time for s in standard_stats)
+        st_avg = st_total / len(standard_stats)
+        print(f"{Fore.CYAN}Standard tests: {len(standard_stats)} funcs — total {st_total*1000:.1f}ms, avg {st_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Hard/Complex Tests ---")
+    hard_stats = []
     for fn in [
         "x * sin(x)",
         "exp(-x**2)",
@@ -1330,9 +1338,16 @@ def main():
         "exp(sin(x))",
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            hard_stats.append(s)
+    if hard_stats:
+        ht_total = sum(s.total_time for s in hard_stats)
+        ht_avg = ht_total / len(hard_stats)
+        print(f"{Fore.CYAN}Hard/Complex tests: {len(hard_stats)} funcs — total {ht_total*1000:.1f}ms, avg {ht_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Extreme/Challenging Tests ---")
+    extreme_stats = []
     for fn in [
         "atan(x)", "asin(x)", "acos(x)",
         "sinh(x)", "cosh(x)", "tanh(x)",
@@ -1346,7 +1361,39 @@ def main():
         "sin(x)/x**2", "exp(-x)*sin(x)",
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            extreme_stats.append(s)
+    if extreme_stats:
+        ex_total = sum(s.total_time for s in extreme_stats)
+        ex_avg = ex_total / len(extreme_stats)
+        print(f"{Fore.CYAN}Extreme tests: {len(extreme_stats)} funcs — total {ex_total*1000:.1f}ms, avg {ex_avg*1000:.1f}ms")
+
+    print(f"\n{Fore.WHITE}--- User Added Tests ---")
+    user_stats = []
+    for fn in [
+        "log(log(x))",
+        "sqrt(sin(x))",
+        "x*log(x)",
+        "log(x + sqrt(x**2 + 1))",
+        "sqrt(x**2 - 4*x + 3)",
+        "exp(x)/(1 + exp(x))",
+        "sin(1/x)",
+        "x - floor(x)",
+        "atan(1/x)",
+        "sqrt((x-1)/(x+1))",
+        "x**2 * sin(1/x)",
+        "log(x*(1-x))",
+        "x / sqrt(1 - x**2)",
+    ]:
+        s = solve(fn)
+        if s:
+            all_stats.append(s)
+            user_stats.append(s)
+    if user_stats:
+        us_total = sum(s.total_time for s in user_stats)
+        us_avg = us_total / len(user_stats)
+        print(f"{Fore.CYAN}User tests: {len(user_stats)} funcs — total {us_total*1000:.1f}ms, avg {us_avg*1000:.1f}ms")
 
     if all_stats:
         total   = sum(s.total_time for s in all_stats)
