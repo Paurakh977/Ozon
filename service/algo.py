@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from sympy import (Symbol, S, sympify, oo, zoo, nan, lambdify, Abs, floor, ceiling,
                    limit, simplify, diff, solveset, Piecewise, sign, Max, Min, exp, log,
                    re, im, Interval as SympyInterval, Rational, Pow, Integer,
-                   tan, cot, sec, csc)
+                   tan, cot, sec, csc, E)
 from sympy.calculus.util import continuous_domain, function_range, minimum, maximum, AccumBounds
 from sympy.sets import Interval, Union, FiniteSet, EmptySet, Reals, Integers
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
@@ -526,6 +526,7 @@ def snap_to_clean_value(val, tolerance=None):
         np.sqrt(3), -np.sqrt(3), np.sqrt(3)/2, -np.sqrt(3)/2,
         1/3, -1/3, 2/3, -2/3,
         1/4, -1/4, 3/4, -3/4,
+        np.exp(-1/np.e), -np.exp(-1/np.e),
     ]
     for clean in clean_values:
         if abs(val - clean) < tolerance:
@@ -908,6 +909,15 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             if np.isinf(v):    return "oo" if v > 0 else "-oo"
             if abs(v) < 1e-9:  return "0"
             if abs(v) > 1e10:  return f"{v:.2e}"
+            if RUST_AVAILABLE and hasattr(fast_math_rs, 'format_symbolic_value'):
+                v_str = fast_math_rs.format_symbolic_value(v)
+                if not any(char.isdigit() for char in v_str) or 'E' in v_str or '/' in v_str or 'pi' in v_str or 'exp' in v_str or 'sqrt' in v_str:
+                    return v_str
+            
+            # Python fallback for our custom constants not in Rust yet
+            if abs(v - np.exp(-1/np.e)) < 1e-8: return "exp(-1/E)"
+            if abs(v + np.exp(-1/np.e)) < 1e-8: return "-exp(-1/E)"
+            
             return f"{v:.6f}".rstrip('0').rstrip('.')
 
         # --- STEP 8: GAP DETECTION ---
@@ -954,7 +964,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 return True
             try:
                 result, timed_out = run_with_timeout(
-                    'solveset_empty', (f, x, val, domain_sympy), timeout_seconds=1.0
+                    'solveset_empty', (f, x, val, domain_sympy), timeout_seconds=2.0
                 )
                 if not timed_out:
                     if result is True: return True
@@ -967,12 +977,12 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 if len(sampled_y_values) > 0:
                     if is_min:
                         actual_min = min(sampled_y_values)
-                        if actual_min > val + 1e-11:
+                        if actual_min > val + 1e-9:
 
                             return True
                     else:
                         actual_max = max(sampled_y_values)
-                        if actual_max < val - 1e-11:
+                        if actual_max < val - 1e-9:
                             return True
             except Exception:
                 pass
@@ -1019,14 +1029,28 @@ def format_math_set(obj):
         return "Integers"
     if obj == EmptySet:
         return "EmptySet"
-        
+
+    def fmt_val(val):
+        from sympy import S, Float
+        if val == S.Infinity: return "oo"
+        if val == S.NegativeInfinity: return "-oo"
+        if getattr(val, 'is_Float', False):
+            # Format to avoid long trailing zeros
+            s = str(val)
+            if 'e' not in s.lower() and '.' in s:
+                s = s.rstrip('0').rstrip('.')
+                if not s: return "0"
+                # If we stripped entirely to integer, format properly, but rstrip handled it
+            return s
+        return str(val)
+
     if isinstance(obj, FiniteSet):
-        items = sorted([str(arg) for arg in obj.args])
+        items = sorted([fmt_val(arg) for arg in obj.args])
         return "{" + ", ".join(items) + "}"
         
     def fmt_interval(interv):
-        lo_str = str(interv.start)
-        hi_str = str(interv.end)
+        lo_str = fmt_val(interv.start)
+        hi_str = fmt_val(interv.end)
         left_bracket = "(" if interv.left_open or lo_str == "-oo" else "["
         right_bracket = ")" if interv.right_open or hi_str == "oo" else "]"
         return f"{left_bracket}{lo_str}, {hi_str}{right_bracket}"
@@ -1040,7 +1064,7 @@ def format_math_set(obj):
             if isinstance(arg, Interval):
                 parts.append(fmt_interval(arg))
             elif isinstance(arg, FiniteSet):
-                items = sorted([str(x) for x in arg.args])
+                items = sorted([fmt_val(x) for x in arg.args])
                 parts.append("{" + ", ".join(items) + "}")
             else:
                 parts.append(str(arg))
@@ -1218,7 +1242,7 @@ def solve(func_str, show_timing=True):
     if range_res is not None and isinstance(range_res, (Interval, Union)):
         def check_bound_attained(val):
             try:
-                res, to = run_with_timeout('solveset_empty', (f, x, val, domain), 0.5)
+                res, to = run_with_timeout('solveset_empty', (f, x, val, domain), 2.0)
                 if not to:
                     if res is False: return True
                     if res is True: return False
@@ -1241,7 +1265,7 @@ def solve(func_str, show_timing=True):
             elif not ro and interv.end.is_finite:
                 if check_bound_attained(interv.end) is False: ro = True
                 
-            return Interval(interv.start, interv.end, lo, ro)
+            return Interval(interv.start, interv.end, bool(lo), bool(ro))
 
         if isinstance(range_res, Interval):
             range_res = fix_interval(range_res)

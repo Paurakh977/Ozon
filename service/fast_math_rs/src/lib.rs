@@ -310,6 +310,9 @@ fn format_symbolic_value(val: f64) -> String {
     if (val - (-0.5_f64).exp()).abs() < 1e-8 {
         return "exp(-1/2)".to_string();
     }
+    if (val - (-1.0 / E).exp()).abs() < 1e-8 {
+        return "exp(-1/E)".to_string();
+    }
     if (val - sqrt2).abs() < 1e-8 {
         return "sqrt(2)".to_string();
     }
