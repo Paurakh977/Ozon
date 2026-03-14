@@ -76,6 +76,7 @@ def _analyze_function_behavior_standalone(f, x, domain):
     has_inf_neg = False
     left_lim = None
     right_lim = None
+    sing_limits = []
 
     f_for_limits = _rewrite_real_roots_w(f, x) if _has_real_odd_root_w(f, x) else f
 
@@ -128,14 +129,19 @@ def _analyze_function_behavior_standalone(f, x, domain):
                     try:
                         ll = limit(f_for_limits, x, pt, '-')
                         lr = limit(f_for_limits, x, pt, '+')
-                        if ll == oo  or lr == oo:  has_inf_pos = True
-                        if ll == -oo or lr == -oo: has_inf_neg = True
+                        if ll == oo: has_inf_pos = True
+                        elif ll == -oo: has_inf_neg = True
+                        elif ll not in [zoo, nan]: sing_limits.append(ll)
+                        
+                        if lr == oo: has_inf_pos = True
+                        elif lr == -oo: has_inf_neg = True
+                        elif lr not in [zoo, nan]: sing_limits.append(lr)
                     except Exception:
                         pass
     except Exception:
         pass
 
-    return has_inf_neg, has_inf_pos, left_lim, right_lim
+    return has_inf_neg, has_inf_pos, left_lim, right_lim, sing_limits
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +187,19 @@ def worker_loop(q_in, q_out):
 
             elif task_type == 'solveset_empty':
                 from sympy import solveset, S, EmptySet
-                f, x, val = args
-                res = (solveset(f - val, x, S.Reals) == EmptySet)
+                from sympy.sets.conditionset import ConditionSet
+                f, x, val, domain = args
+                search_dom = domain if domain.is_subset(S.Reals) else S.Reals
+                try:
+                    sol = solveset(f - val, x, search_dom)
+                    if sol == EmptySet:
+                        res = True
+                    elif isinstance(sol, ConditionSet):
+                        res = 'unknown'
+                    else:
+                        res = False
+                except Exception:
+                    res = 'unknown'
 
             else:
                 res = None

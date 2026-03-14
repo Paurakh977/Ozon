@@ -619,10 +619,11 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
         # --- STEP 1: REUSE PRE-COMPUTED BEHAVIOUR INFO ---
         if behavior_info is not None:
-            has_inf_neg, has_inf_pos, left_lim, right_lim = behavior_info
+            has_inf_neg, has_inf_pos, left_lim, right_lim, sing_limits = behavior_info
         else:
             has_inf_neg = has_inf_pos = False
             left_lim = right_lim = None
+            sing_limits = []
 
         # --- STEP 2: DOMAIN BOUNDS ---
         gen_min, gen_max = -100.0, 100.0
@@ -674,6 +675,17 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
         # --- EARLY EXIT: reciprocal-trig gap structure ---
         # NEW-03 fix: only enter this path when we KNOW it's doubly unbounded.
+        if might_have_gaps and not (has_inf_neg and has_inf_pos):
+            for pt in [0, np.pi, np.pi/2, 2*np.pi]:
+                try:
+                    for eps in [1e-5, 1e-7]:
+                        for p in [pt + eps, pt - eps]:
+                            v = f_num(p)
+                            if np.isfinite(v):
+                                if v > 1e4: has_inf_pos = True
+                                if v < -1e4: has_inf_neg = True
+                except Exception:
+                    pass
         if might_have_gaps and has_inf_neg and has_inf_pos:
             try:
                 dense_x = np.linspace(0.001, np.pi - 0.001, 5000)
@@ -713,6 +725,26 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
         # --- STEP 4: GRID SEARCH ---
         all_y_values = []
+        limit_vals = set()
+        
+        def add_limit(val, is_neg_inf=False, is_pos_inf=False):
+            try:
+                if is_neg_inf and domain_is_bounded_left: return
+                if is_pos_inf and domain_is_bounded_right: return
+                
+                if val is not None and getattr(val, 'is_real', False) and getattr(val, 'is_number', False):
+                    fval = float(val)
+                    all_y_values.append(fval)
+                    limit_vals.add(snap_to_clean_value(fval))
+            except Exception:
+                pass
+                
+        add_limit(left_lim, is_neg_inf=True)
+        add_limit(right_lim, is_pos_inf=True)
+        for sl in sing_limits:
+            add_limit(sl)
+
+        sampled_y_values = []
 
         # NEW-01 fix: correct Rust API call — (gen_min, gen_max, scales_list, samples_per_scale)
         X_grid = None
@@ -755,7 +787,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 Y_grid = np.asarray(Y_grid, dtype=float)
                 mask = np.isfinite(Y_grid)
                 if np.any(mask):
-                    all_y_values.extend(Y_grid[mask].tolist())
+                    sampled_y_values.extend(Y_grid[mask].tolist()); all_y_values.extend(Y_grid[mask].tolist())
 
                 # Adaptive densification near critical regions (RUST-04)
                 if RUST_AVAILABLE and np.any(mask):
@@ -783,7 +815,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     Y_dense = np.asarray(Y_dense, dtype=float)
                                     dm = np.isfinite(Y_dense)
                                     if np.any(dm):
-                                        all_y_values.extend(Y_dense[dm].tolist())
+                                        sampled_y_values.extend(Y_dense[dm].tolist()); all_y_values.extend(Y_dense[dm].tolist())
                                         debug_print(
                                             f"Adaptive grid: {np.sum(dm)} pts near "
                                             f"{len(critical_xs)} critical regions", Fore.CYAN)
@@ -809,7 +841,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             try:
                 val = f_num(pt)
                 if np.isfinite(val) and np.isreal(val):
-                    all_y_values.append(float(val))
+                    sampled_y_values.append(float(val)); all_y_values.append(float(val))
             except Exception:
                 pass
 
@@ -819,7 +851,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         # --- STEP 5: CRITICAL POINTS ---
         for cv in find_critical_points_numerical(f, x, domain_sympy, f_num):
             if np.isfinite(cv) and np.isreal(cv):
-                all_y_values.append(float(cv))
+                sampled_y_values.append(float(cv)); all_y_values.append(float(cv))
 
         # --- STEP 6: SCIPY OPTIMISATION ---
         refined_min = min(all_y_values)
@@ -842,6 +874,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     options={'maxiter': 200, 'xatol': 1e-7})
                 if r.success and np.isfinite(r.fun):
                     refined_min = min(refined_min, r.fun)
+                    sampled_y_values.append(float(r.fun))
+                    all_y_values.append(float(r.fun))
             except Exception:
                 pass
 
@@ -852,6 +886,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     options={'maxiter': 200, 'xatol': 1e-7})
                 if r.success and np.isfinite(r.fun):
                     refined_max = max(refined_max, -r.fun)
+                    sampled_y_values.append(float(-r.fun))
+                    all_y_values.append(float(-r.fun))
             except Exception:
                 pass
 
@@ -913,21 +949,41 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                         return "Union(" + ", ".join(parts) + ")", "Hybrid Analysis (gap detected)"
 
         # --- STEP 9: OPEN/CLOSED ENDPOINT DETECTION (EDGE-06) ---
-        def check_openness(val):
+        def check_openness(val, is_min):
             if np.isinf(val):
                 return True
             try:
                 result, timed_out = run_with_timeout(
-                    'solveset_empty', (f, x, val), timeout_seconds=0.5
+                    'solveset_empty', (f, x, val, domain_sympy), timeout_seconds=1.0
                 )
-                if not timed_out and result is True:
-                    return True
+                if not timed_out:
+                    if result is True: return True
+                    if result is False: return False
             except Exception:
                 pass
+            
+            # Fallback numerical check for asymptote vs attained
+            try:
+                if len(sampled_y_values) > 0:
+                    if is_min:
+                        actual_min = min(sampled_y_values)
+                        if actual_min > val + 1e-11:
+
+                            return True
+                    else:
+                        actual_max = max(sampled_y_values)
+                        if actual_max < val - 1e-11:
+                            return True
+            except Exception:
+                pass
+            
+            if snap_to_clean_value(val) in limit_vals:
+                return True
+                
             return False
 
-        left_open  = check_openness(final_min)
-        right_open = check_openness(final_max)
+        left_open  = check_openness(final_min, True)
+        right_open = check_openness(final_max, False)
 
         if   left_open and right_open: interval_str = f"Interval.open({fmt(final_min)}, {fmt(final_max)})"
         elif left_open:                interval_str = f"Interval.Lopen({fmt(final_min)}, {fmt(final_max)})"
@@ -1078,7 +1134,7 @@ def solve(func_str, show_timing=True):
                     any_timed_out = True
                     debug_print("Strategy C TIMED OUT", Fore.YELLOW)
                 elif result is not None:
-                    has_neg_inf, has_pos_inf, left_lim, right_lim = result
+                    has_neg_inf, has_pos_inf, left_lim, right_lim, sing_limits = result
                     behavior_info = result
                     if has_neg_inf and has_pos_inf:
                         if _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc):
@@ -1104,6 +1160,39 @@ def solve(func_str, show_timing=True):
     stats.numerical_range_time = t.elapsed
 
     # --- OUTPUT ---
+    if range_res is not None and isinstance(range_res, (Interval, Union)):
+        def check_bound_attained(val):
+            try:
+                res, to = run_with_timeout('solveset_empty', (f, x, val, domain), 0.5)
+                if not to:
+                    if res is False: return True
+                    if res is True: return False
+            except Exception:
+                pass
+            return None
+
+        def fix_interval(interv):
+            if not isinstance(interv, Interval): return interv
+            lo = interv.left_open
+            ro = interv.right_open
+            
+            if lo and interv.start.is_finite:
+                if check_bound_attained(interv.start) is True: lo = False
+            elif not lo and interv.start.is_finite:
+                if check_bound_attained(interv.start) is False: lo = True
+                
+            if ro and interv.end.is_finite:
+                if check_bound_attained(interv.end) is True: ro = False
+            elif not ro and interv.end.is_finite:
+                if check_bound_attained(interv.end) is False: ro = True
+                
+            return Interval(interv.start, interv.end, lo, ro)
+
+        if isinstance(range_res, Interval):
+            range_res = fix_interval(range_res)
+        elif isinstance(range_res, Union):
+            range_res = Union(*[fix_interval(arg) for arg in range_res.args])
+
     if   "Error"  in str(range_res): col = Fore.RED
     elif "Exact"  in method:         col = Fore.GREEN
     elif "Hybrid" in method:         col = Fore.CYAN
