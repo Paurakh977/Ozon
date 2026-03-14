@@ -1,3 +1,7 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
 [project]
 name = "service"
 version = "0.1.0"
@@ -11,3 +15,8 @@ dependencies = [
     "scipy>=1.17.0",
     "sympy>=1.14.0",
 ]
+
+[tool.maturin]
+manifest-path = "fast_math_rs/Cargo.toml"
+features = ["pyo3/extension-module"]
+module-name = "fast_math_rs"
