@@ -144,7 +144,16 @@ def _expand_periodic_domain_w(f, x, domain):
         return domain, False
 
     # ── Guard 3: domain looks like a single truncated period ─────────────
-    if isinstance(domain, Interval):
+    from sympy.sets import Complement
+    if isinstance(domain, Complement):
+        base = domain.args[0]
+        if isinstance(base, Interval):
+            component_list = [base]
+        elif isinstance(base, Union) and all(isinstance(a, Interval) for a in base.args):
+            component_list = list(base.args)
+        else:
+            return domain, False
+    elif isinstance(domain, Interval):
         component_list = [domain]
     elif isinstance(domain, Union) and all(isinstance(a, Interval) for a in domain.args):
         component_list = list(domain.args)
@@ -298,6 +307,29 @@ def _analyze_function_behavior_standalone(f, x, domain):
                         elif lr not in [zoo, nan]: sing_limits.append(lr)
                     except Exception:
                         pass
+    except Exception:
+        pass
+
+    try:
+        from sympy import Interval, Union
+        boundary_pts = []
+        if isinstance(domain, Union):
+            for comp in domain.args:
+                if isinstance(comp, Interval):
+                    if comp.start.is_finite: boundary_pts.append((comp.start, '+'))
+                    if comp.end.is_finite: boundary_pts.append((comp.end, '-'))
+        elif isinstance(domain, Interval):
+            if domain.start.is_finite: boundary_pts.append((domain.start, '+'))
+            if domain.end.is_finite: boundary_pts.append((domain.end, '-'))
+            
+        for pt, dir in boundary_pts:
+            try:
+                l = limit(f_for_limits, x, pt, dir)
+                if l == oo: has_inf_pos = True
+                elif l == -oo: has_inf_neg = True
+                elif l not in [zoo, nan]: sing_limits.append(l)
+            except Exception:
+                pass
     except Exception:
         pass
 

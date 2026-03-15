@@ -386,9 +386,16 @@ def expand_periodic_domain(f, x, domain):
         return domain, False
 
     # ── Guard 3: domain must look like a truncated single period ───────────
-    # We handle both a single Interval AND a Union (e.g. one period split
-    # around a singularity) that together span less than one full period.
-    if isinstance(domain, Interval):
+    from sympy.sets import Complement
+    if isinstance(domain, Complement):
+        base = domain.args[0]
+        if isinstance(base, Interval):
+            component_list = [base]
+        elif isinstance(base, Union) and all(isinstance(a, Interval) for a in base.args):
+            component_list = list(base.args)
+        else:
+            return domain, False
+    elif isinstance(domain, Interval):
         component_list = [domain]
     elif isinstance(domain, Union) and all(isinstance(a, Interval) for a in domain.args):
         component_list = list(domain.args)
@@ -1028,8 +1035,14 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                         neg_vals = all_branch[all_branch < 0]
 
                         if len(pos_vals) > 0 and len(neg_vals) > 0:
-                            gap_upper = snap_to_clean_value(np.min(pos_vals))
-                            gap_lower = snap_to_clean_value(np.max(neg_vals))
+                            min_p = float(np.min(pos_vals))
+                            max_n = float(np.max(neg_vals))
+                            for lv in limit_vals:
+                                if isinstance(lv, (float, int, np.floating)):
+                                    if lv >= 0 and lv < min_p: min_p = lv
+                                    if lv <= 0 and lv > max_n: max_n = lv
+                            gap_upper = snap_to_clean_value(min_p)
+                            gap_lower = snap_to_clean_value(max_n)
                             in_gap = all_branch[(all_branch > gap_lower)
                                                & (all_branch < gap_upper)]
                             if len(in_gap) == 0 and gap_upper - gap_lower > 0.1:
@@ -1282,22 +1295,48 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 gaps = detect_range_gaps(sorted_y, all_y_sorted=all_y_sorted)
                 if gaps:
                     debug_print(f"Detected {len(gaps)} gap(s) in range", Fore.CYAN)
-                    pieces, left = [], final_min
+                    pieces = []
+                    left = final_min
                     for gs, ge in gaps:
                         gs = snap_to_clean_value(gs)
                         ge = snap_to_clean_value(ge)
-                        if gs > left:
+                        if gs >= left:
                             pieces.append((left, gs))
                         left = ge
-                    if left < final_max:
+                    if left <= final_max:
                         pieces.append((left, final_max))
-                    if len(pieces) > 1:
+                    if len(pieces) > 1 or (len(pieces) == 1 and pieces[0][0] == pieces[0][1]):
                         parts = []
                         for lo, hi in pieces:
                             lo_s = "-oo" if (np.isinf(lo) and lo < 0) else fmt(lo)
                             hi_s = "oo"  if (np.isinf(hi) and hi > 0) else fmt(hi)
                             parts.append(f"Interval({lo_s}, {hi_s})")
                         return "Union(" + ", ".join(parts) + ")", "Hybrid Analysis (gap detected)"
+
+        # --- STEP 8.5: INTERIOR HOLE SPLITTING FROM LIMITS ---
+        holes = []
+        for lv in limit_vals:
+            if isinstance(lv, (int, float, np.floating)) and final_min < lv < final_max:
+                try:
+                    res, to = run_with_timeout('solveset_empty', (f, x, lv, domain_sympy), 2.0)
+                    if not to and res is True:
+                        holes.append(float(lv))
+                except Exception:
+                    pass
+        holes = sorted(list(set(holes)))
+        if holes:
+            debug_print(f"Detected interior holes: {holes}", Fore.CYAN)
+            intervals = []
+            curr_left = final_min
+            for hole in holes:
+                lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
+                hi_s = fmt(hole)
+                intervals.append(f"Interval({lo_s}, {hi_s})")
+                curr_left = hole
+            lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
+            hi_s = "oo" if (np.isinf(final_max) and final_max > 0) else fmt(final_max)
+            intervals.append(f"Interval({lo_s}, {hi_s})")
+            return "Union(" + ", ".join(intervals) + ")", "Hybrid Analysis (interior hole)"
 
         # --- STEP 9: OPEN/CLOSED ENDPOINT DETECTION ---
         def check_openness(val, is_min):
@@ -1486,6 +1525,28 @@ def solve(func_str, show_timing=True):
             "Periodic domain detected — expanded from single period to full ℤ-union",
             Fore.GREEN
         )
+
+    def refine_domain_boundaries(dom, f_num):
+        from sympy import Interval, Union
+        import numpy as np
+        if isinstance(dom, Interval):
+            lo, ro = dom.left_open, dom.right_open
+            if not lo and dom.start.is_finite:
+                v = f_num(float(dom.start))
+                if not np.isfinite(v) or not np.isreal(v): lo = True
+            if not ro and dom.end.is_finite:
+                v = f_num(float(dom.end))
+                if not np.isfinite(v) or not np.isreal(v): ro = True
+            return Interval(dom.start, dom.end, bool(lo), bool(ro))
+        elif isinstance(dom, Union):
+            return Union(*[refine_domain_boundaries(arg, f_num) for arg in dom.args])
+        return dom
+        
+    try:
+        f_num_dom = make_safe_f_num_vectorized(f, x)
+        domain = refine_domain_boundaries(domain, f_num_dom)
+    except Exception:
+        pass
 
     print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
     stats.domain_time = t.elapsed
