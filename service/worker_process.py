@@ -408,8 +408,18 @@ def worker_loop(q_in, q_out):
             # ── composited_range ──────────────────────────────────────────
             elif task_type == 'composited_range':
                 from sympy.calculus.util import function_range
-                from sympy import Dummy, FiniteSet, S
+                from sympy import Dummy, FiniteSet, S, Complement, Union, Interval
                 
+                def extract_base_intervals(dom):
+                    if isinstance(dom, Complement):
+                        return extract_base_intervals(dom.args[0])
+                    elif isinstance(dom, Union):
+                        intervals = [a for a in dom.args if isinstance(a, Interval)]
+                        if intervals:
+                            return Union(*intervals)
+                        return S.EmptySet
+                    return dom
+
                 def _composited_range_recursive(expr, var, dom):
                     if expr == var:
                         return dom
@@ -431,7 +441,7 @@ def worker_loop(q_in, q_out):
                         return None
 
                 f, x, domain = args
-                res = _composited_range_recursive(f, x, domain)
+                res = _composited_range_recursive(f, x, extract_base_intervals(domain))
 
             # ── min/max ───────────────────────────────────────────────────
             elif task_type == 'min_max':

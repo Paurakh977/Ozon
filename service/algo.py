@@ -236,26 +236,24 @@ def is_periodically_unbounded_no_gap(f):
 
 def _is_term_integer_valued(term):
     """
-    Return True if a single term in an Add is guaranteed integer-valued.
-    Handles: integers, floor(expr), ceiling(expr), n*floor(expr), n*ceiling(expr).
-    Does NOT classify x, x**2, sin(x), etc. as integer-valued.
+    Return True if an expression is guaranteed integer-valued.
+    Handles: integers, floor(expr), ceiling(expr), n*floor(expr), combinations.
     """
     # Plain integer constant
-    if term.is_integer and term.is_number:
+    if getattr(term, 'is_integer', False) and term.is_number:
         return True
 
     # Direct floor / ceiling call
     if term.func in (floor, ceiling):
         return True
 
-    # Negative of floor/ceiling:  -floor(x) == Mul(-1, floor(x))
+    # Product of integer-valued terms
     if term.func is Mul:
-        non_num = [a for a in term.args if not (a.is_number and a.is_integer)]
-        # All non-integer-number factors must themselves be floor/ceiling
-        return (
-            len(non_num) == 1
-            and non_num[0].func in (floor, ceiling)
-        )
+        return all(_is_term_integer_valued(a) for a in term.args)
+
+    # Sum of integer-valued terms
+    if term.func is Add:
+        return all(_is_term_integer_valued(a) for a in term.args)
 
     return False
 
@@ -263,36 +261,8 @@ def _is_term_integer_valued(term):
 def has_integer_valued_output(f):
     """
     Robustly determine whether the ENTIRE expression is integer-valued.
-
-    Rules
-    -----
-    - floor(g),  ceiling(g)                       → True
-    - n * floor(g), n * ceiling(g)  (n ∈ ℤ)       → True
-    - Sum where EVERY non-integer-constant term
-      is itself integer-valued                     → True   e.g. floor(x)+1
-    - x - floor(x),  x + ceiling(x)  etc.         → False  ← key fix
-    - Any expression that contains x (or another
-      non-integer sub-expression) as an addend     → False
-
-    This is conservative by design: if we are unsure we return False and
-    let the symbolic/numerical strategies handle it correctly.
     """
-    # Direct floor / ceiling at top level
-    if f.func in (floor, ceiling):
-        return True
-
-    # Scalar multiple of floor/ceiling:  2*floor(x), -ceiling(x)
-    if f.func is Mul:
-        non_num = [a for a in f.args if not (a.is_number and a.is_integer)]
-        if len(non_num) == 1 and non_num[0].func in (floor, ceiling):
-            return True
-        return False
-
-    # Sum — every addend must be integer-valued
-    if f.func is Add:
-        return all(_is_term_integer_valued(term) for term in f.args)
-
-    return False
+    return _is_term_integer_valued(f)
 
 
 # =============================================================================
@@ -830,8 +800,12 @@ def snap_to_clean_value(val, tolerance=None):
     for clean in clean_values:
         if abs(val - clean) < tolerance:
             return clean
-    if abs(val) < tolerance:
+            
+    # Relaxed snapping for exactly zero, helping open-bound limiting values 
+    # like log(x-floor(x)) where numerical optimizer hits e.g. -1e-6
+    if abs(val) < max(tolerance, 1e-5):
         return 0.0
+        
     return val
 
 
@@ -1594,11 +1568,31 @@ def solve(func_str, show_timing=True):
                             method = f"Exact (integer-valued function, step={min_gap})"
                             debug_print(f"Integer-valued, step={min_gap}, range≈{min_gap}·ℤ+{offset}", Fore.GREEN)
                         else:
-                            # Irregular or insufficient coverage → full ℤ by
-                            # structural reasoning (conservative)
-                            range_res = S.Integers
+                            # Irregular or insufficient coverage
+                            mn, mx = min(sorted_vals), max(sorted_vals)
+                            # the grid spans [-20.5, 20.5]. If limits reach large values, they are unbounded.
+                            bounded_below = mn > -350
+                            bounded_above = mx < 350
+                            
+                            sample_str = ", ".join(str(v) for v in sorted_vals[:4])
+                            dots = ", ..." if len(sorted_vals) > 4 else ""
+                            
+                            if bounded_below and not bounded_above:
+                                range_res = f"Irregular integers {{{sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded below)"
+                            elif bounded_above and not bounded_below:
+                                range_res = f"Irregular integers {{..., {sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded above)"
+                            elif bounded_below and bounded_above:
+                                range_res = f"Irregular integers {{{sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded)"
+                            else:
+                                range_res = "Irregular integers"
+                                method = "Exact (irregular integers)"
+                                
+                            debug_print(f"Irregular integers detected", Fore.GREEN)
 
-                        if range_res is S.Integers and not method:
+                        if hasattr(range_res, 'is_Set') and range_res is S.Integers and not method:
                             method = "Exact (integer-valued function)"
                 else:
                     range_res = S.Integers
@@ -1938,6 +1932,48 @@ def main():
         us_total = sum(s.total_time for s in user_stats)
         us_avg = us_total / len(user_stats)
         print(f"{Fore.CYAN}User tests: {len(user_stats)} funcs — total {us_total*1000:.1f}ms, avg {us_avg*1000:.1f}ms")
+
+    # -------------------------------------------------------------------------
+    # ADVERSARIAL TESTS
+    # Expected correct answers listed as comments for easy verification:
+    #
+    #  sqrt(x - floor(x))          Domain: (-oo,oo)           Range: [0, 1)
+    #  floor(sin(x))               Domain: (-oo,oo)           Range: {-1, 0, 1}
+    #  1/(1 - 2*sin(x))            Domain: periodic complement Range: (-oo,-1] U [1/3,+oo)
+    #  log(x + 1/x)                Domain: (0, oo)            Range: [log(2), oo)
+    #  x**(1/x)                    Domain: (0, oo)            Range: (0, exp(1/E)]
+    #  atan(x) + atan(1/x)         Domain: (-oo,0)U(0,oo)     Range: {-pi/2, pi/2}
+    #  floor(x**2)                 Domain: (-oo,oo)           Range: non-negative integers {0,1,2,...}
+    #  log(x - floor(x))           Domain: RR \ ZZ            Range: (-oo, 0)
+    #  (1 - cos(x))/(1 + cos(x))  Domain: periodic complement Range: [0, oo)
+    #  acos(1/(1 + x**2))          Domain: (-oo,oo)           Range: [0, pi/2)
+    #  sin(x + sin(x))             Domain: (-oo,oo)           Range: [-1, 1]
+    #  ceiling(x) * floor(x)       Domain: (-oo,oo)           Range: irregular integers
+    # -------------------------------------------------------------------------
+    print(f"\n{Fore.WHITE}--- Adversarial Tests ---")
+    adversarial_stats = []
+    for fn in [
+        "sqrt(x - floor(x))",
+        "floor(sin(x))",
+        "1/(1 - 2*sin(x))",
+        "log(x + 1/x)",
+        "x**(1/x)",
+        "atan(x) + atan(1/x)",
+        "floor(x**2)",
+        "log(x - floor(x))",
+        "(1 - cos(x))/(1 + cos(x))",
+        "acos(1/(1 + x**2))",
+        "sin(x + sin(x))",
+        "ceiling(x) * floor(x)",
+    ]:
+        s = solve(fn)
+        if s:
+            all_stats.append(s)
+            adversarial_stats.append(s)
+    if adversarial_stats:
+        adv_total = sum(s.total_time for s in adversarial_stats)
+        adv_avg = adv_total / len(adversarial_stats)
+        print(f"{Fore.CYAN}Adversarial tests: {len(adversarial_stats)} funcs — total {adv_total*1000:.1f}ms, avg {adv_avg*1000:.1f}ms")
 
     if all_stats:
         total   = sum(s.total_time for s in all_stats)
