@@ -962,6 +962,26 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             except Exception:
                 pass
 
+        # --- PREPARE LIMIT POINTS ---
+        limit_points = []
+        def add_limit(val, x_source=None, is_neg_inf=False, is_pos_inf=False):
+            try:
+                if is_neg_inf and domain_is_bounded_left: return
+                if is_pos_inf and domain_is_bounded_right: return
+                if val is not None and (isinstance(val, (int, float, complex)) or (getattr(val, 'is_real', False) and getattr(val, 'is_number', False))):
+                    fval = float(val)
+                    limit_points.append((snap_to_clean_value(fval), x_source))
+            except Exception:
+                pass
+
+        add_limit(left_lim, -np.inf, is_neg_inf=True)
+        add_limit(right_lim, np.inf, is_pos_inf=True)
+        for sl in sing_limits:
+            if isinstance(sl, tuple) and len(sl) == 2:
+                add_limit(sl[0], sl[1])
+            else:
+                add_limit(sl)
+
         # --- STEP 2.5: OSCILLATION DETECTION ---
         if not (has_inf_neg and has_inf_pos):
             osc_neg, osc_pos = detect_unbounded_oscillation(f_num, gen_min, gen_max)
@@ -1050,25 +1070,6 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
         # --- STEP 4: GRID SEARCH ---
         all_points = []
-        limit_points = [] # list of (limit_val, x_source)
-
-        def add_limit(val, x_source=None, is_neg_inf=False, is_pos_inf=False):
-            try:
-                if is_neg_inf and domain_is_bounded_left: return
-                if is_pos_inf and domain_is_bounded_right: return
-                if val is not None and (isinstance(val, (int, float, complex)) or (getattr(val, 'is_real', False) and getattr(val, 'is_number', False))):
-                    fval = float(val)
-                    limit_points.append((snap_to_clean_value(fval), x_source))
-            except Exception:
-                pass
-
-        add_limit(left_lim, -np.inf, is_neg_inf=True)
-        add_limit(right_lim, np.inf, is_pos_inf=True)
-        for sl in sing_limits:
-            if isinstance(sl, tuple) and len(sl) == 2:
-                add_limit(sl[0], sl[1])
-            else:
-                add_limit(sl)
 
         X_grid = None
         if isinstance(domain_sympy, Union):
@@ -1379,12 +1380,49 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         holes = []
         for lv, x_src in limit_points:
             if final_min < lv < final_max:
+                verified_hole = False
                 try:
                     res, to = run_with_timeout('solveset_empty', (f, x, lv, domain_sympy), 2.0)
                     if not to and res is True:
-                        holes.append(float(lv))
+                        verified_hole = True
                 except Exception:
                     pass
+                    
+                if not verified_hole and not np.isinf(lv) and not np.isnan(lv) and SCIPY_AVAILABLE:
+                    # Fallback: Numerical verification for single-point holes
+                    try:
+                        from scipy.optimize import minimize
+                        def obj(xv):
+                            v = f_num(xv[0])
+                            return (v - lv)**2 if np.isfinite(v) else 1e9
+
+                        pts = np.linspace(max(-10, final_min if final_min > -1e9 else -10), 
+                                          min(10, final_max if final_max < 1e9 else 10), 20)
+                        hit_elsewhere = False
+                        
+                        for pt in pts:
+                            r = minimize(obj, [pt], method='Nelder-Mead', options={'maxiter': 50})
+                            if r.success and r.fun < 1e-4:
+                                x_star = r.x[0]
+                                if x_src is None:
+                                    hit_elsewhere = True
+                                    break
+                                elif np.isinf(float(x_src)):
+                                    if abs(x_star) < 100:  # hit at a finite point
+                                        hit_elsewhere = True
+                                        break
+                                else:
+                                    if abs(x_star - float(x_src)) > 1e-2: # hit away from the limit source
+                                        hit_elsewhere = True
+                                        break
+                                        
+                        if not hit_elsewhere:
+                            verified_hole = True
+                    except Exception:
+                        pass
+
+                if verified_hole:
+                    holes.append(float(lv))
         holes = sorted(list(set(holes)))
         if holes:
             debug_print(f"Detected interior holes: {holes}", Fore.CYAN)
