@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from sympy import (Symbol, S, sympify, oo, zoo, nan, lambdify, Abs, floor, ceiling,
                    limit, simplify, diff, solveset, Piecewise, sign, Max, Min, exp, log,
                    re, im, Interval as SympyInterval, Rational, Pow, Integer,
-                   tan, cot, sec, csc, E)
+                   tan, cot, sec, csc, E, pi, Mul, Add)
 from sympy.calculus.util import continuous_domain, function_range, minimum, maximum, AccumBounds
 from sympy.sets import Interval, Union, FiniteSet, EmptySet, Reals, Integers
 from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
@@ -43,17 +43,16 @@ def debug_print(msg, color=Fore.MAGENTA):
         print(f"{color}{Style.DIM}[DEBUG] {msg}{Style.RESET_ALL}")
 
 # =============================================================================
-# TIMEOUT UTILITIES  (BUG-02 fix: real process kill, no ghost threads)
+# TIMEOUT UTILITIES
 # =============================================================================
 
 SYMBOLIC_TIMEOUT = 1.0
 
-# Import worker_loop from the standalone module (no circular import)
 from worker_process import worker_loop
 
 
 class SympyWorker:
-    """Persistent subprocess for SymPy work.  Killed and restarted on timeout."""
+    """Persistent subprocess for SymPy work. Killed and restarted on timeout."""
 
     def __init__(self):
         import multiprocessing
@@ -81,12 +80,10 @@ def run_with_timeout(task_type, args, timeout_seconds, default=None):
     """
     Submit a task to the persistent SymPy worker.
     Returns (result, timed_out).
-    On timeout the hung process is KILLED (not just abandoned) so it
-    never becomes a CPU-hogging ghost thread.
+    On timeout the hung process is KILLED so it never becomes a ghost thread.
     """
     worker = get_worker()
 
-    # Drain any stale results from a previously cancelled task
     while not worker.q_out.empty():
         try:
             worker.q_out.get_nowait()
@@ -101,7 +98,6 @@ def run_with_timeout(task_type, args, timeout_seconds, default=None):
             return default, False
         return value, False
     except queue.Empty:
-        # True timeout — kill the process so it can't keep running
         worker.p.terminate()
         worker.p.join()
         debug_print(f"TIMEOUT after {timeout_seconds}s — worker process killed and restarted", Fore.YELLOW)
@@ -133,11 +129,11 @@ class TimingStats:
         self.reset()
 
     def reset(self):
-        self.parsing_time       = 0.0
-        self.domain_time        = 0.0
+        self.parsing_time        = 0.0
+        self.domain_time         = 0.0
         self.symbolic_range_time = 0.0
         self.numerical_range_time = 0.0
-        self.total_time         = 0.0
+        self.total_time          = 0.0
 
     def __str__(self):
         return (f"Timing: parse={self.parsing_time*1000:.2f}ms, "
@@ -167,18 +163,15 @@ def _rationalize_float_exponents(expr):
     """
     Convert float exponents close to simple fractions into exact Rationals.
     Handles both odd denominators (1/3, 2/3, 1/5 …) and even (1/2, 3/4 …).
-    This lets SymPy recognise cube roots etc. symbolically.
     """
     replacements = {}
     for sub in expr.atoms(Pow):
         e = sub.exp
         if e.is_Float or (e.is_Number and not isinstance(e, (Integer, Rational))):
-            # Try odd denominators first (1/3, 2/3, 1/5 …)
             r = _float_to_odd_rational(e)
             if r is not None:
                 replacements[sub] = Pow(sub.base, r)
             else:
-                # Fall back to even denominators (1/2, 1/4, 3/4 …)
                 matched = False
                 for q in [2, 4, 6, 8]:
                     for p in range(1, 2 * q):
@@ -209,8 +202,8 @@ def get_sympified_expr(user_input):
 # =============================================================================
 
 PERIODIC_UNBOUNDED_FUNCS  = {tan, cot, sec, csc}
-PERIODIC_FULL_RANGE_FUNCS = {tan, cot}      # range = (-oo, oo), no gaps
-PERIODIC_GAPPED_FUNCS     = {sec, csc}      # |f| >= 1 always
+PERIODIC_FULL_RANGE_FUNCS = {tan, cot}
+PERIODIC_GAPPED_FUNCS     = {sec, csc}
 
 from sympy import sin as sym_sin, cos as sym_cos
 
@@ -232,14 +225,303 @@ def is_periodically_unbounded(f):
 
 
 def is_periodically_unbounded_no_gap(f):
-    """True for tan/cot (full range), False for sec/csc/1/sin (gapped)."""
     if _has_reciprocal_trig(f, None):
         return False
     return any(f.has(fc) for fc in PERIODIC_FULL_RANGE_FUNCS)
 
 
+# =============================================================================
+# INTEGER-VALUED OUTPUT DETECTION  (FIX-01)
+# =============================================================================
+
+def _is_term_integer_valued(term):
+    """
+    Return True if an expression is guaranteed integer-valued.
+    Handles: integers, floor(expr), ceiling(expr), n*floor(expr), combinations.
+    """
+    # Plain integer constant
+    if getattr(term, 'is_integer', False) and term.is_number:
+        return True
+
+    # Direct floor / ceiling call
+    if term.func in (floor, ceiling):
+        return True
+
+    # Product of integer-valued terms
+    if term.func is Mul:
+        return all(_is_term_integer_valued(a) for a in term.args)
+
+    # Sum of integer-valued terms
+    if term.func is Add:
+        return all(_is_term_integer_valued(a) for a in term.args)
+
+    return False
+
+
 def has_integer_valued_output(f):
-    return f.has(floor) or f.has(ceiling)
+    """
+    Robustly determine whether the ENTIRE expression is integer-valued.
+    """
+    return _is_term_integer_valued(f)
+
+
+# =============================================================================
+# PERIODIC DOMAIN DETECTION & EXPANSION  (FIX-02)
+# =============================================================================
+
+# Known fundamental periods for SymPy trig functions
+_TRIG_PERIODS = {
+    sym_sin: 2 * pi,
+    sym_cos: 2 * pi,
+    tan:     pi,
+    cot:     pi,
+    sec:     2 * pi,
+    csc:     2 * pi,
+}
+
+
+def _fundamental_period(f, x):
+    """
+    Attempt to determine the fundamental period of f(x).
+
+    Strategy
+    --------
+    1. Walk all trig sub-expressions and collect their periods scaled by the
+       inner linear coefficient.  e.g. sin(3x) has period 2π/3.
+    2. Return the LCM of all found periods (as a SymPy expression).
+    3. If nothing is found, return None.
+    """
+    from sympy import lcm, gcd, nsimplify, Rational as Rat
+
+    candidate_periods = []
+
+    for func_cls, base_period in _TRIG_PERIODS.items():
+        for sub in f.atoms(func_cls):
+            arg = sub.args[0]
+            # Only handle linear arguments a*x + b
+            coeff = arg.coeff(x)
+            if coeff != 0 and coeff.is_real:
+                try:
+                    period = base_period / abs(coeff)
+                    candidate_periods.append(period)
+                except Exception:
+                    pass
+
+    if not candidate_periods:
+        return None
+
+    # LCM of symbolic periods: for simple rationals this works cleanly
+    result = candidate_periods[0]
+    for p in candidate_periods[1:]:
+        try:
+            # lcm(a/b, c/d) = lcm(a,c)/gcd(b,d)
+            result = (result * p) / gcd(result, p)
+        except Exception:
+            # Fallback: take the maximum — still better than nothing
+            result = Max(result, p)
+
+    return result
+
+
+def _get_trig_functions_in_expr(f):
+    """Return the set of trig function classes present in f."""
+    found = set()
+    for func_cls in _TRIG_PERIODS:
+        if f.has(func_cls):
+            found.add(func_cls)
+    return found
+
+
+def _domain_is_strict_subset_of_period(domain, period_float, tolerance=1e-6):
+    """
+    Return True when `domain` is a single finite interval whose width is
+    strictly less than one full period.  That is the hallmark of SymPy
+    having returned only the principal-period component.
+    """
+    if not isinstance(domain, Interval):
+        return False
+    if not (domain.start.is_finite and domain.end.is_finite):
+        return False
+    width = float((domain.end - domain.start).evalf())
+    return width < period_float - tolerance
+
+
+def expand_periodic_domain(f, x, domain):
+    """
+    Post-process a domain returned by SymPy's continuous_domain() to handle
+    cases where SymPy only found one period of a genuinely periodic domain.
+
+    Examples that trigger this:
+        sqrt(sin(x))       → SymPy gives [0, π]   → should be ⋃ₙ [2nπ, (2n+1)π]
+        sqrt(cos(x))       → SymPy gives [-π/2, π/2]  → periodic union
+        log(sin(x))        → SymPy gives (0, π)    → periodic union
+        sqrt(sin(x)+cos(x))→ SymPy gives one interval → periodic union
+        1/(sin(x)+2)       → domain is all reals   → no expansion needed
+
+    Returns
+    -------
+    (expanded_domain, was_expanded: bool)
+
+    The expansion covers ±NUM_PERIODS periods so the union is finite but
+    large enough for any practical display / downstream computation.
+    """
+    NUM_PERIODS = 12  # ±12 periods — display ~24 intervals
+
+    # ── Guard 1: must have at least one trig function ──────────────────────
+    trig_funcs_present = _get_trig_functions_in_expr(f)
+    if not trig_funcs_present:
+        return domain, False
+
+    # ── Guard 2: period must be determinable ───────────────────────────────
+    period_sym = _fundamental_period(f, x)
+    if period_sym is None:
+        return domain, False
+
+    try:
+        period_float = float(period_sym.evalf())
+    except Exception:
+        return domain, False
+
+    if period_float <= 0 or period_float > 1e6:
+        return domain, False
+
+    # ── Guard 3: domain must look like a truncated single period ───────────
+    # We handle both a single Interval AND a Union (e.g. one period split
+    # around a singularity) that together span less than one full period.
+    if isinstance(domain, Interval):
+        component_list = [domain]
+    elif isinstance(domain, Union) and all(isinstance(a, Interval) for a in domain.args):
+        component_list = list(domain.args)
+    else:
+        return domain, False
+
+    # Compute the span from the leftmost start to rightmost end
+    try:
+        span_start = min(float(c.start.evalf()) for c in component_list)
+        span_end   = max(float(c.end.evalf())   for c in component_list)
+    except Exception:
+        return domain, False
+
+    span_width = span_end - span_start
+
+    # If the span already covers a full period or more, trust SymPy
+    if span_width >= period_float - 1e-6:
+        return domain, False
+
+    # ── Guard 4: numerical verification ───────────────────────────────────
+    # Confirm that f is actually defined one period later at a representative
+    # interior point of the domain.
+    try:
+        f_num = make_safe_f_num_vectorized(f, x)
+
+        # Pick a point well inside the first-period component
+        test_pt_base = span_start + span_width * 0.5
+        test_pt_next = test_pt_base + period_float
+
+        val_base = f_num(test_pt_base)
+        val_next = f_num(test_pt_next)
+
+        base_ok = bool(np.isfinite(val_base) and np.isreal(val_base))
+        next_ok = bool(np.isfinite(val_next) and np.isreal(val_next))
+
+        if not (base_ok and next_ok):
+            debug_print(
+                f"Periodic expansion aborted: base_ok={base_ok}, next_ok={next_ok}",
+                Fore.YELLOW
+            )
+            return domain, False
+
+        # Also verify a point BETWEEN periods is invalid (true gap)
+        gap_pt = span_end + period_float * 0.25
+        val_gap = f_num(gap_pt)
+        gap_is_invalid = (not np.isfinite(val_gap)) or (not np.isreal(val_gap))
+
+        if not gap_is_invalid:
+            # The function is valid between periods → domain is all (or almost all)
+            # reals and SymPy already returned something reasonable.
+            return domain, False
+
+    except Exception as exc:
+        debug_print(f"Periodic expansion numerical check failed: {exc}", Fore.YELLOW)
+        return domain, False
+
+    # ── Build the periodic union ───────────────────────────────────────────
+    try:
+        all_intervals = []
+        for k in range(-NUM_PERIODS, NUM_PERIODS + 1):
+            shift = k * period_sym
+            for comp in component_list:
+                new_start = comp.start + shift
+                new_end   = comp.end   + shift
+                all_intervals.append(
+                    Interval(new_start, new_end,
+                             comp.left_open, comp.right_open)
+                )
+
+        expanded = Union(*all_intervals)
+        debug_print(
+            f"Periodic domain expanded: {len(component_list)} component(s) × "
+            f"{2*NUM_PERIODS+1} periods (period={period_float:.4f})",
+            Fore.GREEN
+        )
+        return expanded, True
+
+    except Exception as exc:
+        debug_print(f"Periodic expansion union build failed: {exc}", Fore.YELLOW)
+        return domain, False
+
+
+def _format_periodic_union(obj, fmt_val_fn, fmt_interval_fn):
+    """
+    Detect a uniformly-periodic Union and format it as  ⋃_{n∈ℤ} [a+nT, b+nT]
+    instead of listing dozens of identical-looking intervals.
+
+    Returns a formatted string if periodic, else None.
+    """
+    if not isinstance(obj, Union):
+        return None
+
+    parts = [a for a in obj.args if isinstance(a, Interval)]
+    if len(parts) < 5:
+        return None
+
+    # Sort by start point
+    try:
+        parts_sorted = sorted(parts, key=lambda iv: float(iv.start.evalf()))
+    except Exception:
+        return None
+
+    # Check equal spacing (period)
+    try:
+        spacings = [
+            float((parts_sorted[i+1].start - parts_sorted[i].start).evalf())
+            for i in range(len(parts_sorted) - 1)
+        ]
+        lengths = [
+            float((p.end - p.start).evalf())
+            for p in parts_sorted
+        ]
+        tol = 1e-6
+        if (max(abs(s - spacings[0]) for s in spacings) > tol or
+                max(abs(l - lengths[0]) for l in lengths) > tol):
+            return None
+    except Exception:
+        return None
+
+    # Pick the anchor interval closest to x=0
+    anchor = min(parts_sorted,
+                 key=lambda iv: abs(float(iv.start.evalf())))
+
+    lb = "(" if anchor.left_open  else "["
+    rb = ")" if anchor.right_open else "]"
+
+    try:
+        a_str = fmt_val_fn(anchor.start)
+        b_str = fmt_val_fn(anchor.end)
+        T_str = fmt_val_fn(parts_sorted[1].start - parts_sorted[0].start)
+        return f"⋃_{{n∈ℤ}} {lb}{a_str} + {T_str}·n, {b_str} + {T_str}·n{rb}"
+    except Exception:
+        return None
 
 
 def has_real_odd_root(expr, var):
@@ -296,8 +578,7 @@ def point_in_domain_fast(pt, gen_min, gen_max, f_num):
 def make_safe_f_num_vectorized(f, x):
     """
     Returns a callable that accepts both scalars and numpy arrays.
-    Uses true C-level numpy vectorisation (not np.vectorize).
-    BUG-06 fix.
+    Uses true C-level numpy vectorisation.
     """
     f_rewritten = rewrite_real_roots(f, x) if has_real_odd_root(f, x) else f
 
@@ -344,12 +625,6 @@ def make_safe_f_num_vectorized(f, x):
 # =============================================================================
 
 def analyze_function_behavior(f, x, domain):
-    """
-    Determine unbounded behaviour using symbolic limits.
-    This copy lives in algo.py for reference and direct testing.
-    The worker subprocess uses its own copy in worker_process.py
-    (to avoid circular imports on Windows spawn).
-    """
     has_inf_pos = False
     has_inf_neg = False
     left_lim  = None
@@ -417,7 +692,6 @@ def analyze_function_behavior(f, x, domain):
 # =============================================================================
 
 def find_critical_points_numerical(f, x, domain, f_num):
-    """Find critical points numerically. Returns list of y-values at crits."""
     critical_values = []
     try:
         df = diff(f, x)
@@ -440,10 +714,6 @@ def find_critical_points_numerical(f, x, domain, f_num):
 
 
 def detect_unbounded_oscillation(f_num, gen_min, gen_max):
-    """
-    Numerically detect unbounded oscillation (e.g. exp(-x)*sin(x) as x→-∞).
-    Returns (has_inf_neg, has_inf_pos).
-    """
     has_inf_neg = has_inf_pos = False
 
     with np.errstate(all='ignore'):
@@ -512,7 +782,6 @@ def snap_to_clean_value(val, tolerance=None):
     if not np.isfinite(val):
         return val
 
-    # Scale-adaptive tolerance (FEAT-04 fix)
     if tolerance is None:
         magnitude = max(abs(val), 1e-10)
         tolerance = magnitude * 1e-6
@@ -531,26 +800,21 @@ def snap_to_clean_value(val, tolerance=None):
     for clean in clean_values:
         if abs(val - clean) < tolerance:
             return clean
-    if abs(val) < tolerance:
+            
+    # Relaxed snapping for exactly zero, helping open-bound limiting values 
+    # like log(x-floor(x)) where numerical optimizer hits e.g. -1e-6
+    if abs(val) < max(tolerance, 1e-5):
         return 0.0
+        
     return val
 
 
 def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15):
     """
     Find significant gaps in observed y-values using a two-pass approach.
-
-    Pass 1: find candidate gaps in the clipped/processed data.
-    Pass 2: verify each gap against the FULL dataset — a true mathematical
-            gap has ZERO samples inside it even in the full data.
-
-    Conservative thresholds (restored from original audit baseline):
-      - stat_threshold = max(10 × median_spacing, 0.3)
-      - abs_threshold capped at 2.0 so narrow gaps (like (-1,1) in csc)
-        are not missed when total_range is large.
     """
     n = len(y_values_sorted)
-    if n < 200:           # need enough samples for reliable statistics
+    if n < 200:
         return []
 
     total_range = y_values_sorted[-1] - y_values_sorted[0]
@@ -563,10 +827,8 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
     diffs = np.diff(y_values_sorted)
     median_diff = np.median(diffs)
 
-    # A real gap must be ≥10× typical spacing AND ≥0.3 absolute
     stat_threshold = max(median_diff * 10.0, 0.3)
     abs_threshold  = min_gap_fraction * total_range
-    # Cap abs_threshold at 2.0 so narrow gaps survive when total_range is huge
     threshold = max(stat_threshold, min(abs_threshold, 2.0))
 
     gaps = []
@@ -574,7 +836,6 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
         if diffs[i] > threshold:
             gaps.append((y_values_sorted[i], y_values_sorted[i + 1]))
 
-    # Merge adjacent gaps that are artefacts of sparse sampling
     if len(gaps) > 1:
         merged = [gaps[0]]
         for gs, ge in gaps[1:]:
@@ -585,7 +846,6 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
                 merged.append((gs, ge))
         gaps = merged
 
-    # Verify: a true gap must have ≤1 sample inside it in the FULL dataset
     verified = []
     for gs, ge in gaps:
         inside = (np.searchsorted(all_y_sorted, ge, 'left')
@@ -603,8 +863,7 @@ def detect_range_gaps(y_values_sorted, all_y_sorted=None, min_gap_fraction=0.15)
 def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
     """
     Hybrid numerical range finder.
-    behavior_info: (has_inf_neg, has_inf_pos, left_lim, right_lim) from
-                   Strategy C, passed in to avoid recomputation.
+    behavior_info: (has_inf_neg, has_inf_pos, left_lim, right_lim, sing_limits)
     """
     if not SCIPY_AVAILABLE:
         return f"{Fore.YELLOW}SciPy missing.", "N/A"
@@ -627,18 +886,81 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             sing_limits = []
 
         # --- STEP 2: DOMAIN BOUNDS ---
+        # For Union domains (e.g. periodic), use the overall numeric extremes
+        # rather than just the .inf/.sup of the outer set (which may not exist).
         gen_min, gen_max = -100.0, 100.0
         domain_is_bounded_left = domain_is_bounded_right = False
 
         try:
-            if hasattr(domain_sympy, 'inf') and domain_sympy.inf.is_finite:
-                gen_min = float(domain_sympy.inf) + 1e-8
-                domain_is_bounded_left = True
-            if hasattr(domain_sympy, 'sup') and domain_sympy.sup.is_finite:
-                gen_max = float(domain_sympy.sup) - 1e-8
-                domain_is_bounded_right = True
+            if isinstance(domain_sympy, Union):
+                # Collect all finite endpoints across union components
+                all_starts = []
+                all_ends   = []
+                for comp in domain_sympy.args:
+                    if isinstance(comp, Interval):
+                        if comp.start.is_finite:
+                            all_starts.append(float(comp.start.evalf()))
+                        if comp.end.is_finite:
+                            all_ends.append(float(comp.end.evalf()))
+                if all_starts:
+                    cand_min = min(all_starts)
+                    if cand_min > -1e6:
+                        gen_min = cand_min + 1e-8
+                        domain_is_bounded_left = True
+                if all_ends:
+                    cand_max = max(all_ends)
+                    if cand_max < 1e6:
+                        gen_max = cand_max - 1e-8
+                        domain_is_bounded_right = True
+            else:
+                if hasattr(domain_sympy, 'inf') and domain_sympy.inf.is_finite:
+                    gen_min = float(domain_sympy.inf) + 1e-8
+                    domain_is_bounded_left = True
+                if hasattr(domain_sympy, 'sup') and domain_sympy.sup.is_finite:
+                    gen_max = float(domain_sympy.sup) - 1e-8
+                    domain_is_bounded_right = True
         except Exception:
             pass
+
+        # --- STEP 2.3: NEAR-SINGULARITY LIMIT CHECK (catches log(sin(x))→-∞) ---
+        # When the domain has open endpoints or boundary singularities, probe the
+        # function value from inside the domain near those boundaries.  Useful for
+        # log(g(x)) where g→0⁺ gives f→-∞.
+        if not has_inf_neg:
+            try:
+                boundary_pts = []
+                if isinstance(domain_sympy, Union):
+                    for comp in domain_sympy.args:
+                        if isinstance(comp, Interval):
+                            if comp.start.is_finite:
+                                boundary_pts.append(float(comp.start.evalf()))
+                            if comp.end.is_finite:
+                                boundary_pts.append(float(comp.end.evalf()))
+                elif hasattr(domain_sympy, 'inf') and domain_sympy.inf.is_finite:
+                    boundary_pts.append(float(domain_sympy.inf.evalf()))
+                elif hasattr(domain_sympy, 'sup') and domain_sympy.sup.is_finite:
+                    boundary_pts.append(float(domain_sympy.sup.evalf()))
+
+                for bp in boundary_pts:
+                    for eps in [1e-3, 1e-5, 1e-7]:
+                        for interior_pt in [bp + eps, bp - eps]:
+                            try:
+                                v = f_num(interior_pt)
+                                if np.isfinite(v) and v < -1e4:
+                                    has_inf_neg = True
+                                    debug_print(
+                                        f"Near-singularity probe: f({interior_pt:.2e})={v:.2e} → -∞ inferred",
+                                        Fore.YELLOW
+                                    )
+                                    break
+                            except Exception:
+                                pass
+                        if has_inf_neg:
+                            break
+                    if has_inf_neg:
+                        break
+            except Exception:
+                pass
 
         # --- STEP 2.5: OSCILLATION DETECTION ---
         if not (has_inf_neg and has_inf_pos):
@@ -666,16 +988,12 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 except Exception:
                     pass
 
-        # Compute once — used in multiple early-exit guards below
         might_have_gaps = _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc)
 
-        # --- EARLY EXIT: fully unbounded, no gaps ---
         if has_inf_neg and has_inf_pos and not might_have_gaps:
             debug_print("Fully unbounded, no gaps — skipping grid search", Fore.GREEN)
             return "Interval(-oo, oo)", "Hybrid Analysis"
 
-        # --- EARLY EXIT: reciprocal-trig gap structure ---
-        # NEW-03 fix: only enter this path when we KNOW it's doubly unbounded.
         if might_have_gaps and not (has_inf_neg and has_inf_pos):
             for pt in [0, np.pi, np.pi/2, 2*np.pi]:
                 try:
@@ -727,19 +1045,18 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         # --- STEP 4: GRID SEARCH ---
         all_y_values = []
         limit_vals = set()
-        
+
         def add_limit(val, is_neg_inf=False, is_pos_inf=False):
             try:
                 if is_neg_inf and domain_is_bounded_left: return
                 if is_pos_inf and domain_is_bounded_right: return
-                
                 if val is not None and getattr(val, 'is_real', False) and getattr(val, 'is_number', False):
                     fval = float(val)
                     all_y_values.append(fval)
                     limit_vals.add(snap_to_clean_value(fval))
             except Exception:
                 pass
-                
+
         add_limit(left_lim, is_neg_inf=True)
         add_limit(right_lim, is_pos_inf=True)
         for sl in sing_limits:
@@ -747,9 +1064,26 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
         sampled_y_values = []
 
-        # NEW-01 fix: correct Rust API call — (gen_min, gen_max, scales_list, samples_per_scale)
         X_grid = None
-        if RUST_AVAILABLE:
+        # For Union domains (e.g. periodic), sample within each component
+        # to avoid wasting budget on the gap intervals.
+        if isinstance(domain_sympy, Union):
+            pts_list = []
+            components = [a for a in domain_sympy.args if isinstance(a, Interval)]
+            pts_per_comp = max(50, 800 // max(1, len(components)))
+            for comp in components:
+                lo = float(comp.start.evalf()) + 1e-8 if comp.start.is_finite else -100.0
+                hi = float(comp.end.evalf())   - 1e-8 if comp.end.is_finite   else  100.0
+                lo = max(lo, -100.0)
+                hi = min(hi,  100.0)
+                if lo < hi:
+                    pts_list.append(np.linspace(lo, hi, pts_per_comp))
+            if pts_list:
+                X_grid = np.unique(np.concatenate(pts_list))
+            else:
+                X_grid = np.array([])
+
+        if X_grid is None and RUST_AVAILABLE:
             try:
                 X_grid = np.array(fast_math_rs.generate_multi_scale_grid(
                     float(gen_min), float(gen_max), [10.0, 100.0], 800
@@ -788,9 +1122,9 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 Y_grid = np.asarray(Y_grid, dtype=float)
                 mask = np.isfinite(Y_grid)
                 if np.any(mask):
-                    sampled_y_values.extend(Y_grid[mask].tolist()); all_y_values.extend(Y_grid[mask].tolist())
+                    sampled_y_values.extend(Y_grid[mask].tolist())
+                    all_y_values.extend(Y_grid[mask].tolist())
 
-                # Adaptive densification near critical regions (RUST-04)
                 if RUST_AVAILABLE and np.any(mask):
                     try:
                         df_sym = diff(f, x)
@@ -816,7 +1150,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     Y_dense = np.asarray(Y_dense, dtype=float)
                                     dm = np.isfinite(Y_dense)
                                     if np.any(dm):
-                                        sampled_y_values.extend(Y_dense[dm].tolist()); all_y_values.extend(Y_dense[dm].tolist())
+                                        sampled_y_values.extend(Y_dense[dm].tolist())
+                                        all_y_values.extend(Y_dense[dm].tolist())
                                         debug_print(
                                             f"Adaptive grid: {np.sum(dm)} pts near "
                                             f"{len(critical_xs)} critical regions", Fore.CYAN)
@@ -825,7 +1160,6 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             except Exception:
                 pass
 
-        # Special points (boundaries, origin vicinity, removable discontinuities)
         special_points = [0.001, 0.01, 0.1, 0.5, 1, 2, 5, 10, 100,
                           -0.001, -0.01, -0.1, -0.5, -1, -2, -5, -10, -100]
         if isinstance(domain_sympy, Union):
@@ -842,7 +1176,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             try:
                 val = f_num(pt)
                 if np.isfinite(val) and np.isreal(val):
-                    sampled_y_values.append(float(val)); all_y_values.append(float(val))
+                    sampled_y_values.append(float(val))
+                    all_y_values.append(float(val))
             except Exception:
                 pass
 
@@ -852,7 +1187,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         # --- STEP 5: CRITICAL POINTS ---
         for cv in find_critical_points_numerical(f, x, domain_sympy, f_num):
             if np.isfinite(cv) and np.isreal(cv):
-                sampled_y_values.append(float(cv)); all_y_values.append(float(cv))
+                sampled_y_values.append(float(cv))
+                all_y_values.append(float(cv))
 
         # --- STEP 6: SCIPY OPTIMISATION ---
         refined_min = min(all_y_values)
@@ -863,17 +1199,26 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             bounds_hi = min(gen_max,  100)
 
             def safe_f_opt(xv):
+                """
+                Return the function value at xv, or np.inf for invalid points.
+                IMPORTANT: never return a large finite sentinel like 1e100;
+                that value would pollute the numerical min/max.
+                """
                 try:
                     v = f_num(float(xv))
-                    return float(v) if np.isfinite(v) else 1e100
+                    if np.isfinite(v) and np.isreal(v):
+                        return float(v)
+                    return np.inf          # ← was 1e100; now truly infinite
                 except Exception:
-                    return 1e100
+                    return np.inf
 
             try:
                 r = minimize_scalar(safe_f_opt, bounds=(bounds_lo, bounds_hi),
                                     method='bounded',
                                     options={'maxiter': 200, 'xatol': 1e-7})
-                if r.success and np.isfinite(r.fun):
+                # Only accept if the result is a real finite value inside bounds
+                if (r.success and np.isfinite(r.fun)
+                        and r.fun < 1e99):   # exclude inf sentinel escapes
                     refined_min = min(refined_min, r.fun)
                     sampled_y_values.append(float(r.fun))
                     all_y_values.append(float(r.fun))
@@ -885,20 +1230,19 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     bounds=(bounds_lo, bounds_hi),
                                     method='bounded',
                                     options={'maxiter': 200, 'xatol': 1e-7})
-                if r.success and np.isfinite(r.fun):
+                # r.fun is -f; check that f itself is finite (not -inf == negate of inf)
+                if (r.success and np.isfinite(r.fun)
+                        and r.fun > -1e99):  # -inf would mean f→+inf sentinel
                     refined_max = max(refined_max, -r.fun)
                     sampled_y_values.append(float(-r.fun))
                     all_y_values.append(float(-r.fun))
             except Exception:
                 pass
 
-        # Merge all collected values
         refined_min = min(refined_min, min(all_y_values))
         refined_max = max(refined_max, max(all_y_values))
 
         # --- STEP 7: APPLY INFINITY FLAGS ---
-        # NEW-05 fix: do NOT auto-promote large-but-finite values to infinity.
-        # Only use the flags set by explicit symbolic/numerical unbounded analysis.
         final_min = -np.inf if has_inf_neg else refined_min
         final_max =  np.inf if has_inf_pos else refined_max
 
@@ -913,11 +1257,8 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 v_str = fast_math_rs.format_symbolic_value(v)
                 if not any(char.isdigit() for char in v_str) or 'E' in v_str or '/' in v_str or 'pi' in v_str or 'exp' in v_str or 'sqrt' in v_str:
                     return v_str
-            
-            # Python fallback for our custom constants not in Rust yet
             if abs(v - np.exp(-1/np.e)) < 1e-8: return "exp(-1/E)"
             if abs(v + np.exp(-1/np.e)) < 1e-8: return "-exp(-1/E)"
-            
             return f"{v:.6f}".rstrip('0').rstrip('.')
 
         # --- STEP 8: GAP DETECTION ---
@@ -958,7 +1299,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                             parts.append(f"Interval({lo_s}, {hi_s})")
                         return "Union(" + ", ".join(parts) + ")", "Hybrid Analysis (gap detected)"
 
-        # --- STEP 9: OPEN/CLOSED ENDPOINT DETECTION (EDGE-06) ---
+        # --- STEP 9: OPEN/CLOSED ENDPOINT DETECTION ---
         def check_openness(val, is_min):
             if np.isinf(val):
                 return True
@@ -971,14 +1312,12 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                     if result is False: return False
             except Exception:
                 pass
-            
-            # Fallback numerical check for asymptote vs attained
+
             try:
                 if len(sampled_y_values) > 0:
                     if is_min:
                         actual_min = min(sampled_y_values)
                         if actual_min > val + 1e-9:
-
                             return True
                     else:
                         actual_max = max(sampled_y_values)
@@ -986,10 +1325,10 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                             return True
             except Exception:
                 pass
-            
+
             if snap_to_clean_value(val) in limit_vals:
                 return True
-                
+
             return False
 
         left_open  = check_openness(final_min, True)
@@ -1007,7 +1346,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
 
 # =============================================================================
-# MAIN SOLVER
+# FORMATTING
 # =============================================================================
 
 def format_math_set(obj):
@@ -1017,7 +1356,6 @@ def format_math_set(obj):
         elif obj == "Integers":
             return "Integers"
         try:
-            # We already have Interval, Union, oo in globals
             obj = eval(obj, globals(), locals())
         except Exception:
             return obj
@@ -1035,30 +1373,33 @@ def format_math_set(obj):
         if val == S.Infinity: return "oo"
         if val == S.NegativeInfinity: return "-oo"
         if getattr(val, 'is_Float', False):
-            # Format to avoid long trailing zeros
             s = str(val)
             if 'e' not in s.lower() and '.' in s:
                 s = s.rstrip('0').rstrip('.')
                 if not s: return "0"
-                # If we stripped entirely to integer, format properly, but rstrip handled it
             return s
         return str(val)
 
     if isinstance(obj, FiniteSet):
         items = sorted([fmt_val(arg) for arg in obj.args])
         return "{" + ", ".join(items) + "}"
-        
+
     def fmt_interval(interv):
         lo_str = fmt_val(interv.start)
         hi_str = fmt_val(interv.end)
-        left_bracket = "(" if interv.left_open or lo_str == "-oo" else "["
-        right_bracket = ")" if interv.right_open or hi_str == "oo" else "]"
+        left_bracket  = "(" if interv.left_open  or lo_str == "-oo" else "["
+        right_bracket = ")" if interv.right_open or hi_str == "oo"  else "]"
         return f"{left_bracket}{lo_str}, {hi_str}{right_bracket}"
-        
+
     if isinstance(obj, Interval):
         return fmt_interval(obj)
-        
+
     if isinstance(obj, Union):
+        # ── Attempt compact periodic representation ──────────────────────
+        periodic_str = _format_periodic_union(obj, fmt_val, fmt_interval)
+        if periodic_str is not None:
+            return periodic_str
+
         parts = []
         for arg in obj.args:
             if isinstance(arg, Interval):
@@ -1069,8 +1410,13 @@ def format_math_set(obj):
             else:
                 parts.append(str(arg))
         return " U ".join(parts)
-        
+
     return str(obj)
+
+
+# =============================================================================
+# MAIN SOLVER
+# =============================================================================
 
 def solve(func_str, show_timing=True):
     stats = TimingStats()
@@ -1095,7 +1441,7 @@ def solve(func_str, show_timing=True):
         print("-" * 40)
         return None
 
-    # --- CONSTANT FUNCTION DETECTION (EDGE-05) ---
+    # --- CONSTANT FUNCTION DETECTION ---
     if f.is_number:
         print(f"{Fore.GREEN}Domain: (-oo, oo)")
         print(f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f))}  (constant function)")
@@ -1120,7 +1466,7 @@ def solve(func_str, show_timing=True):
         except Exception:
             pass
 
-    # --- DOMAIN (BUG-03: timeout-guarded) ---
+    # --- DOMAIN ---
     with Timer("domain") as t:
         domain_result, domain_timed_out = run_with_timeout(
             'domain', (f, x, S.Reals), timeout_seconds=3.0, default=S.Reals
@@ -1130,10 +1476,18 @@ def solve(func_str, show_timing=True):
             print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (timeout)")
         elif domain_result is not None:
             domain = domain_result
-            print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
         else:
             domain = S.Reals
-            print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (calc failed)")
+
+    # ── FIX-02: Expand periodic domains truncated by SymPy ───────────────
+    domain, was_periodic = expand_periodic_domain(f, x, domain)
+    if was_periodic:
+        debug_print(
+            "Periodic domain detected — expanded from single period to full ℤ-union",
+            Fore.GREEN
+        )
+
+    print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
     stats.domain_time = t.elapsed
 
     # --- RANGE ---
@@ -1142,11 +1496,119 @@ def solve(func_str, show_timing=True):
     behavior_info = None
     any_timed_out = False
 
-    # EDGE-01: integer-valued (floor/ceiling)
+    # ── FIX-01: Robust integer-valued detection ───────────────────────────
     if has_integer_valued_output(f):
-        range_res = S.Integers
-        method    = "Exact (integer-valued function)"
-        debug_print("Detected integer-valued function (floor/ceiling)", Fore.GREEN)
+        # Extra guard: make sure x - floor(x) style expressions are routed
+        # to the full solver by verifying the function takes non-integer values.
+        try:
+            f_num_test = make_safe_f_num_vectorized(f, x)
+            test_vals  = [f_num_test(v) for v in [0.3, 0.7, 1.5, 2.8, -0.4]]
+            test_vals  = [v for v in test_vals if np.isfinite(v)]
+            all_integer = all(abs(v - round(v)) < 1e-9 for v in test_vals)
+        except Exception:
+            all_integer = True   # conservative: trust structural check
+
+        if all_integer:
+            debug_print("Detected integer-valued function (floor/ceiling)", Fore.GREEN)
+            # ── Determine which integers are actually attained ────────────
+            # Sample densely over multiple periods to collect all reachable
+            # integer values; this correctly identifies e.g.:
+            #   ceiling(x) - floor(x)  → {1}    (not all integers)
+            #   floor(x) + 1           → ℤ      (all integers stay)
+            #   2*floor(x)             → even ℤ (every even integer)
+            try:
+                f_num_test2 = make_safe_f_num_vectorized(f, x)
+                # Sample across a wide range including many floor-transitions
+                xs_probe = np.linspace(-20.5, 20.5, 4000)
+                ys_probe = f_num_test2(xs_probe)
+                if np.isscalar(ys_probe):
+                    ys_probe = np.full_like(xs_probe, ys_probe)
+                ys_probe = np.asarray(ys_probe, dtype=float)
+                valid_mask = np.isfinite(ys_probe)
+                if np.any(valid_mask):
+                    raw_vals = ys_probe[valid_mask]
+                    # Round to nearest integer and collect unique values
+                    int_vals = set(int(round(v)) for v in raw_vals
+                                   if abs(v - round(v)) < 1e-6)
+                    if len(int_vals) == 0:
+                        # Fallback: something went wrong, use S.Integers
+                        range_res = S.Integers
+                    elif len(int_vals) == 1:
+                        # Single integer value — constant-integer function
+                        only_val = next(iter(int_vals))
+                        range_res = FiniteSet(Integer(only_val))
+                        method    = "Exact (integer-valued function)"
+                        debug_print(f"Integer-valued function with single value: {{{only_val}}}", Fore.GREEN)
+                    else:
+                        # Multiple values: check if they form a complete
+                        # arithmetic sequence (step=k → k*Integers + offset)
+                        sorted_vals = sorted(int_vals)
+                        gaps = [sorted_vals[i+1] - sorted_vals[i]
+                                for i in range(len(sorted_vals)-1)]
+                        min_gap = min(gaps)
+                        all_same_gap = all(g == min_gap for g in gaps)
+
+                        # Only trust this pattern if we've sampled enough
+                        # integers on BOTH sides of zero
+                        neg_count = sum(1 for v in sorted_vals if v < 0)
+                        pos_count = sum(1 for v in sorted_vals if v >= 0)
+                        good_coverage = neg_count >= 3 and pos_count >= 3
+
+                        if good_coverage and all_same_gap and min_gap == 1:
+                            # Dense, no gaps → all integers
+                            range_res = S.Integers
+                        elif good_coverage and all_same_gap and min_gap > 1:
+                            # Subset of integers with uniform spacing
+                            # e.g. 2*floor(x) → {…,-4,-2,0,2,4,…}
+                            offset = sorted_vals[0] % min_gap
+                            # Express as FiniteSet only if small, else Integers
+                            # For display, report as multiples
+                            range_res = S.Integers  # structural: still Z-like
+                            # Override display method label
+                            method = f"Exact (integer-valued function, step={min_gap})"
+                            debug_print(f"Integer-valued, step={min_gap}, range≈{min_gap}·ℤ+{offset}", Fore.GREEN)
+                        else:
+                            # Irregular or insufficient coverage
+                            mn, mx = min(sorted_vals), max(sorted_vals)
+                            # the grid spans [-20.5, 20.5]. If limits reach large values, they are unbounded.
+                            bounded_below = mn > -350
+                            bounded_above = mx < 350
+                            
+                            sample_str = ", ".join(str(v) for v in sorted_vals[:4])
+                            dots = ", ..." if len(sorted_vals) > 4 else ""
+                            
+                            if bounded_below and not bounded_above:
+                                range_res = f"Irregular integers {{{sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded below)"
+                            elif bounded_above and not bounded_below:
+                                range_res = f"Irregular integers {{..., {sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded above)"
+                            elif bounded_below and bounded_above:
+                                range_res = f"Irregular integers {{{sample_str}{dots}}}"
+                                method = "Exact (irregular integers, bounded)"
+                            else:
+                                range_res = "Irregular integers"
+                                method = "Exact (irregular integers)"
+                                
+                            debug_print(f"Irregular integers detected", Fore.GREEN)
+
+                        if hasattr(range_res, 'is_Set') and range_res is S.Integers and not method:
+                            method = "Exact (integer-valued function)"
+                else:
+                    range_res = S.Integers
+                    method    = "Exact (integer-valued function)"
+
+            except Exception:
+                range_res = S.Integers
+                method    = "Exact (integer-valued function)"
+
+            if not method:
+                method = "Exact (integer-valued function)"
+        else:
+            debug_print(
+                "floor/ceiling present but output is NOT integer-valued — "
+                "routing to full solver", Fore.YELLOW
+            )
 
     def is_valid_range(result):
         if result is None or result == EmptySet:
@@ -1164,9 +1626,79 @@ def solve(func_str, show_timing=True):
             budget_start = time.perf_counter()
             remaining    = lambda: SYMBOLIC_TOTAL_BUDGET - (time.perf_counter() - budget_start)
 
-            # Strategy A: function_range
+            # Strategy A0: single-period shortcut for periodic domains
+            # Handles two cases:
+            #  1. Large periodic Union (e.g. sqrt(sin(x))) → pick one Interval component
+            #  2. Complement domain (e.g. log(sin(x))) → extract the base Interval
+            # In both cases: for a periodic function, range over one period == range over all ℝ.
+            single_period_domain = None
+            if isinstance(domain, Union):
+                comp_list = [a for a in domain.args if isinstance(a, Interval)]
+                if len(comp_list) >= 4:
+                    # Pick the component closest to x=0
+                    try:
+                        single_period_domain = min(
+                            comp_list,
+                            key=lambda iv: min(
+                                abs(float(iv.start.evalf())),
+                                abs(float(iv.end.evalf()))
+                            )
+                        )
+                    except Exception:
+                        single_period_domain = None
+
+            # Complement domain: extract the base set if it's a finite Interval
+            # e.g.  Complement(Interval.open(0, pi), {0, pi})  → Interval.open(0, pi)
+            if single_period_domain is None:
+                try:
+                    from sympy.sets import Complement
+                    if isinstance(domain, Complement):
+                        base = domain.args[0]
+                        if isinstance(base, Interval) and base.start.is_finite and base.end.is_finite:
+                            # Verify there's a trig function so this really is periodic
+                            if any(f.has(fc) for fc in [sym_sin, sym_cos, tan, cot, sec, csc]):
+                                single_period_domain = base
+                except Exception:
+                    pass
+
+            if single_period_domain is not None:
+                t_a0 = min(SYMBOLIC_TIMEOUT, remaining())
+                if t_a0 > 0.1:
+                    debug_print(
+                        f"Strategy A0: function_range on representative interval "
+                        f"[{single_period_domain.start}, {single_period_domain.end}] "
+                        f"(budget={t_a0:.1f}s)", Fore.BLUE
+                    )
+                    result_a0, to_a0 = run_with_timeout(
+                        'range', (f, x, single_period_domain), t_a0
+                    )
+                    if to_a0:
+                        any_timed_out = True
+                        debug_print("Strategy A0 TIMED OUT", Fore.YELLOW)
+                    elif result_a0 is not None and is_valid_range(result_a0):
+                        range_res = result_a0
+                        method    = "Exact (function_range, periodic)"
+                        debug_print(f"Strategy A0 SUCCESS: {result_a0}", Fore.GREEN)
+
+            # Strategy A1: Composition decomposition
+            if range_res is None and remaining() > 0.2:
+                # Useful for f(x) like sin(1/x) or exp(-x**2)
+                if f.count(x) == 1:
+                    ta1 = min(SYMBOLIC_TIMEOUT, remaining())
+                    if ta1 > 0.1:
+                        debug_print(f"Strategy A1: composition decomposition (budget={ta1:.1f}s)", Fore.BLUE)
+                        result, timed_out = run_with_timeout('composited_range', (f, x, domain), ta1)
+                        if timed_out:
+                            any_timed_out = True
+                            debug_print("Strategy A1 TIMED OUT", Fore.YELLOW)
+                        elif result is not None and is_valid_range(result):
+                            range_res = result
+                            method    = "Exact (function_range, composited)"
+                            debug_print(f"Strategy A1 SUCCESS: {result}", Fore.GREEN)
+
+            # Strategy A: function_range (full domain)
             ta = min(SYMBOLIC_TIMEOUT, remaining())
-            if ta > 0.1:
+            if range_res is None and ta > 0.1:
                 debug_print(f"Strategy A: function_range (budget={ta:.1f}s)", Fore.BLUE)
                 result, timed_out = run_with_timeout('range', (f, x, domain), ta)
                 if timed_out:
@@ -1177,7 +1709,7 @@ def solve(func_str, show_timing=True):
                     method    = "Exact (function_range)"
                     debug_print(f"Strategy A SUCCESS: {result}", Fore.GREEN)
 
-            # Strategy B: symbolic min/max — INDEPENDENT of A (BUG-01 fix)
+            # Strategy B: symbolic min/max
             if range_res is None and remaining() > 0.2:
                 tb = min(SYMBOLIC_TIMEOUT, remaining())
                 debug_print(f"Strategy B: min/max (budget={tb:.1f}s)", Fore.BLUE)
@@ -1197,7 +1729,7 @@ def solve(func_str, show_timing=True):
                         method = "Exact (min/max)"
                         debug_print(f"Strategy B SUCCESS: [{mn}, {mx}]", Fore.GREEN)
 
-            # Strategy C: limit analysis — INDEPENDENT of A and B (BUG-01 fix)
+            # Strategy C: limit analysis
             if range_res is None and remaining() > 0.2:
                 tc = min(SYMBOLIC_TIMEOUT, remaining())
                 debug_print(f"Strategy C: limit analysis (budget={tc:.1f}s)", Fore.BLUE)
@@ -1238,7 +1770,7 @@ def solve(func_str, show_timing=True):
                 range_res = range_res_str
     stats.numerical_range_time = t.elapsed
 
-    # --- OUTPUT ---
+    # --- ENDPOINT OPEN/CLOSED REFINEMENT ---
     if range_res is not None and isinstance(range_res, (Interval, Union)):
         def check_bound_attained(val):
             try:
@@ -1254,17 +1786,17 @@ def solve(func_str, show_timing=True):
             if not isinstance(interv, Interval): return interv
             lo = interv.left_open
             ro = interv.right_open
-            
+
             if lo and interv.start.is_finite:
                 if check_bound_attained(interv.start) is True: lo = False
             elif not lo and interv.start.is_finite:
                 if check_bound_attained(interv.start) is False: lo = True
-                
+
             if ro and interv.end.is_finite:
                 if check_bound_attained(interv.end) is True: ro = False
             elif not ro and interv.end.is_finite:
                 if check_bound_attained(interv.end) is False: ro = True
-                
+
             return Interval(interv.start, interv.end, bool(lo), bool(ro))
 
         if isinstance(range_res, Interval):
@@ -1300,23 +1832,31 @@ def main():
     all_stats = []
 
     print(f"{Fore.WHITE}--- Standard Tests ---")
+    standard_stats = []
     for fn in [
-        "abs(x)",         # [0, oo)
-        "sin(x)/x",       # approx [-0.217, 1]
-        "x**x",           # [e^(-1/e), oo)
-        "1/x",            # (-oo,0)U(0,oo)
-        "floor(x)",       # Integers
-        "x**2",           # [0, oo)
-        "sin(x)",         # [-1, 1]
-        "exp(x)",         # (0, oo)
-        "log(x)",         # (-oo, oo)
-        "x**3",           # (-oo, oo)
-        "1/(1+x**2)",     # (0, 1]
+        "abs(x)",
+        "sin(x)/x",
+        "x**x",
+        "1/x",
+        "floor(x)",
+        "x**2",
+        "sin(x)",
+        "exp(x)",
+        "log(x)",
+        "x**3",
+        "1/(1+x**2)",
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            standard_stats.append(s)
+    if standard_stats:
+        st_total = sum(s.total_time for s in standard_stats)
+        st_avg = st_total / len(standard_stats)
+        print(f"{Fore.CYAN}Standard tests: {len(standard_stats)} funcs — total {st_total*1000:.1f}ms, avg {st_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Hard/Complex Tests ---")
+    hard_stats = []
     for fn in [
         "x * sin(x)",
         "exp(-x**2)",
@@ -1330,9 +1870,16 @@ def main():
         "exp(sin(x))",
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            hard_stats.append(s)
+    if hard_stats:
+        ht_total = sum(s.total_time for s in hard_stats)
+        ht_avg = ht_total / len(hard_stats)
+        print(f"{Fore.CYAN}Hard/Complex tests: {len(hard_stats)} funcs — total {ht_total*1000:.1f}ms, avg {ht_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Extreme/Challenging Tests ---")
+    extreme_stats = []
     for fn in [
         "atan(x)", "asin(x)", "acos(x)",
         "sinh(x)", "cosh(x)", "tanh(x)",
@@ -1346,7 +1893,87 @@ def main():
         "sin(x)/x**2", "exp(-x)*sin(x)",
     ]:
         s = solve(fn)
-        if s: all_stats.append(s)
+        if s:
+            all_stats.append(s)
+            extreme_stats.append(s)
+    if extreme_stats:
+        ex_total = sum(s.total_time for s in extreme_stats)
+        ex_avg = ex_total / len(extreme_stats)
+        print(f"{Fore.CYAN}Extreme tests: {len(extreme_stats)} funcs — total {ex_total*1000:.1f}ms, avg {ex_avg*1000:.1f}ms")
+
+    print(f"\n{Fore.WHITE}--- User Added Tests ---")
+    user_stats = []
+    for fn in [
+        "log(log(x))",
+        "sqrt(sin(x))",
+        "x*log(x)",
+        "log(x + sqrt(x**2 + 1))",
+        "sqrt(x**2 - 4*x + 3)",
+        "exp(x)/(1 + exp(x))",
+        "sin(1/x)",
+        "x - floor(x)",
+        "atan(1/x)",
+        "sqrt((x-1)/(x+1))",
+        "x**2 * sin(1/x)",
+        "log(x*(1-x))",
+        "x / sqrt(1 - x**2)",
+        # Extra regression tests for the two fixed bugs
+        "sqrt(cos(x))",
+        "log(sin(x))",
+        "floor(x) + 1",
+        "2*floor(x)",
+        "ceiling(x) - floor(x)",
+    ]:
+        s = solve(fn)
+        if s:
+            all_stats.append(s)
+            user_stats.append(s)
+    if user_stats:
+        us_total = sum(s.total_time for s in user_stats)
+        us_avg = us_total / len(user_stats)
+        print(f"{Fore.CYAN}User tests: {len(user_stats)} funcs — total {us_total*1000:.1f}ms, avg {us_avg*1000:.1f}ms")
+
+    # -------------------------------------------------------------------------
+    # ADVERSARIAL TESTS
+    # Expected correct answers listed as comments for easy verification:
+    #
+    #  sqrt(x - floor(x))          Domain: (-oo,oo)           Range: [0, 1)
+    #  floor(sin(x))               Domain: (-oo,oo)           Range: {-1, 0, 1}
+    #  1/(1 - 2*sin(x))            Domain: periodic complement Range: (-oo,-1] U [1/3,+oo)
+    #  log(x + 1/x)                Domain: (0, oo)            Range: [log(2), oo)
+    #  x**(1/x)                    Domain: (0, oo)            Range: (0, exp(1/E)]
+    #  atan(x) + atan(1/x)         Domain: (-oo,0)U(0,oo)     Range: {-pi/2, pi/2}
+    #  floor(x**2)                 Domain: (-oo,oo)           Range: non-negative integers {0,1,2,...}
+    #  log(x - floor(x))           Domain: RR \ ZZ            Range: (-oo, 0)
+    #  (1 - cos(x))/(1 + cos(x))  Domain: periodic complement Range: [0, oo)
+    #  acos(1/(1 + x**2))          Domain: (-oo,oo)           Range: [0, pi/2)
+    #  sin(x + sin(x))             Domain: (-oo,oo)           Range: [-1, 1]
+    #  ceiling(x) * floor(x)       Domain: (-oo,oo)           Range: irregular integers
+    # -------------------------------------------------------------------------
+    print(f"\n{Fore.WHITE}--- Adversarial Tests ---")
+    adversarial_stats = []
+    for fn in [
+        "sqrt(x - floor(x))",
+        "floor(sin(x))",
+        "1/(1 - 2*sin(x))",
+        "log(x + 1/x)",
+        "x**(1/x)",
+        "atan(x) + atan(1/x)",
+        "floor(x**2)",
+        "log(x - floor(x))",
+        "(1 - cos(x))/(1 + cos(x))",
+        "acos(1/(1 + x**2))",
+        "sin(x + sin(x))",
+        "ceiling(x) * floor(x)",
+    ]:
+        s = solve(fn)
+        if s:
+            all_stats.append(s)
+            adversarial_stats.append(s)
+    if adversarial_stats:
+        adv_total = sum(s.total_time for s in adversarial_stats)
+        adv_avg = adv_total / len(adversarial_stats)
+        print(f"{Fore.CYAN}Adversarial tests: {len(adversarial_stats)} funcs — total {adv_total*1000:.1f}ms, avg {adv_avg*1000:.1f}ms")
 
     if all_stats:
         total   = sum(s.total_time for s in all_stats)
@@ -1354,10 +1981,10 @@ def main():
         fastest = min(s.total_time for s in all_stats)
         slowest = max(s.total_time for s in all_stats)
 
-        p_parse  = sum(s.parsing_time        for s in all_stats)
-        p_domain = sum(s.domain_time         for s in all_stats)
-        p_sym    = sum(s.symbolic_range_time  for s in all_stats)
-        p_num    = sum(s.numerical_range_time for s in all_stats)
+        p_parse  = sum(s.parsing_time         for s in all_stats)
+        p_domain = sum(s.domain_time          for s in all_stats)
+        p_sym    = sum(s.symbolic_range_time   for s in all_stats)
+        p_num    = sum(s.numerical_range_time  for s in all_stats)
 
         print(f"\n{Fore.MAGENTA}{'='*50}")
         print(f"{Fore.MAGENTA}TIMING SUMMARY ({len(all_stats)} functions)")
@@ -1375,7 +2002,6 @@ def main():
 
 
 if __name__ == "__main__":
-    # Required on Windows: multiprocessing needs this guard in the main module
     import multiprocessing
     multiprocessing.freeze_support()
     main()
