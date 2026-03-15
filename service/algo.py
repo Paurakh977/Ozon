@@ -526,7 +526,7 @@ def _format_periodic_union(obj, fmt_val_fn, fmt_interval_fn):
         a_str = fmt_val_fn(anchor.start)
         b_str = fmt_val_fn(anchor.end)
         T_str = fmt_val_fn(parts_sorted[1].start - parts_sorted[0].start)
-        return f"⋃_{{n∈ℤ}} {lb}{a_str} + {T_str}·n, {b_str} + {T_str}·n{rb}"
+        return f"U_{{n in Z}} {lb}{a_str} + {T_str}*n, {b_str} + {T_str}*n{rb}"
     except Exception:
         return None
 
@@ -648,7 +648,7 @@ def analyze_function_behavior(f, x, domain):
             if lp.min == -oo: has_inf_neg = True
         elif lp.has(oo) and (lp.has(AccumBounds) or lp.has(sign)):
             has_inf_pos = True; has_inf_neg = True
-        elif lp not in [zoo, nan]:
+        elif lp not in [zoo, nan] and not lp.has(oo):
             right_lim = lp
     except Exception:
         pass
@@ -662,7 +662,7 @@ def analyze_function_behavior(f, x, domain):
             if ln.min == -oo: has_inf_neg = True
         elif ln.has(oo) and (ln.has(AccumBounds) or ln.has(sign)):
             has_inf_pos = True; has_inf_neg = True
-        elif ln not in [zoo, nan]:
+        elif ln not in [zoo, nan] and not ln.has(oo):
             left_lim = ln
     except Exception:
         pass
@@ -683,9 +683,14 @@ def analyze_function_behavior(f, x, domain):
                 for pt in sing_pts:
                     try:
                         ll = limit(f_for_limits, x, pt, '-')
+                        if ll == oo:    has_inf_pos = True
+                        elif ll == -oo: has_inf_neg = True
+                        elif ll not in [zoo, nan] and not ll.has(oo): sing_limits.append((ll, pt))
+                        
                         lr = limit(f_for_limits, x, pt, '+')
-                        if ll == oo  or lr == oo:  has_inf_pos = True
-                        if ll == -oo or lr == -oo: has_inf_neg = True
+                        if lr == oo:    has_inf_pos = True
+                        elif lr == -oo: has_inf_neg = True
+                        elif lr not in [zoo, nan] and not lr.has(oo): sing_limits.append((lr, pt))
                     except Exception:
                         pass
     except Exception:
@@ -699,7 +704,7 @@ def analyze_function_behavior(f, x, domain):
 # =============================================================================
 
 def find_critical_points_numerical(f, x, domain, f_num):
-    critical_values = []
+    critical_points = []
     try:
         df = diff(f, x)
         df_num = lambdify(x, df, modules=['numpy'])
@@ -713,11 +718,13 @@ def find_critical_points_numerical(f, x, domain, f_num):
             signs = np.sign(dy)
             idx   = np.where(np.diff(signs) != 0)[0]
             if len(idx):
-                y_crits = np.array([f_num(x_samples[i]) for i in idx])
-                critical_values.extend(y_crits[np.isfinite(y_crits)].tolist())
+                for i in idx:
+                    yv = f_num(x_samples[i])
+                    if np.isfinite(yv) and np.isreal(yv):
+                        critical_points.append((float(x_samples[i]), float(yv)))
     except Exception:
         pass
-    return critical_values
+    return critical_points
 
 
 def detect_unbounded_oscillation(f_num, gen_min, gen_max):
@@ -899,33 +906,19 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         domain_is_bounded_left = domain_is_bounded_right = False
 
         try:
-            if isinstance(domain_sympy, Union):
-                # Collect all finite endpoints across union components
-                all_starts = []
-                all_ends   = []
-                for comp in domain_sympy.args:
-                    if isinstance(comp, Interval):
-                        if comp.start.is_finite:
-                            all_starts.append(float(comp.start.evalf()))
-                        if comp.end.is_finite:
-                            all_ends.append(float(comp.end.evalf()))
-                if all_starts:
-                    cand_min = min(all_starts)
-                    if cand_min > -1e6:
-                        gen_min = cand_min + 1e-8
-                        domain_is_bounded_left = True
-                if all_ends:
-                    cand_max = max(all_ends)
-                    if cand_max < 1e6:
-                        gen_max = cand_max - 1e-8
-                        domain_is_bounded_right = True
+            if hasattr(domain_sympy, 'inf') and getattr(domain_sympy.inf, 'is_finite', False):
+                gen_min = float(domain_sympy.inf) + 1e-8
+                domain_is_bounded_left = True
+            elif hasattr(domain_sympy, 'inf') and getattr(domain_sympy.inf, 'is_finite') == False:
+                domain_is_bounded_left = False
             else:
-                if hasattr(domain_sympy, 'inf') and domain_sympy.inf.is_finite:
-                    gen_min = float(domain_sympy.inf) + 1e-8
-                    domain_is_bounded_left = True
-                if hasattr(domain_sympy, 'sup') and domain_sympy.sup.is_finite:
-                    gen_max = float(domain_sympy.sup) - 1e-8
-                    domain_is_bounded_right = True
+                pass # fallback
+            
+            if hasattr(domain_sympy, 'sup') and getattr(domain_sympy.sup, 'is_finite', False):
+                gen_max = float(domain_sympy.sup) - 1e-8
+                domain_is_bounded_right = True
+            elif hasattr(domain_sympy, 'sup') and getattr(domain_sympy.sup, 'is_finite') == False:
+                domain_is_bounded_right = False
         except Exception:
             pass
 
@@ -1037,7 +1030,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                         if len(pos_vals) > 0 and len(neg_vals) > 0:
                             min_p = float(np.min(pos_vals))
                             max_n = float(np.max(neg_vals))
-                            for lv in limit_vals:
+                            for lv, _ in limit_points:
                                 if isinstance(lv, (float, int, np.floating)):
                                     if lv >= 0 and lv < min_p: min_p = lv
                                     if lv <= 0 and lv > max_n: max_n = lv
@@ -1056,30 +1049,28 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 debug_print(f"Reciprocal trig fast path failed: {exc}", Fore.YELLOW)
 
         # --- STEP 4: GRID SEARCH ---
-        all_y_values = []
-        limit_vals = set()
+        all_points = []
+        limit_points = [] # list of (limit_val, x_source)
 
-        def add_limit(val, is_neg_inf=False, is_pos_inf=False):
+        def add_limit(val, x_source=None, is_neg_inf=False, is_pos_inf=False):
             try:
                 if is_neg_inf and domain_is_bounded_left: return
                 if is_pos_inf and domain_is_bounded_right: return
-                if val is not None and getattr(val, 'is_real', False) and getattr(val, 'is_number', False):
+                if val is not None and (isinstance(val, (int, float, complex)) or (getattr(val, 'is_real', False) and getattr(val, 'is_number', False))):
                     fval = float(val)
-                    all_y_values.append(fval)
-                    limit_vals.add(snap_to_clean_value(fval))
+                    limit_points.append((snap_to_clean_value(fval), x_source))
             except Exception:
                 pass
 
-        add_limit(left_lim, is_neg_inf=True)
-        add_limit(right_lim, is_pos_inf=True)
+        add_limit(left_lim, -np.inf, is_neg_inf=True)
+        add_limit(right_lim, np.inf, is_pos_inf=True)
         for sl in sing_limits:
-            add_limit(sl)
-
-        sampled_y_values = []
+            if isinstance(sl, tuple) and len(sl) == 2:
+                add_limit(sl[0], sl[1])
+            else:
+                add_limit(sl)
 
         X_grid = None
-        # For Union domains (e.g. periodic), sample within each component
-        # to avoid wasting budget on the gap intervals.
         if isinstance(domain_sympy, Union):
             pts_list = []
             components = [a for a in domain_sympy.args if isinstance(a, Interval)]
@@ -1135,8 +1126,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 Y_grid = np.asarray(Y_grid, dtype=float)
                 mask = np.isfinite(Y_grid)
                 if np.any(mask):
-                    sampled_y_values.extend(Y_grid[mask].tolist())
-                    all_y_values.extend(Y_grid[mask].tolist())
+                    all_points.extend(list(zip(X_grid[mask], Y_grid[mask])))
 
                 if RUST_AVAILABLE and np.any(mask):
                     try:
@@ -1163,11 +1153,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     Y_dense = np.asarray(Y_dense, dtype=float)
                                     dm = np.isfinite(Y_dense)
                                     if np.any(dm):
-                                        sampled_y_values.extend(Y_dense[dm].tolist())
-                                        all_y_values.extend(Y_dense[dm].tolist())
-                                        debug_print(
-                                            f"Adaptive grid: {np.sum(dm)} pts near "
-                                            f"{len(critical_xs)} critical regions", Fore.CYAN)
+                                        all_points.extend(list(zip(X_dense[dm], Y_dense[dm])))
                     except Exception:
                         pass
             except Exception:
@@ -1189,39 +1175,39 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             try:
                 val = f_num(pt)
                 if np.isfinite(val) and np.isreal(val):
-                    sampled_y_values.append(float(val))
-                    all_y_values.append(float(val))
+                    all_points.append((float(pt), float(val)))
             except Exception:
                 pass
 
-        if not all_y_values:
+        if not all_points and not limit_points:
             return "Numerical Eval Failed (All Complex/NaN)", "Error"
 
         # --- STEP 5: CRITICAL POINTS ---
-        for cv in find_critical_points_numerical(f, x, domain_sympy, f_num):
-            if np.isfinite(cv) and np.isreal(cv):
-                sampled_y_values.append(float(cv))
-                all_y_values.append(float(cv))
+        for cp in find_critical_points_numerical(f, x, domain_sympy, f_num):
+            if isinstance(cp, tuple) and len(cp) == 2:
+                cx, cy = cp
+                if np.isfinite(cy) and np.isreal(cy):
+                    all_points.append((cx, cy))
 
         # --- STEP 6: SCIPY OPTIMISATION ---
-        refined_min = min(all_y_values)
-        refined_max = max(all_y_values)
+        all_y_values = [p[1] for p in all_points]
+        refined_min = min(all_y_values) if all_y_values else np.inf
+        refined_max = max(all_y_values) if all_y_values else -np.inf
+
+        for lv, _ in limit_points:
+            if np.isfinite(lv):
+                all_y_values.append(lv)
 
         if minimize_scalar is not None:
             bounds_lo = max(gen_min, -100)
             bounds_hi = min(gen_max,  100)
 
             def safe_f_opt(xv):
-                """
-                Return the function value at xv, or np.inf for invalid points.
-                IMPORTANT: never return a large finite sentinel like 1e100;
-                that value would pollute the numerical min/max.
-                """
                 try:
                     v = f_num(float(xv))
                     if np.isfinite(v) and np.isreal(v):
                         return float(v)
-                    return np.inf          # ← was 1e100; now truly infinite
+                    return np.inf
                 except Exception:
                     return np.inf
 
@@ -1229,11 +1215,9 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 r = minimize_scalar(safe_f_opt, bounds=(bounds_lo, bounds_hi),
                                     method='bounded',
                                     options={'maxiter': 200, 'xatol': 1e-7})
-                # Only accept if the result is a real finite value inside bounds
-                if (r.success and np.isfinite(r.fun)
-                        and r.fun < 1e99):   # exclude inf sentinel escapes
+                if (r.success and np.isfinite(r.fun) and r.fun < 1e99):
                     refined_min = min(refined_min, r.fun)
-                    sampled_y_values.append(float(r.fun))
+                    all_points.append((r.x, float(r.fun)))
                     all_y_values.append(float(r.fun))
             except Exception:
                 pass
@@ -1243,17 +1227,16 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                     bounds=(bounds_lo, bounds_hi),
                                     method='bounded',
                                     options={'maxiter': 200, 'xatol': 1e-7})
-                # r.fun is -f; check that f itself is finite (not -inf == negate of inf)
-                if (r.success and np.isfinite(r.fun)
-                        and r.fun > -1e99):  # -inf would mean f→+inf sentinel
+                if (r.success and np.isfinite(r.fun) and r.fun > -1e99):
                     refined_max = max(refined_max, -r.fun)
-                    sampled_y_values.append(float(-r.fun))
+                    all_points.append((r.x, float(-r.fun)))
                     all_y_values.append(float(-r.fun))
             except Exception:
                 pass
 
-        refined_min = min(refined_min, min(all_y_values))
-        refined_max = max(refined_max, max(all_y_values))
+        if all_y_values:
+            refined_min = min(refined_min, min(all_y_values))
+            refined_max = max(refined_max, max(all_y_values))
 
         # --- STEP 7: APPLY INFINITY FLAGS ---
         final_min = -np.inf if has_inf_neg else refined_min
@@ -1293,11 +1276,53 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 sorted_y    = np.sort(finite_y)
                 all_y_sorted = np.sort(y_arr[np.isfinite(y_arr)])
                 gaps = detect_range_gaps(sorted_y, all_y_sorted=all_y_sorted)
-                if gaps:
-                    debug_print(f"Detected {len(gaps)} gap(s) in range", Fore.CYAN)
+                
+# VERIFY GAPS mathematically to avoid hallucinating gaps on steep curves
+                verified_gaps = []
+                for gs, ge in gaps:
+                    mid_y = float((gs + ge) / 2)
+                    verified = False
+                    try:
+                        res, to = run_with_timeout('solveset_empty', (f, x, mid_y, domain_sympy), 2.0)
+                        if not to and res is True:
+                            verified = True
+                    except Exception:
+                        pass
+                        
+                    if not verified:
+                        # Fallback: Numerical verification
+                        # Try to find x such that f(x) == mid_y
+                        try:
+                            # Objective function: (f(x) - mid_y)^2
+                            def obj(xv):
+                                v = f_num(xv)
+                                return (v - mid_y)**2 if np.isfinite(v) else 1e9
+                                
+                            # Try from a few starting points
+                            from scipy.optimize import minimize
+                            pts = np.linspace(-10, 10, 20)
+                            best_val = 1e9
+                            for pt in pts:
+                                r = minimize(obj, pt, method='Nelder-Mead', options={'maxiter': 50})
+                                if r.success and r.fun < best_val:
+                                    best_val = r.fun
+                                    if best_val < 1e-4: break
+                                    
+                            if best_val > 1e-2:
+                                # We couldn't get close to mid_y numerically, so gap is likely real!
+                                verified = True
+                        except Exception:
+                            # If optimization fails, be conservative and assume not a gap
+                            pass
+                            
+                    if verified:
+                        verified_gaps.append((gs, ge))
+                
+                if verified_gaps:
+                    debug_print(f"Detected {len(verified_gaps)} verified gap(s) in range", Fore.CYAN)
                     pieces = []
                     left = final_min
-                    for gs, ge in gaps:
+                    for gs, ge in verified_gaps:
                         gs = snap_to_clean_value(gs)
                         ge = snap_to_clean_value(ge)
                         if gs >= left:
@@ -1312,32 +1337,6 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                             hi_s = "oo"  if (np.isinf(hi) and hi > 0) else fmt(hi)
                             parts.append(f"Interval({lo_s}, {hi_s})")
                         return "Union(" + ", ".join(parts) + ")", "Hybrid Analysis (gap detected)"
-
-        # --- STEP 8.5: INTERIOR HOLE SPLITTING FROM LIMITS ---
-        holes = []
-        for lv in limit_vals:
-            if isinstance(lv, (int, float, np.floating)) and final_min < lv < final_max:
-                try:
-                    res, to = run_with_timeout('solveset_empty', (f, x, lv, domain_sympy), 2.0)
-                    if not to and res is True:
-                        holes.append(float(lv))
-                except Exception:
-                    pass
-        holes = sorted(list(set(holes)))
-        if holes:
-            debug_print(f"Detected interior holes: {holes}", Fore.CYAN)
-            intervals = []
-            curr_left = final_min
-            for hole in holes:
-                lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
-                hi_s = fmt(hole)
-                intervals.append(f"Interval({lo_s}, {hi_s})")
-                curr_left = hole
-            lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
-            hi_s = "oo" if (np.isinf(final_max) and final_max > 0) else fmt(final_max)
-            intervals.append(f"Interval({lo_s}, {hi_s})")
-            return "Union(" + ", ".join(intervals) + ")", "Hybrid Analysis (interior hole)"
-
         # --- STEP 9: OPEN/CLOSED ENDPOINT DETECTION ---
         def check_openness(val, is_min):
             if np.isinf(val):
@@ -1353,25 +1352,62 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 pass
 
             try:
-                if len(sampled_y_values) > 0:
+                if len(all_points) > 0:
+                    all_y = [p[1] for p in all_points]
                     if is_min:
-                        actual_min = min(sampled_y_values)
+                        actual_min = min(all_y)
                         if actual_min > val + 1e-9:
                             return True
                     else:
-                        actual_max = max(sampled_y_values)
+                        actual_max = max(all_y)
                         if actual_max < val - 1e-9:
                             return True
             except Exception:
                 pass
 
-            if snap_to_clean_value(val) in limit_vals:
-                return True
+            for lv, _ in limit_points:
+                if abs(lv - snap_to_clean_value(val)) < 1e-7:
+                    return True
 
             return False
 
         left_open  = check_openness(final_min, True)
         right_open = check_openness(final_max, False)
+
+
+        # --- STEP 8.5: INTERIOR HOLE SPLITTING FROM LIMITS ---
+        holes = []
+        for lv, x_src in limit_points:
+            if final_min < lv < final_max:
+                try:
+                    res, to = run_with_timeout('solveset_empty', (f, x, lv, domain_sympy), 2.0)
+                    if not to and res is True:
+                        holes.append(float(lv))
+                except Exception:
+                    pass
+        holes = sorted(list(set(holes)))
+        if holes:
+            debug_print(f"Detected interior holes: {holes}", Fore.CYAN)
+            intervals = []
+            curr_left = final_min
+            for i, hole in enumerate(holes):
+                lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
+                hi_s = fmt(hole)
+                if i == 0:
+                    if left_open:
+                        intervals.append(f"Interval.open({lo_s}, {hi_s})")
+                    else:
+                        intervals.append(f"Interval.Ropen({lo_s}, {hi_s})")
+                else:
+                    intervals.append(f"Interval.open({lo_s}, {hi_s})")
+                curr_left = hole
+            lo_s = "-oo" if (np.isinf(curr_left) and curr_left < 0) else fmt(curr_left)
+            hi_s = "oo" if (np.isinf(final_max) and final_max > 0) else fmt(final_max)
+            if right_open:
+                intervals.append(f"Interval.open({lo_s}, {hi_s})")
+            else:
+                intervals.append(f"Interval.Lopen({lo_s}, {hi_s})")
+            return "Union(" + ", ".join(intervals) + ")", "Hybrid Analysis (interior hole)"
 
         if   left_open and right_open: interval_str = f"Interval.open({fmt(final_min)}, {fmt(final_max)})"
         elif left_open:                interval_str = f"Interval.Lopen({fmt(final_min)}, {fmt(final_max)})"
@@ -1379,8 +1415,9 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         else:                          interval_str = f"Interval({fmt(final_min)}, {fmt(final_max)})"
 
         return interval_str, "Hybrid Analysis"
-
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return f"Numerical Error: {e}", "Error"
 
 
@@ -1820,6 +1857,7 @@ def solve(func_str, show_timing=True):
             range_res_str, method = smart_numerical_range(
                 f, x, domain, behavior_info=behavior_info
             )
+
             if RUST_AVAILABLE:
                 method += " [Rust]"
             if isinstance(range_res_str, str) and "Error" not in range_res_str:
