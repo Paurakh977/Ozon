@@ -3,17 +3,15 @@ Standalone worker process for SymPy computations.
 
 This module MUST NOT import from algo.py. On Windows, multiprocessing uses
 the 'spawn' context which re-imports this file in the subprocess from scratch.
-If this file imported algo.py, that would trigger algo's module-level code
-(colorama.init, warnings.filterwarnings, _sympy_worker = None, etc.) in the
-subprocess — harmless but wasteful, and a circular-import risk.
+Circular import risk and wasteful re-initialisation are both avoided by keeping
+this file fully self-contained.
 
-All SymPy imports are done locally inside functions to minimise subprocess
-startup time (~200ms if done at module level vs ~30ms lazy).
+All SymPy imports are lazy (inside functions) to minimise subprocess startup time.
 """
 
 
 # ---------------------------------------------------------------------------
-# Standalone helpers (copied from algo.py to avoid circular import)
+# Standalone helpers (self-contained, no algo.py dependency)
 # ---------------------------------------------------------------------------
 
 def _float_to_odd_rational_w(exp_val):
@@ -64,18 +62,180 @@ def _rewrite_real_roots_w(expr, var):
     return expr
 
 
+# ---------------------------------------------------------------------------
+# Trig period detection (worker-side, no algo.py dependency)
+# ---------------------------------------------------------------------------
+
+def _get_fundamental_period_w(f, x):
+    """
+    Determine the fundamental period of f(x) by inspecting trig sub-expressions.
+    Returns a SymPy expression or None.
+    """
+    from sympy import pi, Abs, gcd, sin, cos, tan, cot, sec, csc, Rational
+
+    TRIG_PERIODS = {
+        sin: 2 * pi,
+        cos: 2 * pi,
+        tan: pi,
+        cot: pi,
+        sec: 2 * pi,
+        csc: 2 * pi,
+    }
+
+    candidates = []
+    for func_cls, base_period in TRIG_PERIODS.items():
+        for sub in f.atoms(func_cls):
+            arg = sub.args[0]
+            coeff = arg.coeff(x)
+            if coeff != 0 and coeff.is_real:
+                try:
+                    candidates.append(base_period / abs(coeff))
+                except Exception:
+                    pass
+
+    if not candidates:
+        return None
+
+    result = candidates[0]
+    for p in candidates[1:]:
+        try:
+            result = (result * p) / gcd(result, p)
+        except Exception:
+            from sympy import Max
+            result = Max(result, p)
+
+    return result
+
+
+def _expand_periodic_domain_w(f, x, domain):
+    """
+    Worker-side periodic domain expansion.
+
+    Detects when continuous_domain() returned only one period of a genuinely
+    periodic domain and expands it into a Union covering ±NUM_PERIODS periods.
+
+    This is the same logic as expand_periodic_domain() in algo.py but written
+    without any imports from that module.
+
+    Returns (domain, was_expanded: bool).
+    """
+    import numpy as np
+    from sympy import (Interval, Union, pi, lambdify, Abs, Pow, Rational,
+                       sign, sin, cos, tan, cot, sec, csc, Symbol)
+
+    NUM_PERIODS = 12
+
+    # ── Guard 1: must have trig ──────────────────────────────────────────
+    TRIG_FUNCS = (sin, cos, tan, cot, sec, csc)
+    if not any(f.has(tc) for tc in TRIG_FUNCS):
+        return domain, False
+
+    # ── Guard 2: determinable period ─────────────────────────────────────
+    period_sym = _get_fundamental_period_w(f, x)
+    if period_sym is None:
+        return domain, False
+
+    try:
+        period_float = float(period_sym.evalf())
+    except Exception:
+        return domain, False
+
+    if period_float <= 0 or period_float > 1e6:
+        return domain, False
+
+    # ── Guard 3: domain looks like a single truncated period ─────────────
+    if isinstance(domain, Interval):
+        component_list = [domain]
+    elif isinstance(domain, Union) and all(isinstance(a, Interval) for a in domain.args):
+        component_list = list(domain.args)
+    else:
+        return domain, False
+
+    try:
+        span_start = min(float(c.start.evalf()) for c in component_list)
+        span_end   = max(float(c.end.evalf())   for c in component_list)
+    except Exception:
+        return domain, False
+
+    span_width = span_end - span_start
+    if span_width >= period_float - 1e-6:
+        return domain, False
+
+    # ── Guard 4: numerical verification ──────────────────────────────────
+    try:
+        # Build a safe numeric evaluator (handles odd-power roots)
+        f_rw = _rewrite_real_roots_w(f, x) if _has_real_odd_root_w(f, x) else f
+        modules = [
+            {'Heaviside': lambda t: np.heaviside(t, 0.5),
+             'Max': np.maximum, 'Min': np.minimum},
+            'numpy',
+        ]
+        f_num_raw = lambdify(x, f_rw, modules=modules)
+
+        def safe_eval(xv):
+            try:
+                v = f_num_raw(float(xv))
+                if isinstance(v, complex):
+                    return v.real if abs(v.imag) < 1e-10 else np.nan
+                v = float(v)
+                return v if np.isfinite(v) else np.nan
+            except Exception:
+                return np.nan
+
+        mid       = span_start + span_width * 0.5
+        val_base  = safe_eval(mid)
+        val_next  = safe_eval(mid + period_float)
+        base_ok   = np.isfinite(val_base) and np.isreal(val_base)
+        next_ok   = np.isfinite(val_next) and np.isreal(val_next)
+
+        if not (base_ok and next_ok):
+            return domain, False
+
+        # Verify that a point in the GAP between periods is invalid
+        gap_pt      = span_end + period_float * 0.25
+        val_gap     = safe_eval(gap_pt)
+        gap_invalid = (not np.isfinite(val_gap)) or (not np.isreal(val_gap))
+
+        if not gap_invalid:
+            # Domain is actually denser than one period — don't expand
+            return domain, False
+
+    except Exception:
+        return domain, False
+
+    # ── Build the periodic union ──────────────────────────────────────────
+    try:
+        all_intervals = []
+        for k in range(-NUM_PERIODS, NUM_PERIODS + 1):
+            shift = k * period_sym
+            for comp in component_list:
+                all_intervals.append(
+                    Interval(comp.start + shift,
+                             comp.end   + shift,
+                             comp.left_open,
+                             comp.right_open)
+                )
+        return Union(*all_intervals), True
+    except Exception:
+        return domain, False
+
+
+# ---------------------------------------------------------------------------
+# Behavior analysis (standalone, no algo.py dependency)
+# ---------------------------------------------------------------------------
+
 def _analyze_function_behavior_standalone(f, x, domain):
     """
     Standalone version of analyze_function_behavior.
-    Inlined here so the worker never imports from algo.py.
+    Returns (has_inf_neg, has_inf_pos, left_lim, right_lim, sing_limits).
     """
     from sympy import limit, oo, zoo, nan, sign, Abs, solveset, FiniteSet, S
     from sympy.calculus.util import AccumBounds
 
     has_inf_pos = False
     has_inf_neg = False
-    left_lim = None
-    right_lim = None
+    left_lim    = None
+    right_lim   = None
     sing_limits = []
 
     f_for_limits = _rewrite_real_roots_w(f, x) if _has_real_odd_root_w(f, x) else f
@@ -129,11 +289,11 @@ def _analyze_function_behavior_standalone(f, x, domain):
                     try:
                         ll = limit(f_for_limits, x, pt, '-')
                         lr = limit(f_for_limits, x, pt, '+')
-                        if ll == oo: has_inf_pos = True
+                        if ll == oo:    has_inf_pos = True
                         elif ll == -oo: has_inf_neg = True
                         elif ll not in [zoo, nan]: sing_limits.append(ll)
-                        
-                        if lr == oo: has_inf_pos = True
+
+                        if lr == oo:    has_inf_pos = True
                         elif lr == -oo: has_inf_neg = True
                         elif lr not in [zoo, nan]: sing_limits.append(lr)
                     except Exception:
@@ -142,6 +302,45 @@ def _analyze_function_behavior_standalone(f, x, domain):
         pass
 
     return has_inf_neg, has_inf_pos, left_lim, right_lim, sing_limits
+
+
+# ---------------------------------------------------------------------------
+# Robust integer-valued check (worker-side, mirrors algo.py logic)
+# ---------------------------------------------------------------------------
+
+def _is_term_integer_valued_w(term):
+    """
+    True if a single additive term is provably integer-valued.
+    Handles: integer constants, floor(g), ceiling(g), n*floor(g), n*ceiling(g).
+    """
+    from sympy import floor, ceiling, Mul
+    if term.is_integer and term.is_number:
+        return True
+    if term.func in (floor, ceiling):
+        return True
+    if term.func is Mul:
+        non_num = [a for a in term.args if not (a.is_number and a.is_integer)]
+        return len(non_num) == 1 and non_num[0].func in (floor, ceiling)
+    return False
+
+
+def _has_integer_valued_output_w(f):
+    """
+    Standalone version of has_integer_valued_output.
+    Returns True ONLY when the entire expression is provably integer-valued.
+    x - floor(x) → False.  floor(x) + 1 → True.
+    """
+    from sympy import floor, ceiling, Mul, Add
+    if f.func in (floor, ceiling):
+        return True
+    if f.func is Mul:
+        non_num = [a for a in f.args if not (a.is_number and a.is_integer)]
+        if len(non_num) == 1 and non_num[0].func in (floor, ceiling):
+            return True
+        return False
+    if f.func is Add:
+        return all(_is_term_integer_valued_w(term) for term in f.args)
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -154,24 +353,87 @@ def worker_loop(q_in, q_out):
 
     Receives (task_type, args) tuples and puts ('ok', result) or
     ('err', message) back.  All SymPy imports are lazy so subprocess
-    startup stays fast.
+    startup stays fast (~30 ms).
+
+    Task types
+    ----------
+    domain          → continuous_domain + periodic expansion
+    range           → function_range
+    min_max         → minimum + maximum
+    limit           → _analyze_function_behavior_standalone
+    solveset_empty  → solveset(f - val) == EmptySet?
+    integer_check   → _has_integer_valued_output_w
     """
     while True:
         try:
             msg = q_in.get()
-            if msg is None:          # sentinel → clean shutdown
+            if msg is None:      # sentinel → clean shutdown
                 break
 
             task_type, args = msg
 
+            # ── domain ────────────────────────────────────────────────────
             if task_type == 'domain':
                 from sympy.calculus.util import continuous_domain
-                res = continuous_domain(*args)
+                from sympy import Symbol
+                f, x, search_set = args
 
+                raw_domain = continuous_domain(f, x, search_set)
+
+                # Post-process: expand if SymPy only found one trig period
+                expanded, was_expanded = _expand_periodic_domain_w(f, x, raw_domain)
+                res = expanded
+
+            # ── range ─────────────────────────────────────────────────────
             elif task_type == 'range':
                 from sympy.calculus.util import function_range
-                res = function_range(*args)
+                # function_range works best on a single-connected domain;
+                # for a Union domain we compute per-component and union results.
+                from sympy import Union as SymUnion, S, EmptySet
+                f, x, domain = args
 
+                if isinstance(domain, SymUnion):
+                    sub_ranges = []
+                    for comp in domain.args:
+                        try:
+                            sr = function_range(f, x, comp)
+                            if sr not in (None, EmptySet):
+                                sub_ranges.append(sr)
+                        except Exception:
+                            pass
+                    res = SymUnion(*sub_ranges) if sub_ranges else None
+                else:
+                    res = function_range(f, x, domain)
+
+            # ── composited_range ──────────────────────────────────────────
+            elif task_type == 'composited_range':
+                from sympy.calculus.util import function_range
+                from sympy import Dummy, FiniteSet, S
+                
+                def _composited_range_recursive(expr, var, dom):
+                    if expr == var:
+                        return dom
+                    if expr.is_number:
+                        return FiniteSet(expr)
+                    if expr.count(var) != 1:
+                        return None
+                    try:
+                        if hasattr(expr, '__call__') and not hasattr(expr, 'args'):
+                            return None
+                        arg = next(a for a in expr.args if a.has(var))
+                        inner_dom = _composited_range_recursive(arg, var, dom)
+                        if inner_dom is None or inner_dom == S.EmptySet:
+                            return None
+                        dummy = Dummy('u', real=True)
+                        outer_expr = expr.subs(arg, dummy)
+                        return function_range(outer_expr, dummy, inner_dom)
+                    except Exception:
+                        return None
+
+                f, x, domain = args
+                res = _composited_range_recursive(f, x, domain)
+
+            # ── min/max ───────────────────────────────────────────────────
             elif task_type == 'min_max':
                 from sympy.calculus.util import minimum, maximum
                 from sympy import S
@@ -181,18 +443,18 @@ def worker_loop(q_in, q_out):
                 mx = maximum(f, x, search_dom)
                 res = (mn, mx)
 
+            # ── limit analysis ────────────────────────────────────────────
             elif task_type == 'limit':
                 f, x, domain = args
                 res = _analyze_function_behavior_standalone(f, x, domain)
 
+            # ── solveset_empty ────────────────────────────────────────────
             elif task_type == 'solveset_empty':
                 from sympy import solveset, S, EmptySet, nsimplify
                 from sympy.sets.conditionset import ConditionSet
                 f, x, val, domain = args
                 search_dom = domain if domain.is_subset(S.Reals) else S.Reals
                 try:
-                    # Convert float values to exact rationals/constants to avoid
-                    # solveset hangs or EmptySet false positives with floats.
                     if getattr(val, 'is_Float', False) or isinstance(val, float):
                         val_exact = nsimplify(val, rational=True)
                     else:
@@ -206,6 +468,11 @@ def worker_loop(q_in, q_out):
                         res = False
                 except Exception:
                     res = 'unknown'
+
+            # ── integer_check (optional explicit task) ────────────────────
+            elif task_type == 'integer_check':
+                f, = args
+                res = _has_integer_valued_output_w(f)
 
             else:
                 res = None
