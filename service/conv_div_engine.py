@@ -7,20 +7,53 @@ from sympy.series.limitseq import limit_seq
 # Initialize Colorama
 init(autoreset=True)
 
-def fast_limit(expr, n):
-    """Bypasses slow limit_seq unless factorials or discrete alternations are detected."""
-    if expr.has(sp.factorial) or expr.has(sp.gamma) or expr.has((-1)**n):
+def apply_stirling(expr):
+    """
+    Replaces factorials with Stirling's continuous asymptotic approximation.
+    n! ≈ sqrt(2*pi*n) * (n/e)^n
+    This radically speeds up sequences at infinity compared to discrete logic.
+    """
+    return expr.replace(
+        sp.factorial, 
+        lambda arg: sp.sqrt(2 * sp.pi * arg) * (arg / sp.E)**arg
+    )
+
+def fast_limit(expr, n, use_stirling=True):
+    """Bypasses slow limit_seq utilizing Stirling's approximation."""
+    if use_stirling and expr.has(sp.factorial):
+        try:
+            stirling_expr = apply_stirling(expr)
+            L = limit(stirling_expr, n, oo)
+            if L is not None and not L.has(sp.Limit): 
+                return L
+        except Exception: 
+            pass
+
+    # Fallback to limit_seq for exact sequence methods or discrete alternations
+    if expr.has(sp.gamma) or expr.has((-1)**n):
         try:
             L = limit_seq(expr, n)
-            if L is not None and not L.has(sp.Limit): return L
-        except Exception: pass
+            if L is not None and not L.has(sp.Limit): 
+                return L
+        except Exception: 
+            pass
+
     try:
         return limit(expr, n, oo)
     except Exception:
         return None
 
 def check_sequence_convergence(expr, n):
-    L = fast_limit(expr, n)
+    # PRE-OPTIMIZATION: Try to instantly reduce exact factorial ratios first
+    if expr.has(sp.factorial):
+        try:
+            simplified = sp.cancel(sp.combsimp(expr))
+            if not simplified.has(sp.factorial):
+                expr = simplified
+        except Exception:
+            pass
+            
+    L = fast_limit(expr, n, use_stirling=True)
     if L is None or L.has(sp.Limit):
         return None, "Undetermined"
         
@@ -33,35 +66,79 @@ def check_sequence_convergence(expr, n):
 
 def check_series_convergence(expr, n, start_idx=1):
     try:
-        abs_n = sp.cancel(expr.subs((-1)**n, 1).subs((-1)**(n+1), 1).subs((-1)**(n-1), 1))
+        # 1. OPTIMIZED ABS_N EXTRACTION (Dictionary sub avoids heavy expansion delays)
+        abs_n = expr.subs({(-1)**n: 1, (-1)**(n+1): 1, (-1)**(n-1): 1})
         
-        # 1. DIVERGENCE TEST (nth-term)
-        term_limit = fast_limit(expr, n)
+        # Determine mathematical properties early to route tests intelligently
+        has_fact = expr.has(sp.factorial)
+        has_n_exp = any(isinstance(arg, sp.Pow) and arg.exp.has(n) for arg in expr.atoms(sp.Pow))
+
+        # 2. DIVERGENCE TEST (nth-term)
+        term_limit = fast_limit(expr, n, use_stirling=True)
         if term_limit is not None and not term_limit.has(sp.Limit):
             if term_limit != 0:
                 return False, f"Divergent (nth-term limit = {term_limit} != 0)"
 
-        # 2. ALTERNATING & DIRICHLET (Fast Pattern Matching)
+        # 3. ALTERNATING & DIRICHLET (Fast Pattern Matching)
         if expr.has((-1)**n) or expr.has((-1)**(n+1)) or expr.has((-1)**(n-1)):
-            if fast_limit(abs_n, n) == 0:
+            if fast_limit(abs_n, n, use_stirling=True) == 0:
                 return True, "Convergent (Conditionally via Alternating Series Test)"
                 
         if expr.has(sp.sin(n)) or expr.has(sp.cos(n)):
-            rest = expr.subs(sp.sin(n), 1).subs(sp.cos(n), 1)
-            if fast_limit(rest, n) == 0:
+            rest = expr.subs({sp.sin(n): 1, sp.cos(n): 1})
+            if fast_limit(rest, n, use_stirling=True) == 0:
                 return True, "Convergent (Conditionally via Dirichlet Test)"
 
-        # 3. HARMONIC LIMIT COMPARISON TEST (Super Fast Divergence Catcher)
-        lct_limit = fast_limit(sp.cancel(abs_n * n), n)
-        if lct_limit is not None and not lct_limit.has(sp.Limit):
-            if lct_limit == oo or (lct_limit.is_number and lct_limit > 0):
-                return False, f"Divergent (Harmonic Limit Comparison L = {lct_limit})"
+        # 4. ROOT TEST (Fast-tracked explicitly for n-exponents via Log Trick)
+        if has_n_exp and not has_fact:
+            # Logarithmic root test completely bypasses fraction symbolic exponentiation issues
+            log_root_expr = sp.log(abs_n) / n
+            log_root_limit = fast_limit(log_root_expr, n, use_stirling=True)
+            if log_root_limit is not None and log_root_limit.is_number and not log_root_limit.has(sp.Limit):
+                root_limit = sp.exp(log_root_limit)
+                if root_limit < 1: return True, f"Convergent (Root L = {root_limit})"
+                if root_limit > 1: return False, f"Divergent (Root L = {root_limit})"
 
-        # 4. ASYMPTOTIC LIMIT COMPARISON (Taylor Engine - Skipped for factorials)
-        if not expr.has(sp.factorial):
+        # 5. RATIO & GAUSS'S TEST (Fast-tracked exclusively for Factorials)
+        if has_fact:
+            abs_next = abs_n.subs(n, n+1)
+            # Combsimp reduces heavy factorials instantly and exactly
+            ratio_expr = sp.cancel(sp.combsimp(abs_next / abs_n))
+            
+            # Exact algebra simplifies factorials, NO Stirling here to avoid precision loss on L=1
+            ratio_limit = fast_limit(ratio_expr, n, use_stirling=False)
+            if ratio_limit is not None and ratio_limit.is_number and not ratio_limit.has(sp.Limit):
+                if ratio_limit < 1: return True, f"Convergent (Ratio L = {ratio_limit})"
+                if ratio_limit > 1: return False, f"Divergent (Ratio L = {ratio_limit})"
+                
+                # GAUSS'S TEST (Evaluate the h-index explicitly)
+                if ratio_limit == 1:
+                    inv_ratio = sp.cancel(1 / ratio_expr)
+                    h_expr = sp.cancel(n * (inv_ratio - 1))
+                    h_limit = fast_limit(h_expr, n, use_stirling=False)
+                    
+                    if h_limit is not None and h_limit.is_number and not h_limit.has(sp.Limit):
+                        if h_limit > 1: return True, f"Convergent (Gauss's h = {h_limit} > 1)"
+                        if h_limit < 1: return False, f"Divergent (Gauss's h = {h_limit} < 1)"
+                        if h_limit == 1 and not ratio_expr.has(sp.log):
+                            return False, f"Divergent (Gauss's Test h = 1)"
+            
+            # CRITICAL LCT OPTIMIZATION: LCT always hangs on factorial limit bounds. 
+            # If it has factorials, LCT is useless. Skip routing it entirely.
+
+        # 6. HARMONIC LIMIT COMPARISON TEST (Executed only for standard algebra)
+        if not has_fact:
+            lct_limit = fast_limit(sp.cancel(abs_n * n), n, use_stirling=True)
+            if lct_limit is not None and not lct_limit.has(sp.Limit):
+                if lct_limit == oo or (lct_limit.is_number and lct_limit > 0):
+                    return False, f"Divergent (Harmonic Limit Comparison L = {lct_limit})"
+
+        # 7. ASYMPTOTIC LIMIT COMPARISON (Taylor Engine)
+        if not has_fact:
             try:
                 x = sp.Symbol('x', positive=True)
-                expr_x = sp.cancel(abs_n.subs(sp.sin(n), 1).subs(sp.cos(n), 1).subs(n, 1/x))
+                # Dictionary substitution prevents heavy re-evaluation 
+                expr_x = abs_n.subs({sp.sin(n): 1, sp.cos(n): 1, n: 1/x})
                 c, p = expr_x.leadterm(x)
                 
                 if p.is_number and not c.has(sp.log):
@@ -70,49 +147,16 @@ def check_series_convergence(expr, n, start_idx=1):
             except Exception:
                 pass
 
-        # Detect characteristics for execution priority
-        has_fact = expr.has(sp.factorial)
-        has_n_exp = any(isinstance(arg, sp.Pow) and arg.exp.has(n) for arg in expr.atoms(sp.Pow))
-
-        # 5. ROOT TEST (Executed FIRST if n is in the exponent)
-        if has_n_exp and not has_fact:
-            root_limit = fast_limit(sp.Pow(abs_n, 1/n), n)
-            if root_limit is not None and root_limit.is_number and not root_limit.has(sp.Limit):
+        # 8. FALLBACK ROOT TEST (If limits got messy up top)
+        if not has_n_exp and not has_fact:
+            log_root_expr = sp.log(abs_n) / n
+            log_root_limit = fast_limit(log_root_expr, n, use_stirling=True)
+            if log_root_limit is not None and log_root_limit.is_number and not log_root_limit.has(sp.Limit):
+                root_limit = sp.exp(log_root_limit)
                 if root_limit < 1: return True, f"Convergent (Root L = {root_limit})"
                 if root_limit > 1: return False, f"Divergent (Root L = {root_limit})"
 
-        # 6. FAST RATIO TEST & GAUSS'S TEST
-        if has_fact or has_n_exp:
-            abs_next = abs_n.subs(n, n+1)
-            # MAGIC WAND: combsimp reduces heavy factorials instantly before limiting
-            ratio_expr = sp.cancel(sp.combsimp(abs_next / abs_n))
-            
-            ratio_limit = fast_limit(ratio_expr, n)
-            if ratio_limit is not None and ratio_limit.is_number and not ratio_limit.has(sp.Limit):
-                if ratio_limit < 1: return True, f"Convergent (Ratio L = {ratio_limit})"
-                if ratio_limit > 1: return False, f"Divergent (Ratio L = {ratio_limit})"
-                
-                # GAUSS'S TEST (If Ratio == 1, evaluate the h-index directly)
-                if ratio_limit == 1:
-                    inv_ratio = sp.cancel(1 / ratio_expr)
-                    h_expr = sp.cancel(n * (inv_ratio - 1))
-                    h_limit = fast_limit(h_expr, n)
-                    
-                    if h_limit is not None and h_limit.is_number and not h_limit.has(sp.Limit):
-                        if h_limit > 1: return True, f"Convergent (Gauss's h = {h_limit} > 1)"
-                        if h_limit < 1: return False, f"Divergent (Gauss's h = {h_limit} < 1)"
-                        # If Gauss's h-index is exactly 1 for factorial-based functions, it diverges!
-                        if h_limit == 1 and not ratio_expr.has(sp.log):
-                            return False, f"Divergent (Gauss's Test h = 1)"
-
-        # 7. ROOT TEST (Executed LAST if not triggered above)
-        if not has_n_exp:
-            root_limit = fast_limit(sp.Pow(abs_n, 1/n), n)
-            if root_limit is not None and root_limit.is_number and not root_limit.has(sp.Limit):
-                if root_limit < 1: return True, f"Convergent (Root L = {root_limit})"
-                if root_limit > 1: return False, f"Divergent (Root L = {root_limit})"
-
-        # 8. FINAL FALLBACK: Built-in SymPy Is_Convergent (Slowest)
+        # 9. FINAL FALLBACK: Built-in SymPy Integrals/Summations (Slowest)
         try:
             S = Sum(expr, (n, start_idx, oo))
             is_conv = S.is_convergent()
@@ -184,7 +228,7 @@ def main():
     ]
 
     print(f"{Fore.CYAN}{Style.BRIGHT}{'='*115}")
-    print(f"{Fore.CYAN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v3.0 - SEQUENCE CONVERGENCE TESTS':^115}")
+    print(f"{Fore.CYAN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v4.0 - SEQUENCE CONVERGENCE TESTS':^115}")
     print(f"{Fore.CYAN}{Style.BRIGHT}{'='*115}")
     print(f"{'No.':<3} | {'Description':<38} | {'Result':<10} | {'Time (ms)':<9} | {'Details'}")
     print("-" * 115)
@@ -201,7 +245,7 @@ def main():
         print(f"{i:<3} | {desc:<38} | {res_str} | {elapsed_ms:>6.1f} ms | {reason}")
 
     print(f"\n{Fore.MAGENTA}{Style.BRIGHT}{'='*115}")
-    print(f"{Fore.MAGENTA}{Style.BRIGHT}{'BRUTAL MATH ENGINE v3.0 - SERIES CONVERGENCE TESTS':^115}")
+    print(f"{Fore.MAGENTA}{Style.BRIGHT}{'BRUTAL MATH ENGINE v4.0 - SERIES CONVERGENCE TESTS':^115}")
     print(f"{Fore.MAGENTA}{Style.BRIGHT}{'='*115}")
     print(f"{'No.':<3} | {'Description':<38} | {'Result':<10} | {'Time (ms)':<9} | {'Details'}")
     print("-" * 115)
