@@ -1505,138 +1505,24 @@ def second_main():
 
 
 def check_power_series(expr, n, x):
+    from power_series_engine import analyze_power_series
+
     prof = Profiler()
+    prof.start("Power-Series-Engine")
 
-    # ── Prefer Root Test Heuristic ──────────────────────────────────
-    has_fact = expr.has(sp.factorial) or expr.has(sp.gamma) or expr.has(sp.binomial)
-    prefer_root = False
-    if not has_fact:
-        for p in expr.atoms(sp.Pow):
-            if p.exp.has(n) and (p.base.has(n) or p.exp != n):
-                prefer_root = True
-                break
+    res = analyze_power_series(expr, n, x)
 
-    L = sp.nan
+    prof.stop("Power-Series-Engine")
 
-    def do_ratio_test():
-        prof.start("Power-Ratio-Test")
-        try:
-            if has_fact:
-                ratio_expr = sp.cancel(sp.combsimp(expr.subs(n, n + 1) / expr))
-            else:
-                ratio_expr = sp.cancel(expr.subs(n, n + 1) / expr)
+    if "error" in res:
+        return False, res["error"], prof.get_log_string(), None
 
-            abs_ratio = sp.Abs(ratio_expr)
-            ratio_limit = super_fast_limit(abs_ratio, n, prof)
-
-            # Log-based approach fallback
-            if ratio_limit is sp.nan or (
-                ratio_limit is not None
-                and (ratio_limit.has(sp.AccumBounds) or ratio_limit.has(sp.Limit))
-            ):
-                log_ratio = sp.expand_log(sp.log(abs_ratio), force=True)
-                log_L = super_fast_limit(log_ratio, n, prof)
-                if log_L is not None and not log_L.has(sp.Limit):
-                    ratio_limit = sp.exp(log_L)
-
-        except Exception:
-            ratio_limit = sp.nan
-        prof.stop("Power-Ratio-Test")
-        return ratio_limit
-
-    def do_root_test():
-        prof.start("Power-Root-Test")
-        try:
-            abs_n = sp.Abs(expr)
-            log_expr = sp.cancel(sp.expand_log(sp.log(abs_n), force=True) / n)
-            log_L = super_fast_limit(log_expr, n, prof)
-            if log_L is not None and not log_L.has(sp.Limit):
-                root_limit = sp.exp(log_L)
-            else:
-                root_limit = sp.nan
-        except Exception:
-            root_limit = sp.nan
-        prof.stop("Power-Root-Test")
-        return root_limit
-
-    if prefer_root:
-        L = do_root_test()
-        if L is None or L is sp.nan or L.has(sp.AccumBounds) or L.has(sp.Limit):
-            L = do_ratio_test()
-    else:
-        L = do_ratio_test()
-        if L is None or L is sp.nan or L.has(sp.AccumBounds) or L.has(sp.Limit):
-            L = do_root_test()
-
-    if L is sp.nan or L is None or (hasattr(L, "has") and L.has(sp.Limit)):
-        return (
-            False,
-            "Could not compute symbolic limit for power series.",
-            prof.get_log_string(),
-            None,
-        )
-
-    # Clean up L (like x*sign(x) -> Abs(x))
-    if hasattr(L, "has") and L.has(sp.sign):
-        L = L.replace(sp.sign, lambda arg: sp.Abs(arg) / arg)
-        L = sp.simplify(L)
-
-    if L == 0:
-        return (
-            True,
-            "Absolutely Convergent for all x",
-            prof.get_log_string(),
-            {"radius": sp.oo, "interval": "(-oo, oo)"},
-        )
-    elif L == sp.oo or (hasattr(L, "has") and L.has(sp.oo)):
-        try:
-            term_1 = expr.subs(n, 1)
-            roots = sp.solve(term_1, x)
-            center = roots[0] if roots else 0
-        except Exception:
-            center = 0
-        return (
-            True,
-            f"Converges only at center x={center}",
-            prof.get_log_string(),
-            {"radius": 0, "interval": f"[{center}, {center}]"},
-        )
-
-    try:
-        prof.start("Solve-Inequality")
-        convergence_domain = solve_univariate_inequality(L < 1, x, relational=False)
-        prof.stop("Solve-Inequality")
-
-        if isinstance(convergence_domain, sp.Interval):
-            a, b = convergence_domain.start, convergence_domain.end
-            radius = sp.simplify((b - a) / 2)
-
-            prof.start("Endpoint-Left")
-            left_expr = expr.subs(x, a)
-            left_res, left_reason, _ = check_series_convergence(left_expr, n)
-            prof.stop("Endpoint-Left")
-
-            prof.start("Endpoint-Right")
-            right_expr = expr.subs(x, b)
-            right_res, right_reason, _ = check_series_convergence(right_expr, n)
-            prof.stop("Endpoint-Right")
-
-            l_bracket = "[" if left_res else "("
-            r_bracket = "]" if right_res else ")"
-            interval_str = f"{l_bracket}{a}, {b}{r_bracket}"
-
-            details = {"radius": radius, "interval": interval_str}
-            return True, f"R={radius}, I={interval_str}", prof.get_log_string(), details
-        else:
-            return (
-                False,
-                f"Could not parse interval domain: {convergence_domain}",
-                prof.get_log_string(),
-                None,
-            )
-
-    except Exception as e:
-        return False, f"Failed inequality solve: {e}", prof.get_log_string(), None
+    return (
+        True,
+        f"R={res.get('radius')}, I={res.get('interval', res.get('interval_symbolic'))}",
+        prof.get_log_string(),
+        res,
+    )
 
 
 def power_series_main():
