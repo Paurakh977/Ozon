@@ -112,7 +112,6 @@ def super_fast_limit(expr, n, prof):
         try:
             s_expr = apply_stirling(expr)
             
-            # Direct limit fixes hanging on fractional exponential blocks (Seq 7, Ser 9)
             L_direct = sp.limit(s_expr, n, sp.oo)
             if L_direct is not None and not L_direct.has(sp.Limit):
                 prof.stop('Stirling-Log')
@@ -180,7 +179,7 @@ def check_sequence_convergence(expr, n):
                     inv_ratio = sp.cancel(1 / ratio_expr)
                     x = sp.Symbol('x', positive=True)
                     c, p = (inv_ratio.subs(n, 1/x) - 1).leadterm(x)
-                    if p == 1:
+                    if p == 1 and not c.has(x):
                         h = sp.limit(c, x, 0)
                         prof.stop('Seq-Ratio-Test')
                         if h > 0: return True, f"Converges to 0 (Asymp Ratio h={h} > 0)", prof.get_log_string()
@@ -211,6 +210,7 @@ def check_sequence_convergence(expr, n):
     if L.is_finite and L.is_real: return True, f"Converges to {L}", prof.get_log_string()
     return False, f"Diverges to {L}", prof.get_log_string()
 
+
 def check_series_convergence(expr, n, start_idx=1):
     prof = Profiler()
     try:
@@ -238,16 +238,30 @@ def check_series_convergence(expr, n, start_idx=1):
                 expr_x = abs_n.subs(n, 1/x)
                 c, p = expr_x.leadterm(x)
                 if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
-                    if p > 1: 
-                        prof.stop('Asymp-p-test')
-                        return True, f"Absolutely Convergent (Asymptotic p={p} > 1)", prof.get_log_string()
-                    elif not is_oscillatory: 
-                        if p < 1: 
+                    if not c.has(x):
+                        if p > 1: 
                             prof.stop('Asymp-p-test')
-                            return False, f"Divergent (Asymptotic p={p} < 1)", prof.get_log_string()
-                        if p == 1 and not c.has(sp.log): 
+                            return True, f"Absolutely Convergent (Asymptotic p={p} > 1)", prof.get_log_string()
+                        elif not is_oscillatory: 
+                            if p < 1: 
+                                prof.stop('Asymp-p-test')
+                                return False, f"Divergent (Asymptotic p={p} < 1)", prof.get_log_string()
+                            if p == 1: 
+                                prof.stop('Asymp-p-test')
+                                return False, f"Divergent (Asymptotic Harmonic p=1)", prof.get_log_string()
+                    else:
+                        # Mixed log-polynomial term (e.g., ln(n)/n^(3/2))
+                        # Mathematically shift p by an epsilon margin to rigorously force Generalized Limit Comparison
+                        if p > 1:
+                            p_prime = (1 + p) / 2
                             prof.stop('Asymp-p-test')
-                            return False, f"Divergent (Asymptotic Harmonic p=1)", prof.get_log_string()
+                            return True, f"Absolutely Convergent (Asymp p'={p_prime} > 1)", prof.get_log_string()
+                        elif not is_oscillatory:
+                            if p < 1:
+                                p_prime = (1 + p) / 2
+                                prof.stop('Asymp-p-test')
+                                return False, f"Divergent (Asymp p'={p_prime} < 1)", prof.get_log_string()
+                            # If p == 1, fall through safely to Cauchy/Log-Asymp tests
             except Exception: pass
         prof.stop('Asymp-p-test')
 
@@ -279,16 +293,27 @@ def check_series_convergence(expr, n, start_idx=1):
                     expr_x = current_term.subs(n, 1/x)
                     c, p = expr_x.leadterm(x)
                     if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
-                        if p > 1: 
-                            prof.stop('Cauchy-Condensation')
-                            return True, f"Absolutely Convergent (Condensation L{i} p={p} > 1)", prof.get_log_string()
-                        elif not is_oscillatory:
-                            if p < 1: 
+                        if not c.has(x):
+                            if p > 1: 
                                 prof.stop('Cauchy-Condensation')
-                                return False, f"Divergent (Condensation L{i} p={p} < 1)", prof.get_log_string()
-                            if p == 1 and not c.has(sp.log): 
+                                return True, f"Absolutely Convergent (Condensation L{i} p={p} > 1)", prof.get_log_string()
+                            elif not is_oscillatory:
+                                if p < 1: 
+                                    prof.stop('Cauchy-Condensation')
+                                    return False, f"Divergent (Condensation L{i} p={p} < 1)", prof.get_log_string()
+                                if p == 1: 
+                                    prof.stop('Cauchy-Condensation')
+                                    return False, f"Divergent (Condensation L{i} p=1)", prof.get_log_string()
+                        else:
+                            if p > 1:
+                                p_prime = (1 + p) / 2
                                 prof.stop('Cauchy-Condensation')
-                                return False, f"Divergent (Condensation L{i} p=1)", prof.get_log_string()
+                                return True, f"Absolutely Convergent (Condensation L{i} p'={p_prime} > 1)", prof.get_log_string()
+                            elif not is_oscillatory:
+                                if p < 1:
+                                    p_prime = (1 + p) / 2
+                                    prof.stop('Cauchy-Condensation')
+                                    return False, f"Divergent (Condensation L{i} p'={p_prime} < 1)", prof.get_log_string()
                 except Exception: pass
         prof.stop('Cauchy-Condensation')
 
@@ -311,14 +336,15 @@ def check_series_convergence(expr, n, start_idx=1):
                     try:
                         c, p = (inv_ratio.subs(n, 1/x) - 1).leadterm(x)
                         if p == 1:
-                            h = sp.limit(c, x, 0)
-                            prof.stop('Ratio-Test')
-                            if h > 1: return True, f"Absolutely Convergent (Gauss/Raabe h={h} > 1)", prof.get_log_string()
-                            if h <= 1: return False, f"Divergent (Gauss/Raabe h={h} <= 1)", prof.get_log_string()
-                        elif p < 1 and p.is_number:
+                            if not c.has(x):
+                                h = sp.limit(c, x, 0)
+                                prof.stop('Ratio-Test')
+                                if h > 1: return True, f"Absolutely Convergent (Gauss/Raabe h={h} > 1)", prof.get_log_string()
+                                if h <= 1: return False, f"Divergent (Gauss/Raabe h={h} <= 1)", prof.get_log_string()
+                        elif p < 1 and p.is_number and not c.has(x):
                             prof.stop('Ratio-Test')
                             return False, f"Divergent (Gauss/Raabe p={p} < 1)", prof.get_log_string()
-                        elif p > 1 and p.is_number:
+                        elif p > 1 and p.is_number and not c.has(x):
                             prof.stop('Ratio-Test')
                             return False, f"Divergent (Gauss/Raabe h=0 <= 1)", prof.get_log_string()
                     except Exception: pass
@@ -332,13 +358,24 @@ def check_series_convergence(expr, n, start_idx=1):
                 x = sp.Symbol('x', positive=True)
                 c, p = stirling_term.subs(n, 1/x).leadterm(x)
                 if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
-                    if p > 1: 
-                        prof.stop('Asymp-Stirling')
-                        return True, f"Absolutely Convergent (Stirling ~ 1/n^{p})", prof.get_log_string()
-                    elif not is_oscillatory:
-                        if p <= 1: 
+                    if not c.has(x):
+                        if p > 1: 
                             prof.stop('Asymp-Stirling')
-                            return False, f"Divergent (Stirling ~ 1/n^{p})", prof.get_log_string()
+                            return True, f"Absolutely Convergent (Stirling ~ 1/n^{p})", prof.get_log_string()
+                        elif not is_oscillatory:
+                            if p <= 1: 
+                                prof.stop('Asymp-Stirling')
+                                return False, f"Divergent (Stirling ~ 1/n^{p})", prof.get_log_string()
+                    else:
+                        if p > 1:
+                            p_prime = (1 + p) / 2
+                            prof.stop('Asymp-Stirling')
+                            return True, f"Absolutely Convergent (Stirling p'={p_prime} > 1)", prof.get_log_string()
+                        elif not is_oscillatory:
+                            if p < 1:
+                                p_prime = (1 + p) / 2
+                                prof.stop('Asymp-Stirling')
+                                return False, f"Divergent (Stirling p'={p_prime} < 1)", prof.get_log_string()
             except Exception: pass
         prof.stop('Asymp-Stirling')
 
@@ -472,7 +509,6 @@ def main():
     print(f"{Fore.YELLOW}{Style.BRIGHT}GRAND TOTAL COMPUTE TIME   : {(total_seq_time + total_ser_time):.1f} ms")
     print("="*155)
 
-
 def second_main():
     n = sp.Symbol('n', integer=True, positive=True)
 
@@ -557,7 +593,6 @@ def second_main():
     print(f"{Fore.YELLOW}{Style.BRIGHT}TOTAL SERIES ENGINE TIME   : {total_ser_time:.1f} ms")
     print(f"{Fore.YELLOW}{Style.BRIGHT}GRAND TOTAL COMPUTE TIME   : {(total_seq_time + total_ser_time):.1f} ms")
     print("=" * 155)
-
 
 if __name__ == "__main__":
     sp.init_printing(use_unicode=True)
