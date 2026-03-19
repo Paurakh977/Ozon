@@ -50,6 +50,9 @@ class FunctionAnalysisEngine:
         E.g. (x^3-x)/(x^2-1) → x   (holes handled via separately-stored domain)
         Also tries powsimp for expressions like x^(2/3) * x^(1/3) etc.
         """
+        # First convert odd fractional powers to real_root for proper real analysis
+        expr = self._convert_to_real_roots(expr)
+
         try:
             cancelled = sp.cancel(expr)
             if cancelled != expr:
@@ -61,6 +64,33 @@ class FunctionAnalysisEngine:
             simplified = sp.powsimp(expr, force=True)
             if simplified != expr:
                 return simplified
+        except Exception:
+            pass
+        return expr
+
+    def _convert_to_real_roots(self, expr):
+        """
+        Convert x^(1/n) for odd n to real_root(x, n) for proper real analysis.
+        This ensures cube roots, fifth roots, etc. give real values for negative x.
+        E.g., x^(1/3) → real_root(x, 3) so that (-8)^(1/3) = -2, not complex.
+        """
+        try:
+            # Find all Pow atoms that are fractional with x as base
+            for atom in expr.atoms(sp.Pow):
+                base, exp = atom.as_base_exp()
+                if base == self.x or (base.has(self.x) and base.is_polynomial(self.x)):
+                    # Check if exponent is 1/n for odd n
+                    if isinstance(exp, sp.Rational) and exp.p == 1 and exp.q % 2 == 1:
+                        n = exp.q
+                        real_root_expr = sp.real_root(base, n)
+                        expr = expr.subs(atom, real_root_expr)
+                    # Also handle m/n where n is odd (e.g., x^(2/3) = (x^(1/3))^2)
+                    elif isinstance(exp, sp.Rational) and exp.q % 2 == 1 and exp.q > 1:
+                        n = exp.q
+                        m = exp.p
+                        # x^(m/n) = real_root(x, n)^m for odd n
+                        real_root_expr = sp.real_root(base, n) ** m
+                        expr = expr.subs(atom, real_root_expr)
         except Exception:
             pass
         return expr
@@ -85,6 +115,39 @@ class FunctionAnalysisEngine:
             return None
         except Exception:
             return None
+
+    def _has_infinite_oscillation(self, expr):
+        """
+        Detect if an expression has infinite oscillation (trig functions multiplied
+        by unbounded terms like x, x^2, etc.). Such functions have infinitely many
+        critical points that can't be solved in closed form.
+        """
+        # Check for trig functions
+        has_trig = expr.has(sp.sin, sp.cos, sp.tan, sp.cot, sp.sec, sp.csc)
+        if not has_trig:
+            return False
+        # Check if there's a polynomial factor that grows unboundedly
+        # e.g., x*sin(x), x^2*cos(x), sin(x)/x
+        atoms = expr.atoms(sp.Symbol)
+        for atom in atoms:
+            if atom.name == 'x':
+                # Check if x appears outside trig functions in a multiplicative way
+                # Heuristic: if the expression is NOT periodic, but contains trig, it oscillates
+                try:
+                    period = periodicity(expr, self.x)
+                    if period is None:
+                        return True
+                except:
+                    return True
+        return False
+
+    def _roots_are_incomplete(self, root_set):
+        """Check if root finding returned incomplete results (ConditionSet)."""
+        if isinstance(root_set, sp.ConditionSet):
+            return True
+        if isinstance(root_set, (sp.Union, sp.Intersection, sp.Complement)):
+            return any(self._roots_are_incomplete(arg) for arg in root_set.args)
+        return False
 
     # ─────────────────────────────────────────────────────────────
     # Domain helpers
@@ -367,21 +430,36 @@ class FunctionAnalysisEngine:
                     right_val = self._safe_eval(f_prime, cp_val + eps) if right_in else None
                     y_val = sp.simplify(expr.subs(self.x, cp))
 
+                    # FIX: If derivative is undefined on one side but the function IS defined
+                    # (cusp points like x=0 for x^(1/3)), this is NOT necessarily an extremum.
+                    # Only count as extremum if there's a genuine sign change.
+
                     if left_val is not None and right_val is not None:
+                        # Both sides defined - check for sign change
                         if left_val < -1e-7 and right_val > 1e-7:
                             extrema['minima'].append((sp.simplify(cp), y_val))
                         elif left_val > 1e-7 and right_val < -1e-7:
                             extrema['maxima'].append((sp.simplify(cp), y_val))
-                    elif left_val is None and right_val is not None:   # Left endpoint
-                        if right_val > 1e-7:
-                            extrema['minima'].append((sp.simplify(cp), y_val))
-                        elif right_val < -1e-7:
-                            extrema['maxima'].append((sp.simplify(cp), y_val))
-                    elif left_val is not None and right_val is None:   # Right endpoint
-                        if left_val > 1e-7:
-                            extrema['maxima'].append((sp.simplify(cp), y_val))
-                        elif left_val < -1e-7:
-                            extrema['minima'].append((sp.simplify(cp), y_val))
+                        # If both same sign: not an extremum (cusp or inflection)
+                    elif left_val is None and right_val is not None:
+                        # Left endpoint OR cusp where left derivative is complex/undefined
+                        # For true endpoint: check if domain actually ends here
+                        is_true_endpoint = not self._in_domain(cp_val - 10*eps, domain)
+                        if is_true_endpoint:
+                            if right_val > 1e-7:
+                                extrema['minima'].append((sp.simplify(cp), y_val))
+                            elif right_val < -1e-7:
+                                extrema['maxima'].append((sp.simplify(cp), y_val))
+                        # If NOT a true endpoint but derivative undefined (cusp), skip
+                    elif left_val is not None and right_val is None:
+                        # Right endpoint OR cusp where right derivative is complex/undefined
+                        is_true_endpoint = not self._in_domain(cp_val + 10*eps, domain)
+                        if is_true_endpoint:
+                            if left_val > 1e-7:
+                                extrema['maxima'].append((sp.simplify(cp), y_val))
+                            elif left_val < -1e-7:
+                                extrema['minima'].append((sp.simplify(cp), y_val))
+                        # If NOT a true endpoint but derivative undefined (cusp), skip
                 except:
                     pass
         except Exception as e:
@@ -480,6 +558,23 @@ class FunctionAnalysisEngine:
                         continue   # FIX: oscillation ⇒ no oblique asymptote
                     if c.is_real and not c.is_infinite and not c.has(sp.zoo, sp.nan):
                         line = sp.simplify(m * self.x + c)
+                        # FIX: Check if the function IS the line (not just approaching it)
+                        # For Abs(x), the function equals x for x>0 and -x for x<0
+                        # These are NOT asymptotes - the function coincides with them
+                        diff = sp.simplify(expr - line)
+                        # If diff is 0 or a piecewise that's 0 in the relevant direction, skip
+                        try:
+                            if diff == 0:
+                                continue
+                            # Check if limit of diff is 0 AND diff is not identically 0 for large |x|
+                            # Test at a large value to see if function equals line
+                            test_val = 1e6 if d == sp.oo else -1e6
+                            diff_at_test = self._safe_eval(diff, test_val)
+                            if diff_at_test is not None and abs(diff_at_test) < 1e-6:
+                                # The difference is essentially 0 - function IS the line, not approaching
+                                continue
+                        except:
+                            pass
                         if line not in asymptotes['oblique']:
                             asymptotes['oblique'].append(line)
             except:
@@ -666,7 +761,8 @@ class FunctionAnalysisEngine:
     def get_periodicity(self, expr):
         """
         Try several simplification strategies before giving up.
-        Fixes sin(x)^2 which requires trigsimp or expand_trig to expose period π.
+        Also find the FUNDAMENTAL period by testing divisors.
+        E.g., sin(x)^2 has fundamental period π, not 2π.
         """
         strategies = [
             lambda e: e,
@@ -675,14 +771,36 @@ class FunctionAnalysisEngine:
             lambda e: e.rewrite(sp.cos),
             lambda e: e.rewrite(sp.sin),
         ]
+        candidate = None
         for strat in strategies:
             try:
                 p = periodicity(strat(expr), self.x)
                 if p is not None:
-                    return p
+                    candidate = p
+                    break
             except Exception:
                 pass
-        return None
+
+        if candidate is None:
+            return None
+
+        # Try to find the fundamental period by testing divisors
+        # Common divisors to try: p/2, p/3, p/4, p/6
+        fundamental = candidate
+        for divisor in [2, 3, 4, 6]:
+            try:
+                test_period = candidate / divisor
+                # Check if this is also a period: f(x + test_period) = f(x)
+                diff = sp.simplify(expr.subs(self.x, self.x + test_period) - expr)
+                if diff == 0:
+                    # Verify it's actually a valid period (not zero or negative)
+                    if test_period.is_positive:
+                        fundamental = test_period
+                        # Don't break - keep looking for smaller periods
+            except Exception:
+                pass
+
+        return fundamental
 
     def get_monotonicity(self, expr, domain, period=None):
         self._log("Calculating Monotonicity...")
@@ -703,6 +821,13 @@ class FunctionAnalysisEngine:
                     domain_f_prime = domain
 
             breaks_set = set()
+
+            # KEY FIX: Detect if we have incomplete root finding (ConditionSet)
+            # combined with infinite oscillation. In such cases, we CANNOT
+            # claim monotonicity extends to infinity.
+            has_incomplete_roots = self._roots_are_incomplete(roots)
+            has_oscillation = self._has_infinite_oscillation(expr)
+            suppress_infinity = has_incomplete_roots and has_oscillation
 
             if period is not None:
                 try:
@@ -741,7 +866,11 @@ class FunctionAnalysisEngine:
                     if abs(sorted_breaks[i][0] - unique_breaks[-1][0]) > 1e-5:
                         unique_breaks.append(sorted_breaks[i])
 
+            # FIX: Don't extend to -oo/oo if we have incomplete oscillating roots
             if period is not None and unique_breaks:
+                b_vals = [b[1] for b in unique_breaks]
+            elif suppress_infinity and unique_breaks:
+                # Don't add -oo/oo for oscillating functions with incomplete roots
                 b_vals = [b[1] for b in unique_breaks]
             else:
                 b_vals = [-sp.oo] + [b[1] for b in unique_breaks] + [sp.oo]
@@ -761,14 +890,73 @@ class FunctionAnalysisEngine:
                         val = self._safe_eval(f_prime, test_pt)
                         if val is None:
                             continue
-                        if val > 1e-7:
+                        
+                        if abs(val) < 1e-7:
+                            subbed = sp.simplify(f_prime.subs(self.x, test_pt))
+                            if subbed == 0:
+                                val = 0
+                            elif subbed > 0:
+                                val = 1
+                            elif subbed < 0:
+                                val = -1
+
+                        if val > 1e-12:
                             intervals['increasing'].append((start, end))
-                        elif val < -1e-7:
+                        elif val < -1e-12:
                             intervals['decreasing'].append((start, end))
                 except:
                     pass
+
+            # FIX: Consolidate adjacent intervals that share a boundary point in the domain
+            intervals = self._consolidate_monotonicity(intervals, domain)
+
         except Exception as e:
             self._log(f"Monotonicity calculation failed: {e}")
+        return intervals
+
+    def _consolidate_monotonicity(self, intervals, domain):
+        """
+        Consolidate adjacent monotonicity intervals that share a boundary point
+        which exists in the domain.
+        """
+        def merge_intervals(ivs):
+            if not ivs: return []
+            
+            # Sort intervals by starting point to be safe
+            sorted_ivs = []
+            for i in ivs:
+                try: 
+                    start_val = float('-inf') if i[0] == -sp.oo else float(i[0].evalf())
+                    sorted_ivs.append((start_val, i))
+                except:
+                    sorted_ivs.append((0, i))
+            sorted_ivs.sort(key=lambda x: x[0])
+            
+            merged = [sorted_ivs[0][1]]
+            for _, current in sorted_ivs[1:]:
+                prev = merged[-1]
+                # If they share a boundary (within tolerance) AND that bound is in the domain
+                try:
+                    p_end = float(prev[1].evalf()) if prev[1] != sp.oo else float('inf')
+                    c_start = float(current[0].evalf()) if current[0] != -sp.oo else float('-inf')
+                    
+                    if abs(p_end - c_start) < 1e-5:
+                        bound_pt = float(prev[1].evalf())
+                        if self._in_domain(bound_pt, domain):
+                            # Merge them
+                            merged[-1] = (prev[0], current[1])
+                            continue
+                except:
+                    # symbolic match fallback
+                    if prev[1] == current[0] and self._in_domain(prev[1], domain):
+                        merged[-1] = (prev[0], current[1])
+                        continue
+                        
+                merged.append(current)
+            return merged
+
+        intervals['increasing'] = merge_intervals(intervals['increasing'])
+        intervals['decreasing'] = merge_intervals(intervals['decreasing'])
         return intervals
 
     # ─────────────────────────────────────────────────────────────
