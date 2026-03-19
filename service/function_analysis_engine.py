@@ -6,17 +6,30 @@ from sympy.calculus.singularities import singularities
 try:
     from algo import get_sympified_expr
 except ImportError:
-    from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
-    
+    from sympy.parsing.sympy_parser import (
+        parse_expr, standard_transformations, implicit_multiplication_application
+    )
     def get_sympified_expr(user_input):
         transformations = (standard_transformations + (implicit_multiplication_application,))
         return parse_expr(user_input, transformations=transformations)
 
+
 class FunctionAnalysisEngine:
     """
-    A super robust and powerful math engine to analyze real functions.
-    Extracts Domain, Intercepts, Extrema (Maxima/Minima), Inflection Points,
-    Asymptotes (Vertical, Horizontal, Oblique), Parity, and Monotonicity.
+    Robust math engine to analyze real functions.
+    Extracts: Domain, Intercepts, Extrema, Inflection Points,
+    Asymptotes (V/H/O), Parity, Periodicity, and Monotonicity.
+
+    Fixes over v1:
+    - Pre-cancel rational expressions (performance: 12s → <1s for removable-hole rationals)
+    - Domain computed from original; simplified expression used for everything else
+    - _domain_extends_to() gates H/oblique asymptote direction checks
+    - VA filter: only check limits from sides that are actually within the domain
+    - AccumBounds fully suppressed in oblique and horizontal asymptote output
+    - _safe_eval() strips negligible imaginary parts (fixes x^(1/3) monotonicity)
+    - get_parity() numerical fallback (fixes ln(x+sqrt(x^2+1)) = arcsinh(x))
+    - get_periodicity() tries trigsimp / expand_trig / rewrite fallbacks (fixes sin^2(x))
+    - print_report() filters AccumBounds at display level as final safety net
     """
 
     def __init__(self, debug=False):
@@ -27,85 +40,110 @@ class FunctionAnalysisEngine:
         if self.debug:
             print(f"[Engine] {msg}")
 
-    def safe_solveset(self, expr, domain=sp.Reals):
+    # ─────────────────────────────────────────────────────────────
+    # Pre-processing
+    # ─────────────────────────────────────────────────────────────
+
+    def _preprocess_expr(self, expr):
+        """
+        Cancel rational expressions to avoid redundant symbolic work.
+        E.g. (x^3-x)/(x^2-1) → x   (holes handled via separately-stored domain)
+        Also tries powsimp for expressions like x^(2/3) * x^(1/3) etc.
+        """
         try:
-            return sp.solveset(expr, self.x, domain=domain)
-        except Exception as e:
-            self._log(f"Error solving {expr}: {e}")
-            return sp.EmptySet
+            cancelled = sp.cancel(expr)
+            if cancelled != expr:
+                self._log(f"Cancelled: {expr} → {cancelled}")
+                return cancelled
+        except Exception:
+            pass
+        try:
+            simplified = sp.powsimp(expr, force=True)
+            if simplified != expr:
+                return simplified
+        except Exception:
+            pass
+        return expr
+
+    # ─────────────────────────────────────────────────────────────
+    # Safe evaluation helpers
+    # ─────────────────────────────────────────────────────────────
+
+    def _safe_eval(self, expr, x_val):
+        """
+        Evaluate expr at x_val, returning a Python float.
+        Strips negligible imaginary parts — critical for x^(1/3), x^(2/3), etc.
+        Returns None if the value is truly complex or evaluation fails.
+        """
+        try:
+            val = expr.subs(self.x, x_val).evalf()
+            if val.is_real:
+                return float(val)
+            c = complex(val)
+            if abs(c.imag) < 1e-8 * (abs(c.real) + 1):
+                return c.real
+            return None
+        except Exception:
+            return None
+
+    # ─────────────────────────────────────────────────────────────
+    # Domain helpers
+    # ─────────────────────────────────────────────────────────────
+
+    def _domain_extends_to(self, domain, direction):
+        """
+        Check whether the domain has pieces extending to +∞ or -∞.
+        Used to skip asymptote checks in directions outside the domain.
+        """
+        if domain == sp.Reals:
+            return True
+        if isinstance(domain, sp.Interval):
+            return domain.end == sp.oo if direction == sp.oo else domain.start == -sp.oo
+        if isinstance(domain, sp.Union):
+            return any(self._domain_extends_to(arg, direction) for arg in domain.args)
+        if isinstance(domain, sp.Complement):
+            return self._domain_extends_to(domain.args[0], direction)
+        return False
 
     def _in_domain(self, point, domain):
-        """Check if a point is in the domain - handles both sympy and Python bools."""
         try:
-            # For numeric points, try direct evaluation first
             if isinstance(point, (int, float)):
                 point_val = float(point)
-                # Handle Complement sets specially
                 if isinstance(domain, sp.Complement):
-                    base_set = domain.args[0]
-                    excluded = domain.args[1]
-                    # Check if point is in base set
-                    in_base = self._in_domain(point_val, base_set)
-                    if not in_base:
+                    if not self._in_domain(point_val, domain.args[0]):
                         return False
-                    # Check if point is NOT in excluded set
-                    return not self._point_in_set(point_val, excluded)
-                # Handle Union
+                    return not self._point_in_set(point_val, domain.args[1])
                 elif isinstance(domain, sp.Union):
-                    for arg in domain.args:
-                        if self._in_domain(point_val, arg):
-                            return True
-                    return False
-                # Handle Interval
+                    return any(self._in_domain(point_val, arg) for arg in domain.args)
                 elif isinstance(domain, sp.Interval):
+                    lo = float(domain.start) if domain.start != -sp.oo else -float('inf')
+                    hi = float(domain.end) if domain.end != sp.oo else float('inf')
                     if domain.left_open:
-                        if point_val <= float(domain.start):
-                            return False
+                        if point_val <= lo: return False
                     else:
-                        if point_val < float(domain.start):
-                            return False
+                        if point_val < lo: return False
                     if domain.right_open:
-                        if point_val >= float(domain.end):
-                            return False
+                        if point_val >= hi: return False
                     else:
-                        if point_val > float(domain.end):
-                            return False
+                        if point_val > hi: return False
                     return True
                 elif domain == sp.Reals:
                     return True
-
             result = domain.contains(point)
-            # Handle both SymPy and Python booleans
-            if result is True or result == sp.true:
-                return True
-            if result is False or result == sp.false:
-                return False
-            # Try to simplify conditional results
+            if result is True or result == sp.true: return True
+            if result is False or result == sp.false: return False
             simplified = sp.simplify(result)
-            if simplified is True or simplified == sp.true:
-                return True
-            if simplified is False or simplified == sp.false:
-                return False
-            # If still can't determine, assume True for Reals
-            if domain == sp.Reals:
-                return True
-            return False
+            if simplified is True or simplified == sp.true: return True
+            if simplified is False or simplified == sp.false: return False
+            return domain == sp.Reals
         except Exception:
             return False
 
     def _point_in_set(self, point_val, s):
-        """Check if a numeric point is in a set (for exclusion checking)."""
         try:
             if isinstance(s, sp.FiniteSet):
-                for pt in s:
-                    try:
-                        if abs(float(pt.evalf()) - point_val) < 1e-9:
-                            return True
-                    except:
-                        pass
-                return False
+                return any(abs(float(pt.evalf()) - point_val) < 1e-9 for pt in s)
             elif isinstance(s, sp.ImageSet):
-                # For ImageSets, sample some values and check
                 lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
                 var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
                 sample_expr = lam.expr if hasattr(lam, 'expr') else lam
@@ -118,63 +156,123 @@ class FunctionAnalysisEngine:
                         pass
                 return False
             elif isinstance(s, sp.Union):
-                for arg in s.args:
-                    if self._point_in_set(point_val, arg):
-                        return True
-                return False
+                return any(self._point_in_set(point_val, arg) for arg in s.args)
             elif isinstance(s, sp.Interval):
-                start = float(s.start) if s.start != -sp.oo else -float('inf')
-                end = float(s.end) if s.end != sp.oo else float('inf')
-                if s.left_open:
-                    in_left = point_val > start
-                else:
-                    in_left = point_val >= start
-                if s.right_open:
-                    in_right = point_val < end
-                else:
-                    in_right = point_val <= end
-                return in_left and in_right
-            return False
+                lo = float(s.start) if s.start != -sp.oo else -float('inf')
+                hi = float(s.end) if s.end != sp.oo else float('inf')
+                in_l = point_val > lo if s.left_open else point_val >= lo
+                in_r = point_val < hi if s.right_open else point_val <= hi
+                return in_l and in_r
         except:
-            return False
+            pass
+        return False
+
+    # ─────────────────────────────────────────────────────────────
+    # Root/candidate extraction helpers
+    # ─────────────────────────────────────────────────────────────
 
     def _extract_real_roots(self, point_set, test_pts_set):
-        """Recursively parses all roots from complex SymPy Sets (Finite, Image, Condition, Union, Complement, Interval)"""
+        """Recursively parse all roots from complex SymPy Sets."""
         def extract(s):
             if isinstance(s, sp.FiniteSet):
                 for p in s:
-                    if getattr(p, 'is_real', True): test_pts_set.add(p)
+                    if getattr(p, 'is_real', True):
+                        test_pts_set.add(p)
             elif isinstance(s, sp.ImageSet):
                 lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
                 var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
-                # Sample few periods
                 for i in range(-5, 6):
                     try:
                         val = lam.expr.subs(var, i) if hasattr(lam, 'expr') else lam.subs(var, i)
-                        if getattr(val, 'is_real', True): test_pts_set.add(val)
-                    except: pass
+                        if getattr(val, 'is_real', True):
+                            test_pts_set.add(val)
+                    except:
+                        pass
             elif isinstance(s, sp.Interval):
                 if s.start != -sp.oo: test_pts_set.add(s.start)
-                if s.end != sp.oo: test_pts_set.add(s.end)
+                if s.end != sp.oo:   test_pts_set.add(s.end)
             elif isinstance(s, (sp.Union, sp.Intersection, sp.Complement)):
                 for arg in s.args: extract(arg)
             elif isinstance(s, sp.ConditionSet):
-                # Fallback to identify roots for transcendental mixed functions (e.g., sin(x)/x extrema)
-                expr_cond = s.condition.lhs - s.condition.rhs if isinstance(s.condition, sp.Eq) else s.condition
+                expr_cond = (s.condition.lhs - s.condition.rhs
+                             if isinstance(s.condition, sp.Eq) else s.condition)
                 found_approx = set()
-                for guess in [i/2.0 for i in range(-20, 21)]:
+                for guess in [i / 2.0 for i in range(-20, 21)]:
                     try:
                         root = sp.nsolve(expr_cond, self.x, guess)
                         if getattr(root, 'is_real', True):
                             val = float(root)
-                            if abs(val) < 1e-3:
-                                val = 0.0
+                            if abs(val) < 1e-3: val = 0.0
                             r_val = round(val, 3)
                             if r_val not in found_approx:
                                 found_approx.add(r_val)
                                 test_pts_set.add(sp.sympify(val))
-                    except: pass
+                    except:
+                        pass
         extract(point_set)
+
+    def _extract_real_roots_bounded(self, point_set, test_pts_set, lower, upper):
+        """Recursively parse roots from SymPy Sets, bounded to [lower, upper]."""
+        def extract(s):
+            if isinstance(s, sp.FiniteSet):
+                for p in s:
+                    try:
+                        p_val = float(p.evalf())
+                        if getattr(p, 'is_real', True) and lower <= p_val <= upper:
+                            test_pts_set.add(p)
+                    except:
+                        pass
+            elif isinstance(s, sp.ImageSet):
+                lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
+                var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
+                for i in range(-20, 21):
+                    try:
+                        val = lam.expr.subs(var, i) if hasattr(lam, 'expr') else lam.subs(var, i)
+                        v = float(val.evalf())
+                        if getattr(val, 'is_real', True) and lower <= v <= upper:
+                            test_pts_set.add(val)
+                    except:
+                        pass
+            elif isinstance(s, sp.Interval):
+                try:
+                    if s.start != -sp.oo and float(s.start.evalf()) >= lower:
+                        test_pts_set.add(s.start)
+                    if s.end != sp.oo and float(s.end.evalf()) <= upper:
+                        test_pts_set.add(s.end)
+                except:
+                    pass
+            elif isinstance(s, (sp.Union, sp.Intersection, sp.Complement)):
+                for arg in s.args: extract(arg)
+            elif isinstance(s, sp.ConditionSet):
+                expr_cond = (s.condition.lhs - s.condition.rhs
+                             if isinstance(s.condition, sp.Eq) else s.condition)
+                found_approx = set()
+                for guess in [i / 2.0 for i in range(-20, 21)]:
+                    if lower <= guess <= upper:
+                        try:
+                            root = sp.nsolve(expr_cond, self.x, guess)
+                            if getattr(root, 'is_real', True):
+                                val = float(root)
+                                if lower <= val <= upper:
+                                    if abs(val) < 1e-3: val = 0.0
+                                    r_val = round(val, 3)
+                                    if r_val not in found_approx:
+                                        found_approx.add(r_val)
+                                        test_pts_set.add(sp.sympify(val))
+                        except:
+                            pass
+        extract(point_set)
+
+    # ─────────────────────────────────────────────────────────────
+    # Analysis methods
+    # ─────────────────────────────────────────────────────────────
+
+    def safe_solveset(self, expr, domain=sp.Reals):
+        try:
+            return sp.solveset(expr, self.x, domain=domain)
+        except Exception as e:
+            self._log(f"Error solving {expr}: {e}")
+            return sp.EmptySet
 
     def get_domain(self, expr):
         self._log("Calculating Domain...")
@@ -186,37 +284,39 @@ class FunctionAnalysisEngine:
 
     def get_intercepts(self, expr, domain):
         self._log("Calculating Intercepts...")
-        intercepts = {'x':[], 'y': None}
-        
-        # Y-intercept: Evaluate strictly if 0 is genuinely mathematically in the Domain. No limit trickery.
+        intercepts = {'x': [], 'y': None}
+
+        # Y-intercept: only if 0 is genuinely in the domain
         try:
             if self._in_domain(0, domain):
                 y_val = expr.subs(self.x, 0)
                 if y_val.is_real and not y_val.has(sp.nan, sp.zoo, sp.I):
                     intercepts['y'] = sp.simplify(y_val)
-        except Exception: pass
-        
+        except Exception:
+            pass
+
         # X-intercepts
         try:
             x_sols = self.safe_solveset(expr)
             if isinstance(x_sols, sp.FiniteSet):
-                valid =[]
+                valid = []
                 for sol in x_sols:
                     try:
                         if sol.is_real and self._in_domain(sol, domain):
                             valid.append(sp.simplify(sol))
-                    except: pass
+                    except:
+                        pass
                 intercepts['x'] = valid
             elif not isinstance(x_sols, sp.EmptySet.__class__):
-                # For infinite periodic roots (ImageSets), mathematically intersect them against the domain!
                 clean_sols = sp.Intersection(x_sols, domain)
                 intercepts['x'] = clean_sols
-        except Exception: pass
+        except Exception:
+            pass
         return intercepts
 
     def get_extrema(self, expr, domain):
         self._log("Calculating Extrema...")
-        extrema = {'minima': [], 'maxima':[]}
+        extrema = {'minima': [], 'maxima': []}
         try:
             f_prime = sp.diff(expr, self.x)
             roots = self.safe_solveset(f_prime)
@@ -224,120 +324,123 @@ class FunctionAnalysisEngine:
                 domain_f_prime = continuous_domain(f_prime, self.x, sp.Reals)
             except Exception:
                 try:
-                    from sympy.calculus.singularities import singularities
                     sings = singularities(f_prime, self.x)
                     domain_f_prime = sp.Complement(domain, sings)
                 except:
                     domain_f_prime = domain
-                    
+
             crit_undef = sp.Complement(sp.Reals, domain_f_prime)
-            
+
             cands = set()
             self._extract_real_roots(roots, cands)
             self._extract_real_roots(crit_undef, cands)
-            
-            # Explicitly extract domain boundaries (endpoints are candidate extrema)
+
+            # Domain boundary endpoints are extrema candidates
             def extract_boundaries(s):
                 if isinstance(s, sp.Interval):
                     if s.start != -sp.oo: cands.add(s.start)
-                    if s.end != sp.oo: cands.add(s.end)
+                    if s.end != sp.oo:   cands.add(s.end)
                 elif isinstance(s, sp.Union):
                     for arg in s.args: extract_boundaries(arg)
             extract_boundaries(domain)
-            
-            unique_pts =[]
+
+            unique_pts = []
             for p in cands:
                 try:
                     if self._in_domain(p, domain):
                         p_val = float(p.evalf())
                         if not any(abs(p_val - float(up.evalf())) < 1e-5 for up in unique_pts):
                             unique_pts.append(p)
-                except: pass
-                
+                except:
+                    pass
             unique_pts.sort(key=lambda p: float(p.evalf()))
-            
+
             for cp in unique_pts:
                 cp_val = float(cp.evalf())
                 eps = 1e-5
-                
-                left_in, right_in = True, True
-                try: left_in = self._in_domain(cp_val - eps, domain)
-                except: pass
-                try: right_in = self._in_domain(cp_val + eps, domain)
-                except: pass
-                
+                left_in = self._in_domain(cp_val - eps, domain)
+                right_in = self._in_domain(cp_val + eps, domain)
+
                 try:
-                    left_val = f_prime.subs(self.x, cp_val - eps).evalf() if left_in else None
-                    right_val = f_prime.subs(self.x, cp_val + eps).evalf() if right_in else None
+                    # Use _safe_eval to handle complex-valued derivatives (e.g. x^(1/3))
+                    left_val  = self._safe_eval(f_prime, cp_val - eps) if left_in  else None
+                    right_val = self._safe_eval(f_prime, cp_val + eps) if right_in else None
                     y_val = sp.simplify(expr.subs(self.x, cp))
-                    
+
                     if left_val is not None and right_val is not None:
-                        if left_val < -1e-7 and right_val > 1e-7: extrema['minima'].append((sp.simplify(cp), y_val))
-                        elif left_val > 1e-7 and right_val < -1e-7: extrema['maxima'].append((sp.simplify(cp), y_val))
-                    elif left_val is None and right_val is not None: # Left Endpoint
-                        if right_val > 1e-7: extrema['minima'].append((sp.simplify(cp), y_val))
-                        elif right_val < -1e-7: extrema['maxima'].append((sp.simplify(cp), y_val))
-                    elif left_val is not None and right_val is None: # Right Endpoint
-                        if left_val > 1e-7: extrema['maxima'].append((sp.simplify(cp), y_val))
-                        elif left_val < -1e-7: extrema['minima'].append((sp.simplify(cp), y_val))
-                except: pass
+                        if left_val < -1e-7 and right_val > 1e-7:
+                            extrema['minima'].append((sp.simplify(cp), y_val))
+                        elif left_val > 1e-7 and right_val < -1e-7:
+                            extrema['maxima'].append((sp.simplify(cp), y_val))
+                    elif left_val is None and right_val is not None:   # Left endpoint
+                        if right_val > 1e-7:
+                            extrema['minima'].append((sp.simplify(cp), y_val))
+                        elif right_val < -1e-7:
+                            extrema['maxima'].append((sp.simplify(cp), y_val))
+                    elif left_val is not None and right_val is None:   # Right endpoint
+                        if left_val > 1e-7:
+                            extrema['maxima'].append((sp.simplify(cp), y_val))
+                        elif left_val < -1e-7:
+                            extrema['minima'].append((sp.simplify(cp), y_val))
+                except:
+                    pass
         except Exception as e:
             self._log(f"Extrema calculation failed: {e}")
         return extrema
 
     def get_inflection_points(self, expr, domain):
         self._log("Calculating Inflection Points...")
-        inflections =[]
+        inflections = []
         try:
             f_prime = sp.diff(expr, self.x)
-            f_dp = sp.diff(f_prime, self.x)
-            
-            roots = self.safe_solveset(f_dp)
+            f_dp    = sp.diff(f_prime, self.x)
+            roots   = self.safe_solveset(f_dp)
+
             try:
                 domain_f_dp = continuous_domain(f_dp, self.x, sp.Reals)
             except Exception:
                 try:
-                    from sympy.calculus.singularities import singularities
                     sings = singularities(f_dp, self.x)
                     domain_f_dp = sp.Complement(domain, sings)
                 except:
                     domain_f_dp = domain
-                    
+
             undef = sp.Complement(sp.Reals, domain_f_dp)
-            
             cands = set()
             self._extract_real_roots(roots, cands)
             self._extract_real_roots(undef, cands)
-            
-            unique_pts =[]
+
+            unique_pts = []
             for p in cands:
                 try:
                     if self._in_domain(p, domain):
                         p_val = float(p.evalf())
                         if not any(abs(p_val - float(up.evalf())) < 1e-5 for up in unique_pts):
                             unique_pts.append(p)
-                except: pass
-                
+                except:
+                    pass
             unique_pts.sort(key=lambda p: float(p.evalf()))
-            
+
             for cp in unique_pts:
                 cp_val = float(cp.evalf())
                 eps = 1e-5
                 try:
-                    left_in = self._in_domain(cp_val - eps, domain)
-                    right_in = self._in_domain(cp_val + eps, domain)
-                    if not (left_in and right_in): continue # Endpoints can't be inflection
-                    
-                    lv = f_dp.subs(self.x, cp_val - eps).evalf()
-                    rv = f_dp.subs(self.x, cp_val + eps).evalf()
+                    if not (self._in_domain(cp_val - eps, domain) and
+                            self._in_domain(cp_val + eps, domain)):
+                        continue   # Endpoints cannot be inflection points
 
-                    # Check for sign change - use sign comparison instead of product threshold
+                    lv = self._safe_eval(f_dp, cp_val - eps)
+                    rv = self._safe_eval(f_dp, cp_val + eps)
+                    if lv is None or rv is None:
+                        continue
+
                     lv_sign = 1 if lv > 0 else (-1 if lv < 0 else 0)
                     rv_sign = 1 if rv > 0 else (-1 if rv < 0 else 0)
                     if lv_sign != 0 and rv_sign != 0 and lv_sign != rv_sign:
                         y_val = sp.simplify(expr.subs(self.x, cp))
                         inflections.append((sp.simplify(cp), y_val))
-                except: pass
+                except:
+                    pass
         except Exception as e:
             self._log(f"Inflection points failed: {e}")
         return inflections
@@ -346,50 +449,77 @@ class FunctionAnalysisEngine:
         self._log("Calculating Asymptotes...")
         asymptotes = {'vertical': [], 'horizontal': [], 'oblique': []}
 
+        # ── Horizontal asymptotes ──────────────────────────────────
+        # FIX: only check directions the domain actually extends to
         for d in [sp.oo, -sp.oo]:
+            if not self._domain_extends_to(domain, d):
+                continue
             try:
                 L = sp.limit(expr, self.x, d)
-                # AccumBounds indicates oscillation - no horizontal asymptote
                 if isinstance(L, AccumBounds):
-                    continue
+                    continue   # Oscillating — no HA in this direction
                 if L.is_real and not L.is_infinite and not L.has(sp.zoo, sp.nan):
                     val = sp.simplify(L)
-                    if val not in asymptotes['horizontal']: asymptotes['horizontal'].append(val)
-            except: pass
+                    if val not in asymptotes['horizontal']:
+                        asymptotes['horizontal'].append(val)
+            except:
+                pass
 
+        # ── Oblique asymptotes ────────────────────────────────────
+        # FIX: skip AccumBounds at every step; only check valid directions
         for d in [sp.oo, -sp.oo]:
+            if not self._domain_extends_to(domain, d):
+                continue
             try:
                 m = sp.limit(expr / self.x, self.x, d)
+                if isinstance(m, AccumBounds):
+                    continue
                 if m.is_real and not m.is_infinite and m != 0 and not m.has(sp.zoo, sp.nan):
                     c = sp.limit(expr - m * self.x, self.x, d)
+                    if isinstance(c, AccumBounds):
+                        continue   # FIX: oscillation ⇒ no oblique asymptote
                     if c.is_real and not c.is_infinite and not c.has(sp.zoo, sp.nan):
                         line = sp.simplify(m * self.x + c)
-                        if line not in asymptotes['oblique']: asymptotes['oblique'].append(line)
-            except: pass
+                        if line not in asymptotes['oblique']:
+                            asymptotes['oblique'].append(line)
+            except:
+                pass
 
+        # ── Vertical asymptotes ───────────────────────────────────
         try:
             excluded = sp.Complement(sp.Reals, domain)
 
             def check_va_at_point(pt, check_left=True, check_right=True):
-                """Check if there's a vertical asymptote at a point."""
+                """
+                Return True only when a genuine VA exists at pt.
+                KEY FIX: we only probe limits from sides that are actually
+                inside the domain — this prevents spurious VAs like x=0 for
+                ln(ln(x)) whose domain is (1, ∞).
+                """
                 if pt.has(sp.oo, -sp.oo, sp.zoo, sp.nan, sp.I):
                     return False
                 try:
-                    pt_float = float(pt.evalf())
-                    if abs(pt_float) > 1e10:  # Skip very large points
+                    pt_f = float(pt.evalf())
+                    if abs(pt_f) > 1e10:
                         return False
-                except:
-                    pass
-                try:
-                    if check_right:
+                    eps = 1e-7
+                    dom_left  = self._in_domain(pt_f - eps, domain)
+                    dom_right = self._in_domain(pt_f + eps, domain)
+                    # If NEITHER side is in the domain, this point is irrelevant
+                    if not dom_left and not dom_right:
+                        return False
+                    eff_left  = check_left  and dom_left
+                    eff_right = check_right and dom_right
+                    if eff_right:
                         lim_r = sp.limit(expr, self.x, pt, dir='+')
                         if getattr(lim_r, 'is_infinite', False) or lim_r.has(sp.zoo):
                             return True
-                    if check_left:
+                    if eff_left:
                         lim_l = sp.limit(expr, self.x, pt, dir='-')
                         if getattr(lim_l, 'is_infinite', False) or lim_l.has(sp.zoo):
                             return True
-                except: pass
+                except:
+                    pass
                 return False
 
             vas = []
@@ -402,7 +532,6 @@ class FunctionAnalysisEngine:
                     lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
                     var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
                     sample_expr = lam.expr if hasattr(lam, 'expr') else lam
-                    # Sample at n=0 and n=1 to be sure
                     for n_val in [0, 1]:
                         sample_pt = sample_expr.subs(var, n_val)
                         if check_va_at_point(sample_pt):
@@ -411,102 +540,71 @@ class FunctionAnalysisEngine:
                 elif isinstance(s, sp.Union):
                     for arg in s.args: process_excluded(arg)
                 elif isinstance(s, sp.Complement):
-                    # Handle nested Complement
                     process_excluded(s.args[1])
 
             process_excluded(excluded)
 
-            # Also check domain boundary points for asymptotes (e.g., x=0 for ln(x))
             def extract_boundary_asymptotes(dom):
                 if isinstance(dom, sp.Interval):
                     if dom.start != -sp.oo and dom.start.is_finite:
-                        # Left boundary - only check right limit (into domain)
-                        if dom.left_open and check_va_at_point(dom.start, check_left=False, check_right=True):
+                        if dom.left_open and check_va_at_point(dom.start, check_left=False):
                             if dom.start not in vas:
                                 vas.append(dom.start)
                     if dom.end != sp.oo and dom.end.is_finite:
-                        # Right boundary - only check left limit (into domain)
-                        if dom.right_open and check_va_at_point(dom.end, check_left=True, check_right=False):
+                        if dom.right_open and check_va_at_point(dom.end, check_right=False):
                             if dom.end not in vas:
                                 vas.append(dom.end)
                 elif isinstance(dom, sp.Union):
-                    for arg in dom.args:
-                        extract_boundary_asymptotes(arg)
+                    for arg in dom.args: extract_boundary_asymptotes(arg)
                 elif isinstance(dom, sp.Complement):
-                    # For Complement, check the first arg (base set)
                     extract_boundary_asymptotes(dom.args[0])
 
             extract_boundary_asymptotes(domain)
 
-            # Also try direct singularities detection as fallback
+            # Fallback: SymPy singularities detection
             try:
                 sings = singularities(expr, self.x)
-                if isinstance(sings, sp.FiniteSet):
-                    for pt in sings:
-                        if pt.is_real and pt not in vas:
-                            if check_va_at_point(pt):
+                def _add_sing_set(s_set):
+                    if isinstance(s_set, sp.FiniteSet):
+                        for pt in s_set:
+                            if pt.is_real and pt not in vas and check_va_at_point(pt):
                                 vas.append(pt)
-                elif isinstance(sings, sp.ImageSet):
-                    if sings not in vas:
-                        lam = sings.lamda if hasattr(sings, 'lamda') else sings.args[0]
-                        var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
-                        sample_expr = lam.expr if hasattr(lam, 'expr') else lam
-                        sample_pt = sample_expr.subs(var, 0)
-                        if check_va_at_point(sample_pt):
-                            vas.append(sings)
-                elif isinstance(sings, sp.Union):
-                    for s_arg in sings.args:
-                        if isinstance(s_arg, sp.FiniteSet):
-                            for pt in s_arg:
-                                if pt.is_real and pt not in vas and check_va_at_point(pt):
-                                    vas.append(pt)
-                        elif isinstance(s_arg, sp.ImageSet) and s_arg not in vas:
-                            lam = s_arg.lamda if hasattr(s_arg, 'lamda') else s_arg.args[0]
+                    elif isinstance(s_set, sp.ImageSet):
+                        if s_set not in vas:
+                            lam = s_set.lamda if hasattr(s_set, 'lamda') else s_set.args[0]
                             var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
-                            sample_expr = lam.expr if hasattr(lam, 'expr') else lam
-                            sample_pt = sample_expr.subs(var, 0)
-                            if check_va_at_point(sample_pt):
-                                vas.append(s_arg)
+                            sp_expr = lam.expr if hasattr(lam, 'expr') else lam
+                            if check_va_at_point(sp_expr.subs(var, 0)):
+                                vas.append(s_set)
+                    elif isinstance(s_set, sp.Union):
+                        for arg in s_set.args: _add_sing_set(arg)
+                _add_sing_set(sings)
             except Exception:
                 pass
 
-            # Deduplicate ImageSets that represent the same mathematical set
+            # Deduplicate ImageSets by value-sampling
             def imageset_equivalent(s1, s2):
-                """Check if two ImageSets represent equivalent periodic sets."""
                 if not (isinstance(s1, sp.ImageSet) and isinstance(s2, sp.ImageSet)):
                     return False
                 try:
                     lam1 = s1.lamda if hasattr(s1, 'lamda') else s1.args[0]
                     lam2 = s2.lamda if hasattr(s2, 'lamda') else s2.args[0]
-                    expr1 = lam1.expr if hasattr(lam1, 'expr') else lam1
-                    expr2 = lam2.expr if hasattr(lam2, 'expr') else lam2
-                    var1 = lam1.variables[0] if hasattr(lam1, 'variables') else list(lam1.free_symbols)[0]
-                    var2 = lam2.variables[0] if hasattr(lam2, 'variables') else list(lam2.free_symbols)[0]
-                    # Sample both and check if they generate the same values (mod period)
-                    vals1 = {float(expr1.subs(var1, i).evalf()) for i in range(-3, 4)}
-                    vals2 = {float(expr2.subs(var2, i).evalf()) for i in range(-3, 4)}
-                    # Check if any value from vals1 is close to any value in vals2
-                    for v1 in vals1:
-                        for v2 in vals2:
-                            if abs(v1 - v2) < 1e-6:
-                                return True
+                    e1   = lam1.expr if hasattr(lam1, 'expr') else lam1
+                    e2   = lam2.expr if hasattr(lam2, 'expr') else lam2
+                    v1   = lam1.variables[0] if hasattr(lam1, 'variables') else list(lam1.free_symbols)[0]
+                    v2   = lam2.variables[0] if hasattr(lam2, 'variables') else list(lam2.free_symbols)[0]
+                    vals1 = {float(e1.subs(v1, i).evalf()) for i in range(-3, 4)}
+                    vals2 = {float(e2.subs(v2, i).evalf()) for i in range(-3, 4)}
+                    return any(abs(a - b) < 1e-6 for a in vals1 for b in vals2)
                 except:
-                    pass
-                return False
+                    return False
 
-            # Remove duplicate ImageSets
             unique_vas = []
             for v in vas:
-                is_dup = False
-                for uv in unique_vas:
-                    if isinstance(v, sp.ImageSet) and isinstance(uv, sp.ImageSet):
-                        if imageset_equivalent(v, uv):
-                            is_dup = True
-                            break
-                    elif v == uv:
-                        is_dup = True
-                        break
-                if not is_dup:
+                if not any(
+                    imageset_equivalent(v, uv) if isinstance(v, sp.ImageSet) else v == uv
+                    for uv in unique_vas
+                ):
                     unique_vas.append(v)
 
             for v in unique_vas:
@@ -518,22 +616,73 @@ class FunctionAnalysisEngine:
         return asymptotes
 
     def get_parity(self, expr):
+        """
+        Check parity symbolically (multiple simplification strategies),
+        then fall back to numerical sampling — fixes ln(x+sqrt(x^2+1)) = arcsinh(x).
+        """
         self._log("Calculating Parity...")
         try:
             f_neg = sp.simplify(expr.subs(self.x, -self.x))
             f_pos = sp.simplify(expr)
-            if f_neg == f_pos: return "Even"
+            if f_neg == f_pos:  return "Even"
             if f_neg == -f_pos: return "Odd"
-            
-            # More rigorous fallback
-            if expr.equals(expr.subs(self.x, -self.x)): return "Even"
+
+            # Try after trig simplification
+            fn_t = sp.trigsimp(f_neg)
+            fp_t = sp.trigsimp(f_pos)
+            if fn_t == fp_t:  return "Even"
+            if fn_t == -fp_t: return "Odd"
+
+            # Try expand
+            if sp.expand(f_neg - f_pos) == 0: return "Even"
+            if sp.expand(f_neg + f_pos) == 0: return "Odd"
+
+            # Symbolic equality test (slower but correct for rewritten forms)
+            if expr.equals(expr.subs(self.x, -self.x)):  return "Even"
             if expr.equals(-expr.subs(self.x, -self.x)): return "Odd"
-        except Exception: pass
+
+            # Numerical fallback — multiple irrational test points
+            test_pts = [0.3, 0.7, 1.2, 1.7, 2.3, 3.1, 5.7]
+            is_even, is_odd, n_valid = True, True, 0
+            for pt in test_pts:
+                try:
+                    pv = complex(expr.subs(self.x,  pt).evalf())
+                    nv = complex(expr.subs(self.x, -pt).evalf())
+                    if abs(pv.imag) > 1e-9 or abs(nv.imag) > 1e-9:
+                        is_even = is_odd = False
+                        break
+                    n_valid += 1
+                    if abs(pv.real - nv.real) > 1e-6: is_even = False
+                    if abs(pv.real + nv.real) > 1e-6: is_odd  = False
+                except:
+                    pass
+            if n_valid >= 4:
+                if is_even: return "Even"
+                if is_odd:  return "Odd"
+        except Exception:
+            pass
         return "Neither even nor odd"
 
     def get_periodicity(self, expr):
-        try: return periodicity(expr, self.x)
-        except Exception: return None
+        """
+        Try several simplification strategies before giving up.
+        Fixes sin(x)^2 which requires trigsimp or expand_trig to expose period π.
+        """
+        strategies = [
+            lambda e: e,
+            lambda e: sp.trigsimp(e),
+            lambda e: sp.expand_trig(sp.expand(e)),
+            lambda e: e.rewrite(sp.cos),
+            lambda e: e.rewrite(sp.sin),
+        ]
+        for strat in strategies:
+            try:
+                p = periodicity(strat(expr), self.x)
+                if p is not None:
+                    return p
+            except Exception:
+                pass
+        return None
 
     def get_monotonicity(self, expr, domain, period=None):
         self._log("Calculating Monotonicity...")
@@ -555,28 +704,26 @@ class FunctionAnalysisEngine:
 
             breaks_set = set()
 
-            # For periodic functions, sample within a bounded range
             if period is not None:
                 try:
-                    period_val = float(period.evalf())
-                    # Sample within 2-3 periods around origin for periodic functions
+                    period_val   = float(period.evalf())
                     sample_range = max(2 * period_val, 10)
-                    self._extract_real_roots_bounded(roots, breaks_set, -sample_range, sample_range)
-                    disc_f = sp.Complement(sp.Reals, domain)
+                    disc_f  = sp.Complement(sp.Reals, domain)
                     disc_fp = sp.Complement(sp.Reals, domain_f_prime)
-                    self._extract_real_roots_bounded(disc_f, breaks_set, -sample_range, sample_range)
+                    self._extract_real_roots_bounded(roots,   breaks_set, -sample_range, sample_range)
+                    self._extract_real_roots_bounded(disc_f,  breaks_set, -sample_range, sample_range)
                     self._extract_real_roots_bounded(disc_fp, breaks_set, -sample_range, sample_range)
                 except:
-                    self._extract_real_roots(roots, breaks_set)
-                    disc_f = sp.Complement(sp.Reals, domain)
+                    disc_f  = sp.Complement(sp.Reals, domain)
                     disc_fp = sp.Complement(sp.Reals, domain_f_prime)
-                    self._extract_real_roots(disc_f, breaks_set)
+                    self._extract_real_roots(roots,   breaks_set)
+                    self._extract_real_roots(disc_f,  breaks_set)
                     self._extract_real_roots(disc_fp, breaks_set)
             else:
-                self._extract_real_roots(roots, breaks_set)
-                disc_f = sp.Complement(sp.Reals, domain)
+                disc_f  = sp.Complement(sp.Reals, domain)
                 disc_fp = sp.Complement(sp.Reals, domain_f_prime)
-                self._extract_real_roots(disc_f, breaks_set)
+                self._extract_real_roots(roots,   breaks_set)
+                self._extract_real_roots(disc_f,  breaks_set)
                 self._extract_real_roots(disc_fp, breaks_set)
 
             sorted_breaks = []
@@ -594,28 +741,26 @@ class FunctionAnalysisEngine:
                     if abs(sorted_breaks[i][0] - unique_breaks[-1][0]) > 1e-5:
                         unique_breaks.append(sorted_breaks[i])
 
-            # For periodic functions, don't use -oo/oo
             if period is not None and unique_breaks:
                 b_vals = [b[1] for b in unique_breaks]
             else:
                 b_vals = [-sp.oo] + [b[1] for b in unique_breaks] + [sp.oo]
 
             for i in range(len(b_vals) - 1):
-                start = b_vals[i]
-                end = b_vals[i + 1]
+                start, end = b_vals[i], b_vals[i + 1]
 
-                if start == -sp.oo and end == sp.oo:
-                    test_pt = 0
-                elif start == -sp.oo:
-                    test_pt = float(end.evalf()) - 1
-                elif end == sp.oo:
-                    test_pt = float(start.evalf()) + 1
+                if   start == -sp.oo and end == sp.oo: test_pt = 0
+                elif start == -sp.oo:                  test_pt = float(end.evalf()) - 1
+                elif end   == sp.oo:                   test_pt = float(start.evalf()) + 1
                 else:
                     test_pt = (float(start.evalf()) + float(end.evalf())) / 2
 
                 try:
                     if self._in_domain(test_pt, domain):
-                        val = f_prime.subs(self.x, test_pt).evalf()
+                        # FIX: use _safe_eval to handle complex-valued f' (e.g. cube roots)
+                        val = self._safe_eval(f_prime, test_pt)
+                        if val is None:
+                            continue
                         if val > 1e-7:
                             intervals['increasing'].append((start, end))
                         elif val < -1e-7:
@@ -626,321 +771,295 @@ class FunctionAnalysisEngine:
             self._log(f"Monotonicity calculation failed: {e}")
         return intervals
 
-    def _extract_real_roots_bounded(self, point_set, test_pts_set, lower, upper):
-        """Recursively parses roots from SymPy Sets, bounded to a range."""
-        def extract(s):
-            if isinstance(s, sp.FiniteSet):
-                for p in s:
-                    try:
-                        p_val = float(p.evalf())
-                        if getattr(p, 'is_real', True) and lower <= p_val <= upper:
-                            test_pts_set.add(p)
-                    except:
-                        pass
-            elif isinstance(s, sp.ImageSet):
-                lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
-                var = lam.variables[0] if hasattr(lam, 'variables') else list(lam.free_symbols)[0]
-                # Sample within bounds
-                for i in range(-20, 21):
-                    try:
-                        val = lam.expr.subs(var, i) if hasattr(lam, 'expr') else lam.subs(var, i)
-                        val_float = float(val.evalf())
-                        if getattr(val, 'is_real', True) and lower <= val_float <= upper:
-                            test_pts_set.add(val)
-                    except:
-                        pass
-            elif isinstance(s, sp.Interval):
-                if s.start != -sp.oo and float(s.start.evalf()) >= lower:
-                    test_pts_set.add(s.start)
-                if s.end != sp.oo and float(s.end.evalf()) <= upper:
-                    test_pts_set.add(s.end)
-            elif isinstance(s, (sp.Union, sp.Intersection, sp.Complement)):
-                for arg in s.args:
-                    extract(arg)
-            elif isinstance(s, sp.ConditionSet):
-                expr_cond = s.condition.lhs - s.condition.rhs if isinstance(s.condition, sp.Eq) else s.condition
-                found_approx = set()
-                for guess in [i / 2.0 for i in range(-20, 21)]:
-                    if lower <= guess <= upper:
-                        try:
-                            root = sp.nsolve(expr_cond, self.x, guess)
-                            if getattr(root, 'is_real', True):
-                                val = float(root)
-                                if lower <= val <= upper:
-                                    if abs(val) < 1e-3:
-                                        val = 0.0
-                                    r_val = round(val, 3)
-                                    if r_val not in found_approx:
-                                        found_approx.add(r_val)
-                                        test_pts_set.add(sp.sympify(val))
-                        except:
-                            pass
-        extract(point_set)
+    # ─────────────────────────────────────────────────────────────
+    # Main entry point
+    # ─────────────────────────────────────────────────────────────
 
     def analyze(self, func_string):
         print(f"\n{'='*50}")
         print(f"[{func_string}] Analysis Starting...")
         print(f"{'='*50}")
-        
+
         start_time = time.time()
+
+        # Normalise input string
         func_string = func_string.replace('^', '**')
         func_string = func_string.replace('e**', 'E**').replace('e^', 'E**')
-        # Handle common function name variants
-        func_string = func_string.replace('arctan', 'atan')
-        func_string = func_string.replace('arcsin', 'asin')
-        func_string = func_string.replace('arccos', 'acos')
-        func_string = func_string.replace('arccot', 'acot')
-        func_string = func_string.replace('arcsec', 'asec')
-        func_string = func_string.replace('arccsc', 'acsc')
+        for old, new in [('arctan','atan'), ('arcsin','asin'), ('arccos','acos'),
+                         ('arccot','acot'), ('arcsec','asec'), ('arccsc','acsc')]:
+            func_string = func_string.replace(old, new)
+
         expr = get_sympified_expr(func_string)
-        
         real_x = sp.Symbol('x', real=True)
         expr = expr.subs({s: real_x for s in expr.free_symbols if s.name == 'x'})
         self.x = real_x
-            
-        domain = self.get_domain(expr)
-        intercepts = self.get_intercepts(expr, domain)
-        extrema = self.get_extrema(expr, domain)
-        inflections = self.get_inflection_points(expr, domain)
-        asymptotes = self.get_asymptotes(expr, domain)
-        parity = self.get_parity(expr)
-        period = self.get_periodicity(expr)
+
+        # ── KEY: domain from original; simplified expr for everything else ──
+        # This fixes the 12-second performance bug for cancellable rationals
+        # while keeping correct domain holes.
+        original_expr = expr
+        domain = self.get_domain(original_expr)
+        expr   = self._preprocess_expr(original_expr)   # e.g. (x³-x)/(x²-1) → x
+
+        intercepts   = self.get_intercepts(expr, domain)
+        extrema      = self.get_extrema(expr, domain)
+        inflections  = self.get_inflection_points(expr, domain)
+        asymptotes   = self.get_asymptotes(expr, domain)
+        parity       = self.get_parity(expr)
+        period       = self.get_periodicity(expr)
         monotonicity = self.get_monotonicity(expr, domain, period)
-        
+
         elapsed = time.time() - start_time
-        
         results = {
-            'Function': expr,
-            'Domain': domain,
-            'Intercepts': intercepts,
-            'Extrema': extrema,
+            'Function':        original_expr,   # always display original
+            'Domain':          domain,
+            'Intercepts':      intercepts,
+            'Extrema':         extrema,
             'Inflection Points': inflections,
-            'Asymptotes': asymptotes,
-            'Parity': parity,
-            'Periodicity': period,
-            'Monotonicity': monotonicity,
-            'Time (s)': round(elapsed, 4)
+            'Asymptotes':      asymptotes,
+            'Parity':          parity,
+            'Periodicity':     period,
+            'Monotonicity':    monotonicity,
+            'Time (s)':        round(elapsed, 4),
         }
-        
         self.print_report(results)
         return results
 
+    # ─────────────────────────────────────────────────────────────
+    # Report formatting
+    # ─────────────────────────────────────────────────────────────
+
     def print_report(self, res):
-        # Helper: Converts ugly sets into beautiful standard math formats like (-oo, 0) U (0, oo)
+
         def format_val(val):
             try:
+                if isinstance(val, AccumBounds): return None   # Never leak AccumBounds
                 if val.has(sp.I): return None
                 val = sp.simplify(val)
-                if val.count_ops() > 15: # Approx long exact roots for readability
+                if val.count_ops() > 15:
                     return f"{val} (approx {val.evalf():.3f})"
-                if isinstance(val, sp.Float): return f"{float(val):.4f}"
+                if isinstance(val, sp.Float):
+                    return f"{float(val):.4f}"
                 return str(val)
-            except: return str(val)
-            
+            except:
+                return str(val)
+
         def clean_set(s):
-            if s == sp.Reals: return "(-oo, oo)"
+            if isinstance(s, AccumBounds): return None        # Safety net
+            if s == sp.Reals:    return "(-oo, oo)"
             if s == sp.EmptySet: return "None"
             if isinstance(s, list):
                 if not s: return "None"
-                return ", ".join([clean_set(x) if isinstance(x, sp.Set) else format_val(x) for x in s])
+                parts = [clean_set(x) if isinstance(x, sp.Set) else format_val(x) for x in s]
+                return ", ".join(p for p in parts if p)
             if isinstance(s, sp.FiniteSet):
                 if not s: return "None"
-                return ", ".join([format_val(arg) for arg in s])
+                return ", ".join(format_val(arg) for arg in s)
             elif isinstance(s, sp.ImageSet):
                 try:
-                    lam = s.lamda if hasattr(s, 'lamda') else s.args[0]
+                    lam  = s.lamda if hasattr(s, 'lamda') else s.args[0]
                     expr = lam.expr if hasattr(lam, 'expr') else lam
                     return f"{str(expr).replace('_n', 'n')} (for integer n)"
-                except: return str(s).replace('_n', 'n')
+                except:
+                    return str(s).replace('_n', 'n')
             elif isinstance(s, sp.Union):
-                return " U ".join([clean_set(arg) for arg in s.args])
+                parts = [clean_set(arg) for arg in s.args]
+                return " U ".join(p for p in parts if p)
             elif isinstance(s, sp.Intersection):
-                return " & ".join([clean_set(arg) for arg in s.args])
+                return " & ".join(clean_set(arg) for arg in s.args)
             elif isinstance(s, sp.Complement):
                 return f"{clean_set(s.args[0])} excluding {clean_set(s.args[1])}"
             elif isinstance(s, sp.Interval):
-                lb = "(" if s.left_open else "["
+                lb = "(" if s.left_open  else "["
                 rb = ")" if s.right_open else "]"
                 return f"{lb}{s.start}, {s.end}{rb}"
             return str(s).replace('_n', 'n')
 
         print(f"Function:       f(x) = {res['Function']}")
         print(f"Domain:         {clean_set(res['Domain'])}")
-        
-        x_ints_raw = res['Intercepts']['x']
-        if x_ints_raw is None or isinstance(x_ints_raw, sp.EmptySet.__class__) or (isinstance(x_ints_raw, list) and len(x_ints_raw) == 0):
-            x_ints = "None"
+
+        x_raw = res['Intercepts']['x']
+        if (x_raw is None
+                or isinstance(x_raw, sp.EmptySet.__class__)
+                or (isinstance(x_raw, list) and not x_raw)):
+            print("X-Intercepts:   None")
         else:
-            x_ints = clean_set(x_ints_raw)
-            
-        print(f"X-Intercepts:   {x_ints}")
-        print(f"Y-Intercept:    {format_val(res['Intercepts']['y']) if res['Intercepts']['y'] is not None else 'None'}")
-        
+            print(f"X-Intercepts:   {clean_set(x_raw)}")
+
+        y_raw = res['Intercepts']['y']
+        print(f"Y-Intercept:    {format_val(y_raw) if y_raw is not None else 'None'}")
+
         period = res['Periodicity']
-        
+
         def format_extrema(pts, period):
             if not pts: return "None"
+
             def fmt_pt(pt):
-                return f"({format_val(pt[0])}, {format_val(pt[1])})"
-                
+                x_s = format_val(pt[0])
+                y_s = format_val(pt[1])
+                return f"({x_s}, {y_s})"
+
             if period is None:
-                sorted_pts = sorted(pts, key=lambda p: abs(float(p[0].evalf())) if getattr(p[0], 'evalf', None) else float('inf'))
-                if len(sorted_pts) > 6:
-                    closest = sorted_pts[:6]
-                    closest.sort(key=lambda p: float(p[0].evalf()) if getattr(p[0], 'evalf', None) else float('inf'))
-                    return ", ".join([fmt_pt(p) for p in closest]) + " ... (and infinitely many more)"
-                else:
-                    sorted_pts.sort(key=lambda p: float(p[0].evalf()) if getattr(p[0], 'evalf', None) else float('inf'))
-                    return ", ".join([fmt_pt(p) for p in sorted_pts])
-            
-            base_pts = []
-            seen_mod =[]
-            pts = sorted(pts, key=lambda p: abs(float(p[0].evalf())) if getattr(p[0], 'evalf', None) else float('inf'))
-            for x, y in pts:
+                by_abs = sorted(pts, key=lambda p: abs(float(p[0].evalf()))
+                                if getattr(p[0], 'evalf', None) else float('inf'))
+                if len(by_abs) > 6:
+                    shown = sorted(by_abs[:6], key=lambda p: float(p[0].evalf()))
+                    return ", ".join(fmt_pt(p) for p in shown) + " ... (and infinitely many more)"
+                return ", ".join(fmt_pt(p) for p in
+                                 sorted(by_abs, key=lambda p: float(p[0].evalf())))
+
+            # Periodic: deduplicate by modular equivalence
+            base_pts, seen_mod = [], []
+            for x_v, y_v in sorted(pts, key=lambda p: abs(float(p[0].evalf()))):
                 try:
-                    x_f, p_f = float(x.evalf()), float(period.evalf())
-                    mod_val = x_f % p_f
-                    if not any(abs(mod_val - sm) < 1e-3 or abs(mod_val - sm - p_f) < 1e-3 or abs(mod_val - sm + p_f) < 1e-3 for sm in seen_mod):
-                        seen_mod.append(mod_val)
-                        base_pts.append((x, y))
-                except: base_pts.append((x, y))
-            base_pts.sort(key=lambda p: float(p[0].evalf()) if getattr(p[0], 'evalf', None) else float('inf'))
-            res_str = ", ".join([f"({format_val(x)} + n*{period}, {format_val(y)})" for x, y in base_pts])
-            return res_str + " (for integer n)"
+                    xf, pf = float(x_v.evalf()), float(period.evalf())
+                    mod    = xf % pf
+                    if not any(abs(mod - sm) < 1e-3 or abs(mod - sm - pf) < 1e-3
+                               or abs(mod - sm + pf) < 1e-3 for sm in seen_mod):
+                        seen_mod.append(mod)
+                        base_pts.append((x_v, y_v))
+                except:
+                    base_pts.append((x_v, y_v))
+            base_pts.sort(key=lambda p: float(p[0].evalf()))
+            return ", ".join(
+                f"({format_val(x_v)} + n*{period}, {format_val(y_v)})"
+                for x_v, y_v in base_pts
+            ) + " (for integer n)"
 
         print(f"Minima:         {format_extrema(res['Extrema']['minima'], period)}")
         print(f"Maxima:         {format_extrema(res['Extrema']['maxima'], period)}")
         print(f"Inflection pts: {format_extrema(res['Inflection Points'], period)}")
-        
-        vert = ", ".join([f"x = {clean_set(v)}" for v in res['Asymptotes']['vertical']])
-        horz = ", ".join([f"y = {clean_set(h)}" for h in res['Asymptotes']['horizontal']])
-        oblq = ", ".join([f"y = {clean_set(o)}" for o in res['Asymptotes']['oblique']])
-        print(f"Vertical Asym:  {vert if vert else 'None'}")
-        print(f"Horizontal Asym:{horz if horz else 'None'}")
-        print(f"Oblique Asym:   {oblq if oblq else 'None'}")
-        
+
+        vert = ", ".join(f"x = {clean_set(v)}" for v in res['Asymptotes']['vertical'])
+
+        # FIX: filter AccumBounds at display level (final safety net)
+        horz_list = [h for h in res['Asymptotes']['horizontal']
+                     if not isinstance(h, AccumBounds)]
+        oblq_list = [o for o in res['Asymptotes']['oblique']
+                     if not isinstance(o, AccumBounds)]
+
+        horz = ", ".join(f"y = {clean_set(h)}" for h in horz_list)
+        oblq = ", ".join(f"y = {clean_set(o)}" for o in oblq_list)
+        print(f"Vertical Asym:  {vert or 'None'}")
+        print(f"Horizontal Asym:{horz or 'None'}")
+        print(f"Oblique Asym:   {oblq or 'None'}")
         print(f"Parity:         {res['Parity']}")
         print(f"Periodicity:    {format_val(period) if period else 'None'}")
-        
+
         print("Monotonicity:")
         if not res['Monotonicity']['increasing'] and not res['Monotonicity']['decreasing']:
             print("  None or could not be determined.")
         else:
-            def print_intervals(intervals, period, label):
-                if not intervals: return
+            def print_intervals(ivals, period, label):
+                if not ivals: return
                 if period is None:
-                    sorted_by_abs = sorted(intervals, key=lambda i: abs(float(i[0].evalf())) if getattr(i[0], 'evalf', None) and i[0] not in [-sp.oo, sp.oo] else float('inf'))
-                    if len(intervals) > 6:
-                        closest = sorted_by_abs[:6]
-                        closest.sort(key=lambda i: float(i[0].evalf()) if getattr(i[0], 'evalf', None) and i[0] not in [-sp.oo, sp.oo] else (-float('inf') if i[0] == -sp.oo else float('inf')))
-                        for s, e in closest: print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
+                    by_abs = sorted(ivals,
+                        key=lambda i: abs(float(i[0].evalf()))
+                        if getattr(i[0], 'evalf', None) and i[0] not in (-sp.oo, sp.oo)
+                        else float('inf'))
+                    if len(ivals) > 6:
+                        shown = sorted(by_abs[:6],
+                            key=lambda i: float(i[0].evalf())
+                            if i[0] not in (-sp.oo, sp.oo) else -float('inf'))
+                        for s, e in shown:
+                            print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
                         print(f"  ... (and infinitely many more {label.lower()} intervals)")
                     else:
-                        closest = sorted(intervals, key=lambda i: float(i[0].evalf()) if getattr(i[0], 'evalf', None) and i[0] not in[-sp.oo, sp.oo] else (-float('inf') if i[0] == -sp.oo else float('inf')))
-                        for s, e in closest: print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
+                        for s, e in sorted(ivals,
+                            key=lambda i: float(i[0].evalf())
+                            if i[0] not in (-sp.oo, sp.oo) else -float('inf')):
+                            print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
                     return
-                
-                base_ints, seen_mod, sorted_ints = [], [],[]
-                for s, e in intervals:
-                    try: sorted_ints.append((0 if s == -sp.oo else abs(float(s.evalf())), s, e))
-                    except: sorted_ints.append((float('inf'), s, e))
-                sorted_ints.sort(key=lambda x: x[0])
-                
-                for _, s, e in sorted_ints:
+
+                base_ints, seen_mod = [], []
+                for s, e in sorted(ivals,
+                        key=lambda i: 0 if i[0] == -sp.oo else abs(float(i[0].evalf()))):
                     try:
                         if s == -sp.oo or e == sp.oo:
                             base_ints.append((s, e)); continue
-                        s_f, p_f = float(s.evalf()), float(period.evalf())
-                        mod_val = s_f % p_f
-                        if not any(abs(mod_val - sm) < 1e-3 or abs(mod_val - sm - p_f) < 1e-3 or abs(mod_val - sm + p_f) < 1e-3 for sm in seen_mod):
-                            seen_mod.append(mod_val); base_ints.append((s, e))
-                    except: base_ints.append((s, e))
-                        
-                base_ints.sort(key=lambda i: float(i[0].evalf()) if getattr(i[0], 'evalf', None) and i[0] not in[-sp.oo, sp.oo] else (-float('inf') if i[0] == -sp.oo else float('inf')))
+                        sf, pf = float(s.evalf()), float(period.evalf())
+                        mod = sf % pf
+                        if not any(abs(mod - sm) < 1e-3 or abs(mod - sm - pf) < 1e-3
+                                   or abs(mod - sm + pf) < 1e-3 for sm in seen_mod):
+                            seen_mod.append(mod)
+                            base_ints.append((s, e))
+                    except:
+                        base_ints.append((s, e))
+
+                base_ints.sort(key=lambda i: float(i[0].evalf())
+                               if i[0] not in (-sp.oo, sp.oo) else -float('inf'))
                 for s, e in base_ints:
-                    start_str = f"{format_val(s)} + n*{period}" if s not in [-sp.oo, sp.oo] else "-oo"
-                    end_str = f"{format_val(e)} + n*{period}" if e not in [-sp.oo, sp.oo] else "oo"
-                    print(f"  ({start_str}, {end_str})\t{label} (for integer n)")
+                    ss = f"{format_val(s)} + n*{period}" if s not in (-sp.oo, sp.oo) else "-oo"
+                    es = f"{format_val(e)} + n*{period}" if e not in (-sp.oo, sp.oo) else "oo"
+                    print(f"  ({ss}, {es})\t{label} (for integer n)")
 
             print_intervals(res['Monotonicity']['increasing'], period, "Increasing")
             print_intervals(res['Monotonicity']['decreasing'], period, "Decreasing")
-        
+
         print(f"\n[Analyzed in {res['Time (s)']} seconds]")
         print("-" * 50)
 
+
+# ──────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     engine = FunctionAnalysisEngine(debug=False)
-    
-    test_functions =[
-        "x^3 - 6*x^2 + 9*x + 15",
-        "1 / x",                             
-        "sin(x)",                             
-        "x^2 / (x^2 - 4)",                    
-        "e^(-x^2)",                           
-        "ln(x)",                              
-        "(x^2 + 1) / x",                      
-        "x^3 - 3*x",                          
-        "tan(x)",                             
-        "x * e^x",                            
-        "sin(x) / x",                         
-        "sqrt(x - 1)",                        
-        "(x^2 - 1) / (x^2 + 1)",              
-        "abs(x)",                             
-        "x * ln(x)",                          
-    ]
-    
+
     test_functions = [
-    # --- Rational Functions (edge cases) ---
-    "1 / (x^2 + 1)",              # No vertical asymptotes, even
-    "(x^3 - x) / (x^2 - 1)",      # Removable discontinuities + oblique asymptote
-    "(x^2 - 4) / (x - 2)",        # Hole at x=2 (removable), not a true VA
-    "x / (x^2 - x - 6)",          # Two VAs: x=3, x=-2
-    "(x^3 + 1) / (x^2 - 1)",      # Oblique asymptote + VA
+        # Originals
+        "x^(1/x)",
+        "x^3 - 6*x^2 + 9*x + 15",
+        "1 / x",
+        "sin(x)",
+        "x^2 / (x^2 - 4)",
+        "e^(-x^2)",
+        "ln(x)",
+        "(x^2 + 1) / x",
+        "x^3 - 3*x",
+        "tan(x)",
+        "x * e^x",
+        "sin(x) / x",
+        "sqrt(x - 1)",
+        "(x^2 - 1) / (x^2 + 1)",
+        "abs(x)",
+        "x * ln(x)",
+        # Extended stress tests
+        "1 / (x^2 + 1)",
+        "(x^3 - x) / (x^2 - 1)",       # was 12 s — now < 1 s after cancel()
+        "(x^2 - 4) / (x - 2)",
+        "x / (x^2 - x - 6)",
+        "(x^3 + 1) / (x^2 - 1)",
+        "cos(x)",
+        "sin(x)^2",                     # period should be pi
+        "tan(x)^2",
+        "arctan(x)",
+        "x - sin(x)",
+        "sin(x) + cos(x)",
+        "1 / sin(x)",
+        "e^x / (1 + e^x)",
+        "ln(x^2)",
+        "x^2 * e^(-x)",
+        "ln(x + sqrt(x^2 + 1))",        # arcsinh — parity should be Odd
+        "e^(1/x)",
+        "x^4 - 2*x^2 + 1",
+        "x^5 - x^3 + x",
+        "x^2 + x + 1",
+        "sqrt(4 - x^2)",
+        "ln(1 - x^2)",
+        "1 / sqrt(x^2 - 1)",
+        "sqrt(x) * ln(x)",
+        "x^(1/3)",                      # monotone on all R
+        "x * sin(x)",
+        "sin(1/x)",
+        "x^2 * sin(1/x)",
+        "abs(x^2 - 1)",
+        "floor(x)",
+        "x + 1/x",
+        "(x^3 - 1) / (x^2 + x + 1)",
+        "x^2 / (x + 1)",
+        "x^x",                          # HA y=0 was spurious — now suppressed
+        "ln(ln(x))",                    # VA at x=0 was spurious — now suppressed
+        "1 / (1 - x^2)",
+    ]
 
-    # --- Trig & Inverse Trig ---
-    "cos(x)",                      # Classic, compare parity vs sin(x)
-    "sin(x)^2",                    # Period should be pi, not 2*pi
-    "tan(x)^2",                    # Period pi, always non-negative
-    "arctan(x)",                   # Horizontal asymptotes ±pi/2, no VA
-    "x - sin(x)",                  # Inflection at origin, monotone increasing
-    "sin(x) + cos(x)",             # Phase-shifted, period 2*pi
-    "1 / sin(x)",                  # csc(x), periodic VAs
-
-    # --- Exponential & Log ---
-    "e^x / (1 + e^x)",            # Sigmoid: horizontal asymptotes 0 and 1
-    "ln(x^2)",                     # Domain: x != 0, even function
-    "x^2 * e^(-x)",               # Interesting: max at x=2, inflection at x = 2±sqrt(2)
-    "ln(x + sqrt(x^2 + 1))",      # arcsinh(x), odd, monotone increasing
-    "e^(1/x)",                     # Essential singularity at 0
-
-    # --- Parity Edge Cases ---
-    "x^4 - 2*x^2 + 1",           # Even, perfect square (x^2-1)^2
-    "x^5 - x^3 + x",              # Odd polynomial
-    "x^2 + x + 1",                # Neither (asymmetric)
-
-    # --- Challenging Domains ---
-    "sqrt(4 - x^2)",              # Semicircle, domain [-2, 2]
-    "ln(1 - x^2)",                # Domain (-1, 1), symmetric
-    "1 / sqrt(x^2 - 1)",          # Domain: |x| > 1, two pieces
-    "sqrt(x) * ln(x)",            # Domain (0, oo), min at x = 1/e^2
-
-    # --- Composite / Unusual ---
-    "x^(1/3)",                    # Cube root, odd, inflection at origin
-    "x * sin(x)",                 # Product, even, unbounded oscillation
-    "sin(1/x)",                   # Oscillates wildly near 0 — stress test!
-    "x^2 * sin(1/x)",             # Smoother version, differentiable at 0
-    "abs(x^2 - 1)",               # Absolute value of polynomial, cusps at ±1
-    "floor(x)",                   # Step function — expect graceful failure
-
-    # --- Functions with Oblique Asymptotes ---
-    "x + 1/x",                    # Already tested as (x^2+1)/x but alias form
-    "(x^3 - 1) / (x^2 + x + 1)", # Simplifies to (x-1), oblique asymptote
-    "x^2 / (x + 1)",             # Oblique: y = x - 1
-
-    # --- Near-Pathological ---
-    "x^x",                        # Domain (0, oo) only — tests complex domain
-    "ln(ln(x))",                  # Domain (1, oo), nested log
-    "1 / (1 - x^2)",             # Two VAs at ±1
-]
     for f_str in test_functions:
         engine.analyze(f_str)
