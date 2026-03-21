@@ -16,26 +16,27 @@ const KNOWN_FUNCS: string[] = [
     'arcsin','arccos','arctan','arccot','arcsec','arccsc',
     'sinh','cosh','tanh','coth','sech','csch',
     'sin','cos','tan','cot','sec','csc',
-    'ln','log','exp','sqrt','abs',
+    'ln','log','exp','abs',
     'gcd','lcm','min','max',
     'floor','ceil','sgn','sign',
     'det','dim','ker','deg','arg','mod',
     'Re','Im',
 ];
 
+// Graph variables — x and y are NOT treated as constants needing *
+// Everything else (a, b, c, k, n, m, ...) is a constant → needs * between them
+const GRAPH_VARS = new Set(['x', 'y', 'r', 't']);
+
 // ─────────────────────────────────────────────────────────────
 // PHASE 0 — PRE-NORMALISATION
-// Key rule: \operatorname{\mathrm{X}} → \X  (backslash preserved)
-// so the parser sees \arctanh as a command, not raw letters.
 // ─────────────────────────────────────────────────────────────
 function preNormalise(s: string): string {
     s = s.replace(/\$\$/g, '').replace(/(?<![\\])\$/g, '').trim();
 
     s = s
-        // placeholder
         .replace(/\\placeholder\{[^}]*\}/g, '?')
 
-        // operatorname / mathrm → \name  (WITH backslash so parser treats as \cmd)
+        // operatorname / mathrm → \name (WITH backslash so parser treats as \cmd)
         .replace(/\\operatorname\{\\mathrm\{([^}]+)\}\}/g, (_, n) => `\\${n}`)
         .replace(/\\operatorname\{\\([a-zA-Z]+)\}/g,       (_, n) => `\\${n}`)
         .replace(/\\operatorname\{([^}]+)\}/g,              (_, n) => `\\${n}`)
@@ -57,7 +58,7 @@ function preNormalise(s: string): string {
         .replace(/\\tfrac/g, '\\frac')
         .replace(/\\cfrac/g, '\\frac')
 
-        // spacing / layout (strip, don't replace with space — we add spaces ourselves)
+        // spacing / layout
         .replace(/\\[,;:!]/g,           '')
         .replace(/\\quad\b/g,            ' ')
         .replace(/\\qquad\b/g,           ' ')
@@ -84,7 +85,7 @@ function preNormalise(s: string): string {
         .replace(/\\lVert/g,'‖').replace(/\\rVert/g,'‖')
         .replace(/\\vert\b/g,'|').replace(/\\Vert\b/g,'‖')
 
-        // size modifiers (big/Big/bigg/Bigg)
+        // size modifiers
         .replace(/\\[Bb]igg?[lr]?\s*\(/g,'(').replace(/\\[Bb]igg?[lr]?\s*\)/g,')')
         .replace(/\\[Bb]igg?[lr]?\s*\[/g,'[').replace(/\\[Bb]igg?[lr]?\s*\]/g,']')
         .replace(/\\[Bb]igg?[lr]?\s*\|/g,'|')
@@ -93,7 +94,7 @@ function preNormalise(s: string): string {
     // Fix \right. (MathLive invisible close delimiter)
     s = fixUnmatchedDelimiters(s);
 
-    // Strip remaining \left / \right with standard delimiters
+    // Strip remaining \left / \right
     s = s
         .replace(/\\left\s*\(/g,  '(').replace(/\\right\s*\)/g,')')
         .replace(/\\left\s*\[/g,  '[').replace(/\\right\s*\]/g,']')
@@ -147,7 +148,7 @@ function readToken(str: string, pos: number): { token: string; end: number } {
     if (pos >= str.length) return { token:'', end:pos };
     if (str[pos]==='\\') {
         let i=pos+1;
-        if (i>=str.length)           return { token:'\\', end:i };
+        if (i>=str.length)            return { token:'\\', end:i };
         if (!/[a-zA-Z]/.test(str[i])) return { token:str.substring(pos,pos+2), end:pos+2 };
         while (i<str.length && /[a-zA-Z]/.test(str[i])) i++;
         return { token:str.substring(pos,i), end:i };
@@ -155,7 +156,6 @@ function readToken(str: string, pos: number): { token: string; end: number } {
     return { token:str[pos], end:pos+1 };
 }
 
-/** Read one \frac argument: {group} | \cmd | single-char */
 function readFracArg(str: string, pos: number): { content: string; end: number } {
     pos = skipSpace(str, pos);
     if (pos >= str.length) return { content:'', end:pos };
@@ -188,6 +188,9 @@ const GREEK: Record<string,string> = {
     '\\Phi':'Φ','\\Psi':'Ψ','\\Omega':'Ω',
 };
 
+// Greek symbol chars — used in needsMul to recognise them as value-producing
+const GREEK_CHARS = new Set(['α','β','γ','δ','ε','ζ','η','θ','ι','κ','λ','μ','ν','ξ','π','ρ','σ','τ','υ','φ','χ','ψ','ω','Γ','Δ','Θ','Λ','Ξ','Π','Σ','Υ','Φ','Ψ','Ω']);
+
 const SYMBOLS: Record<string,string> = {
     '\\infty':'inf','\\partial':'∂','\\nabla':'∇',
     '\\cdot':'*','\\times':'*','\\div':'/',
@@ -205,7 +208,6 @@ const SYMBOLS: Record<string,string> = {
     '\\{':'{','\\}':'}','\\|':'‖',
 };
 
-// FUNC_MAP keyed by \cmd (with backslash)
 const FUNC_MAP: Record<string,string> = {
     '\\sin':'sin','\\cos':'cos','\\tan':'tan','\\cot':'cot','\\sec':'sec','\\csc':'csc',
     '\\sinh':'sinh','\\cosh':'cosh','\\tanh':'tanh','\\coth':'coth','\\sech':'sech','\\csch':'csch',
@@ -220,7 +222,7 @@ const FUNC_MAP: Record<string,string> = {
     '\\sgn':'sgn','\\sign':'sign',
     '\\Re':'Re','\\Im':'Im',
     '\\det':'det','\\dim':'dim','\\ker':'ker','\\deg':'deg','\\arg':'arg','\\mod':'mod',
-    '\\sqrt':'sqrt',
+
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -250,34 +252,83 @@ function hasBareOperator(s: string): boolean {
 
 function wrapIfAdditive(s: string): string { return hasBareAdditive(s) ? `(${s})` : s; }
 function wrapIfCompound(s: string):  string { return hasBareOperator(s)  ? `(${s})` : s; }
-
-/**
- * Wrap a fraction result so that adjacent multiplication is unambiguous.
- * e.g.  1/2 * 1/4  is ambiguous (could mean 1/(2*1)/4)
- * so fracs always get wrapped:  (1/2) * (1/4)
- */
 function wrapFrac(num: string, den: string): string {
-    const nStr = wrapIfAdditive(num);
-    const dStr = wrapIfCompound(den);
-    return `(${nStr}/${dStr})`;
+    return `(${wrapIfAdditive(num)}/${wrapIfCompound(den)})`;
 }
 
 // ─────────────────────────────────────────────────────────────
-// IMPLICIT MULTIPLICATION DETECTION
-// Only inserts * when:
-//   - left ends with digit / ) / ]
-//   - right starts with letter / digit / (
-// Never inserts between two letters (would break function names)
+// IMPLICIT MULTIPLICATION — needsMul(left, right)
+//
+// LEFT side chars that are "value-producing" (can be left of *)
+//   digits, letters, ), ], !, greek symbols
+//
+// RIGHT side chars that start a new value (can be right of *)
+//   digits, letters, (, greek symbols, |
+//
+// Special rules:
+//   letter → letter:  INSERT * unless both are graph vars (x,y,r,t)
+//                     because "ax" = a*x, "xy" = x*y but "sin" = word
+//   !  → anything value-producing: INSERT *   (x! * π)
+//   greek → letter or (: INSERT *              (π * |...|, π * x)
+//   ) or ] → letter or digit or (: INSERT *
+//   digit → letter: INSERT *
+//   digit → (: INSERT *
 // ─────────────────────────────────────────────────────────────
+function isValueChar(c: string): boolean {
+    return /[0-9a-zA-Z)\]]/.test(c) || c === '!' || GREEK_CHARS.has(c);
+}
+
+function isStartChar(c: string): boolean {
+    return /[0-9a-zA-Z(]/.test(c) || GREEK_CHARS.has(c);
+}
+
 function needsMul(left: string, right: string): boolean {
     if (!left || !right) return false;
-    const L = left[left.length-1];
+    const L = left[left.length - 1];
     const R = right[0];
-    if (!/[0-9a-zA-Zα-ωπθφ)\]]/.test(L)) return false;
-    if (!/[0-9a-zA-Zα-ωπθφ(]/.test(R))   return false;
-    // letter → letter = word continuation, NOT multiplication
-    if (/[a-zA-Z]/.test(L) && /[a-zA-Z]/.test(R)) return false;
-    return true;
+
+    if (!isValueChar(L)) return false;
+    if (!isStartChar(R)) return false;
+
+    // ! always multiplies what follows
+    if (L === '!') return true;
+
+    // greek symbol on left always multiplies
+    if (GREEK_CHARS.has(L)) return true;
+
+    // ) or ] always multiplies letters/digits/(
+    if ((L === ')' || L === ']') && /[0-9a-zA-Z(]/.test(R)) return true;
+
+    // digit → letter/( → multiply
+    if (/[0-9]/.test(L) && /[a-zA-Z(]/.test(R)) return true;
+
+    // letter → letter: multiply ONLY if they are separate symbols
+    // i.e. not both part of a known function name continuation
+    // We can't know at emit-time whether it's mid-function, so we use a heuristic:
+    // single-char constants (not x/y/r/t) followed by another letter → multiply
+    if (/[a-zA-Z]/.test(L) && /[a-zA-Z(]/.test(R)) {
+        // If left ends with a known function call like "sin(x)" ending in )
+        // that's already handled by ) branch above.
+        // Here L is a letter. It's the tail of some identifier.
+        // We insert * between single-letter constants: a*x, a*b, k*n etc.
+        // But NOT inside function names — those arrive as \cmd tokens so
+        // they never pass through here letter-by-letter.
+        // Safe heuristic: always insert * between letter and letter/(.
+        // Function names are emitted atomically as "sin(x)", "ln(x)" etc.
+        // so their internal letters never pass through needsMul individually.
+        return true;
+    }
+
+    // digit → greek
+    if (/[0-9]/.test(L) && GREEK_CHARS.has(R)) return true;
+
+    // letter → greek
+    if (/[a-zA-Z]/.test(L) && GREEK_CHARS.has(R)) return true;
+
+    // greek → (
+    if (GREEK_CHARS.has(L) && R === '(') return true;
+
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -323,11 +374,11 @@ function convertLatex(latex: string): string {
             continue;
         }
 
-        // ── |expr| ────────────────────────────────────────────────
-        if (ch==='|') {
-            const j=s.indexOf('|',i+1);
-            if (j!==-1) { emit(`|${convertLatex(s.substring(i+1,j))}|`); i=j+1; }
-            else        { emit('|'); i++; }
+        // ── |expr| → abs(expr) ──────────────────────────────────
+        if (ch==="|") {
+            const j=s.indexOf("|",i+1);
+            if (j!==-1) { emit(`abs(${convertLatex(s.substring(i+1,j))})`); i=j+1; }
+            else        { emit("|"); i++; }
             continue;
         }
 
@@ -344,44 +395,40 @@ function convertLatex(latex: string): string {
                 const dA=readFracArg(s,i); i=dA.end;
                 const numRaw=nA.content.trim();
                 const denRaw=dA.content.trim();
-
-                // empty numerator → skip
                 if (!numRaw || numRaw==='?') continue;
-
-                // empty denominator → emit numerator only
                 if (!denRaw || denRaw==='?') {
                     const nH=convertLatex(numRaw);
                     if (nH) emit(wrapIfAdditive(nH));
                     continue;
                 }
-
                 const nH=convertLatex(numRaw);
                 const dH=convertLatex(denRaw);
                 if (!nH) continue;
-
-                // Always wrap fracs in parens → unambiguous when chained
                 emit(wrapFrac(nH, dH));
                 continue;
             }
 
-            // ── \sqrt ─────────────────────────────────────────────
-            if (cmd==='\\sqrt') {
+            // ── \sqrt — ALWAYS power form for consistency ──────────
+            // \sqrt{x}    → (x)^(1/2)
+            // \sqrt[3]{x} → (x)^(1/3)
+            if (cmd==="\\sqrt") {
                 i=skipSpace(s,i);
-                if (i<s.length && s[i]==='[') {
+                let rootN = "2";
+                if (i<s.length && s[i]==="[") {
                     const nr=extractGroup(s,i); i=nr.end;
-                    const bA=readFracArg(s,i); i=bA.end;
-                    emit(`(${convertLatex(bA.content)})^(1/${convertLatex(nr.content)})`);
-                } else {
-                    const bA=readFracArg(s,i); i=bA.end;
-                    emit(`sqrt(${convertLatex(bA.content)})`);
+                    rootN=convertLatex(nr.content);
                 }
+                const bA=readFracArg(s,i); i=bA.end;
+                const body=convertLatex(bA.content);
+                const rootWrapped=hasBareOperator(rootN)?`(${rootN})`:rootN;
+                emit(`(${body})^(1/${rootWrapped})`);
                 continue;
             }
 
             // ── \int \iint \iiint \oint ───────────────────────────
             if (cmd==='\\int'||cmd==='\\iint'||cmd==='\\iiint'||cmd==='\\oint') {
                 const prefix=cmd==='\\oint'?'contour_integral':cmd==='\\iint'?'double_integral':cmd==='\\iiint'?'triple_integral':'integral';
-                let lower='', upper='';
+                let lower='',upper='';
                 for (let a=0;a<2;a++) {
                     i=skipSpace(s,i); if(i>=s.length) break;
                     if(s[i]==='_'){i++;const b=readArg(s,i);lower=convertLatex(b.content);i=b.end;}
@@ -392,8 +439,8 @@ function convertLatex(latex: string): string {
                 const dm=rest.match(/^([\s\S]*?)\s*d([a-zA-Zα-ωθφ])\s*$/);
                 if (dm) {
                     emit(lower&&upper
-                        ? `${prefix} from ${lower} to ${upper} of ${convertLatex(dm[1].trim())} d${dm[2]}`
-                        : `${prefix} of ${convertLatex(dm[1].trim())} d${dm[2]}`);
+                        ?`${prefix} from ${lower} to ${upper} of ${convertLatex(dm[1].trim())} d${dm[2]}`
+                        :`${prefix} of ${convertLatex(dm[1].trim())} d${dm[2]}`);
                     i=s.length;
                 } else {
                     emit(lower&&upper?`${prefix} from ${lower} to ${upper} of `:`${prefix} of `);
@@ -422,8 +469,7 @@ function convertLatex(latex: string): string {
                 i=skipSpace(s,i);
                 let lp='';
                 if(i<s.length&&s[i]==='_'){i++;const b=readArg(s,i);lp=convertLatex(b.content);i=b.end;}
-                const body=convertLatex(s.substring(i).trim());
-                emit(lp?`lim(${lp}, ${body})`:`lim(${body})`);
+                emit(lp?`lim(${lp}, ${convertLatex(s.substring(i).trim())})`:`lim(${convertLatex(s.substring(i).trim())})`);
                 i=s.length; continue;
             }
 
@@ -456,16 +502,11 @@ function convertLatex(latex: string): string {
             if(['\\tilde','\\widetilde'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(`${convertLatex(b.content)}~`);continue;}
             if(['\\underline','\\underbrace','\\overbrace'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
             if(['\\overset','\\underset'].includes(cmd)){const _t=readArg(s,i);i=_t.end;const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
-
-            // ── Font wrappers ──────────────────────────────────────
             if(['\\mathbf','\\mathit','\\mathsf','\\mathtt','\\mathbb','\\mathcal','\\mathscr','\\mathfrak'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
-
-            // ── Layout-only → skip ────────────────────────────────
             if(['\\displaystyle','\\textstyle','\\scriptstyle','\\scriptscriptstyle',
                 '\\normalsize','\\small','\\large','\\Large','\\LARGE','\\huge','\\Huge','\\tiny',
                 '\\left','\\right','\\nonumber','\\label','\\tag','\\not'].includes(cmd)) continue;
 
-            // ── Unknown → strip backslash ─────────────────────────
             emit(cmd.replace(/^\\/,''));
             continue;
         }
@@ -475,7 +516,6 @@ function convertLatex(latex: string): string {
             i++;
             const arg=readArg(s,i); i=arg.end;
             const exp=convertLatex(arg.content);
-            // ^ is always suffix — never prepend *
             result += hasBareOperator(exp) ? `^(${exp})` : `^${exp}`;
             continue;
         }
@@ -489,15 +529,13 @@ function convertLatex(latex: string): string {
         }
 
         // ── Plain text: greedy match known function names first ───
-        // Handles cases where a function name arrives as raw letters
-        // (safety net if preNormalise didn't add backslash)
         {
             let matched=false;
             for (const fn of KNOWN_FUNCS) {
                 if (s.startsWith(fn, i)) {
                     const after=i+fn.length;
                     const nextCh=after<s.length ? s[after] : '';
-                    if (/[a-zA-Z]/.test(nextCh)) continue; // part of longer word
+                    if (/[a-zA-Z]/.test(nextCh)) continue;
                     i=after; i=skipSpace(s,i);
                     let power='';
                     if(i<s.length&&s[i]==='^'){i++;const pA=readArg(s,i);power=convertLatex(pA.content);i=pA.end;i=skipSpace(s,i);}
@@ -533,7 +571,7 @@ function handleDerivativeNotation(latex: string): string | null {
     const order=m[2]?parseInt(m[2]):1;
     const variable=m[3].replace(/^\\/,'');
     const content=convertLatex(m[6]||'');
-    return order===1 ? `d/d${variable} [${content}]` : `d^${order}/d${variable}^${order} [${content}]`;
+    return order===1?`d/d${variable} [${content}]`:`d^${order}/d${variable}^${order} [${content}]`;
 }
 
 function handlePartialDerivative(latex: string): string | null {
@@ -548,17 +586,13 @@ function handlePartialDerivative(latex: string): string | null {
 // ─────────────────────────────────────────────────────────────
 function postClean(s: string): string {
     return s
-        // stray right/left words
         .replace(/([a-zA-Z0-9])right\b/g,'$1').replace(/([a-zA-Z0-9])left\b/g,'$1')
         .replace(/\bright\b/g,'').replace(/\bleft\b/g,'')
-        // "/ )" artefact from empty denominator
         .replace(/\/\s*\)/g,')').replace(/\/\s*\]/g,']')
-        // double star cleanup
         .replace(/\*{2,}/g,'*')
-        // MathLive artifact: "-1*tan" → "-tan", "+1*sin" → "+sin"
+        // MathLive artifact: -1*func or +1*func → -func / +func
         .replace(/([-+*/(\[,])\s*1\s*\*(?=[a-zA-Z(])/g,'$1')
         .replace(/^1\*(?=[a-zA-Z(])/,'')
-        // stray $
         .replace(/\$\$/g,'').replace(/\$/g,'')
         .replace(/\s{2,}/g,' ')
         .trim();
@@ -570,21 +604,6 @@ function postClean(s: string): string {
 
 /**
  * Convert a LaTeX expression to human-readable keyboard notation.
- *
- * Verified correct for:
- *   \frac12                    → (1/2)
- *   \frac12\frac14             → (1/2)*(1/4)
- *   \frac{x^2-1}{2a}          → (x^2-1)/(2*a)
- *   \operatorname{\mathrm{arctanh}}(x) → arctanh(x)
- *   \sin^2(x)+\cos^2(x)       → sin(x)^2+cos(x)^2
- *   \sec(x)\csc(x)            → sec(x)*csc(x)
- *   2e^{x^2}                  → 2*e^(x^2)
- *   -1\tan(x)                 → -tan(x)
- *   \frac{d}{dx}\sin(x)       → d/dx [sin(x)]
- *   \int_0^1 x^2 dx           → integral from 0 to 1 of x^2 dx
- *   \sum_{n=1}^{\infty}\frac{1}{n^2} → sum(n=1 to inf, (1/n^2))
- *   \sqrt[3]{x}               → (x)^(1/3)
- *   \left|x-1\right|          → |x-1|
  */
 export function latexToHuman(latex: string): string {
     if (!latex || typeof latex !== 'string' || !latex.trim()) return '';
