@@ -599,11 +599,7 @@ def _write_latex_file(all_results: list, path: str = "tangent_equations.tex"):
 
     L.append(r"\end{document}")
 
-    with open(path, "w", encoding="utf-8") as f:
-        doc = _clean_latex("\n".join(L))
-        f.write(doc)
-
-    print(f"\n{C.GREEN}{C.BOLD}  LaTeX file written → {path}{C.RESET}\n")
+    return
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -657,7 +653,6 @@ class TestReporter:
         )
         _sep('═', 110, C.CYAN)
 
-        _write_latex_file(all_results, latex_out)
         return all_results
 
 
@@ -670,10 +665,3 @@ if __name__ == "__main__":
 
     reporter = TestReporter()
     reporter.run_all(latex_out=tex_here)
-
-    # Copy file to outputs dir
-    out_dir = "/mnt/user-data/outputs"
-    if os.path.isdir(out_dir):
-        dest = os.path.join(out_dir, "tangent_equations.tex")
-        shutil.copy(tex_here, dest)
-        print(f"\033[92m\033[1m  Copied → {dest}\033[0m")
