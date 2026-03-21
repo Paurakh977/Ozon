@@ -236,6 +236,8 @@ _LATEX_REPLACEMENTS = [
     (r"\operatorname{acot}",  r"\arccot"),
     (r"\operatorname{asec}",  r"\arcsec"),
     (r"\operatorname{acsc}",  r"\arccsc"),
+    # natural log
+    (r"\log",                 r"\ln"),
 ]
 
 def _clean_latex(s: str) -> str:
@@ -292,6 +294,11 @@ def _sep(char='─', width=110, color=C.GRAY):
     print(color + char * width + C.RESET)
 
 
+def _lx(expr: sp.Expr) -> str:
+    """Return a clean LaTeX string for a single SymPy expression."""
+    return _clean_latex(latex(expr))
+
+
 def _print_terminal_result(res: TangentResult, idx: int):
     ok     = res.status == "OK"
     num_ok = (not math.isnan(res.num_error)) and res.num_error < 1e-5
@@ -300,21 +307,24 @@ def _print_terminal_result(res: TangentResult, idx: int):
     num_str = f"{res.num_error:.2e}" if not math.isnan(res.num_error) else "N/A"
     num_col = C.GREEN if num_ok else C.YELLOW
 
+    # LaTeX for f(x) from the raw input string
+    try:
+        fx_latex = _lx(_parse(res.func_str))
+    except Exception:
+        fx_latex = res.func_str
+
     _sep('─')
     print(
         f"{tag_col}{C.BOLD}{tag_sym} [{idx:>3}]{C.RESET}  "
-        f"{C.CYAN}f(x) = {_pretty_func(res.func_str)}{C.RESET}   "
+        f"{C.CYAN}$$ f(x) = {fx_latex} $${C.RESET}   "
         f"{C.GRAY}Δ={num_col}{num_str}{C.GRAY}  {res.time_s*1000:.0f}ms{C.RESET}"
     )
     if ok and res.ft_expr is not None:
-        print(f"         {C.GRAY}f'(x){C.RESET} = {C.WHITE}{_pretty(res.deriv_expr)}{C.RESET}")
-        print(f"         {C.GRAY}f(a) {C.RESET} = {C.MAGENTA}{_pretty(res.ft_expr)}{C.RESET}")
-        print(f"         {C.GRAY}f'(a){C.RESET} = {C.MAGENTA}{_pretty(res.fpt_expr)}{C.RESET}")
-        lhs_str = f"y - ({_pretty(res.ft_expr)})"
+        print(f"         {C.GRAY}f'(x){C.RESET} = {C.WHITE}$$ {_lx(res.deriv_expr)} $${C.RESET}")
+        print(f"         {C.GRAY}f(a) {C.RESET} = {C.MAGENTA}$$ {_lx(res.ft_expr)} $${C.RESET}")
+        print(f"         {C.GRAY}f'(a){C.RESET} = {C.MAGENTA}$$ {_lx(res.fpt_expr)} $${C.RESET}")
         print(f"\n  {C.YELLOW}{C.BOLD}TANGENT:{C.RESET}  "
-              f"{C.YELLOW}{lhs_str}{C.RESET}  {C.WHITE}={C.RESET}  "
-              f"{C.GREEN}{_pretty(res.rhs_expr)}{C.RESET}")
-        print(f"  {C.GRAY}LaTeX  :{C.RESET}  {C.BLUE}$$ {_latex_tangent(res)} $${C.RESET}")
+              f"{C.BLUE}$$ {_latex_tangent(res)} $${C.RESET}")
     else:
         print(f"  {C.RED}{res.error[:100]}{C.RESET}")
     print()
