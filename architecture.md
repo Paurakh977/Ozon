@@ -1,3 +1,14 @@
+input: 
+
+$$ \frac{\frac{|x^{\frac15}-2|+4}{\pi}\cos^2\left(\frac{x}{\sqrt{x^{2-x+\frac12}+3}-\pi}\right)\operatorname{\mathrm{arccsch}}\left(\frac{\frac{a}{2}}{x}+1\right)x!\pi|x^3-\frac{1}{x}|}{e^{x^2-3}+\frac12-\frac{2x+2}{3}}\ln\left(x-\sqrt[2]{\frac{x-1}{2}+1}+\frac{2}{x}\right)\cdot\frac12\frac{\frac14\left(\operatorname{\mathrm{arctanh}}\left(\frac{x^2-2}{x-2+0.5^{x}}+\frac13x+\frac{\left(\frac23-x-\frac12+\frac{\left(x+2\right)}{4}\right)}{2}\right)\right)}{2e^{\left(x^2-\ln\left(2\right)\right)}-1\tan\left(x\right)} $$
+
+
+human: 
+[HUMAN INPUT] id=1 → (((abs(x^(1/5)-2)+4)/π)*cos((x/((x^(2-x+(1/2))+3)^(1/2)-π)))^2*arccsch(((a/2)/x)+1)*x!*π*abs(x^3-(1/x))/(e^(x^2-3)+(1/2)-((2*x+2)/3)))*ln(x-(((x-1)/2)+1)^(1/2)+(2/x))*(1/2)*((1/4)*(arctanh(((x^2-2)/(x-2+0.5^x))+(1/3)*x+(((2/3)-x-(1/2)+((x+2)/4))/2)))/(2*e^(x^2-ln(2))-tan(x)))
+
+[RAW  LATEX ] id=1 → \frac{\frac{|x^{\frac15}-2|+4}{\pi}\cos^2\left(\frac{x}{\sqrt{x^{2-x+\frac12}+3}-\pi}\right)\operatorname{\mathrm{arccsch}}\left(\frac{\frac{a}{2}}{x}+1\right)x!\pi|x^3-\frac{1}{x}|}{e^{x^2-3}+\frac12-\frac{2x+2}{3}}\ln\left(x-\sqrt[2]{\frac{x-1}{2}+1}+\frac{2}{x}\right)\cdot\frac12\frac{\frac14\left(\operatorname{\mathrm{arctanh}}\left(\frac{x^2-2}{x-2+0.5^{x}}+\frac13x+\frac{\left(\frac23-x-\frac12+\frac{\left(x+2\right)}{4}\right)}{2}\right)\right)}{2e^{\left(x^2-\ln\left(2\right)\right)}-1\tan\left(x\right)}
+
+
 This is an ambitious and exciting project. To answer your first question directly: **No, you do not need a backend for the mathematical computations.**
 
 Desmos, GeoGebra, and similar tools run almost entirely client-side. Sending math to a server to be calculated adds network latency, which ruins the "real-time" interaction of dragging a slider and seeing the graph update instantly.
