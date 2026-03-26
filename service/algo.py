@@ -212,19 +212,44 @@ def get_sympified_expr(user_input, local_dict=None):
     -------
     sympy expression
         Parsed and rationalized expression with proper symbol assumptions
-
-    Features
-    --------
-    - Implicit multiplication (e.g., "2x" -> 2*x)
-    - XOR as exponentiation (e.g., "x^2" -> x**2)
-    - Rationalized float exponents
-    - Custom symbol assumptions via local_dict
     """
+    import sympy as sp
+    
+    # ── Universal base dictionary for robust math parsing ──
+    # This prevents fragmentation and ensures all engines map 'arctan', 'e', 'ln', etc. correctly.
+    base_dict = {
+        # Constants
+        'e': sp.E, 'E': sp.E, 'pi': sp.pi,
+        
+        # Inverse Trig (human 'arc' prefix -> SymPy 'a' prefix)
+        'arctan': sp.atan, 'arcsin': sp.asin, 'arccos': sp.acos,
+        'arccot': sp.acot, 'arcsec': sp.asec, 'arccsc': sp.acsc,
+        
+        # Inverse Hyperbolic (human 'arc' prefix -> SymPy 'a' prefix)
+        'arctanh': sp.atanh, 'arcsinh': sp.asinh, 'arccosh': sp.acosh,
+        'arccoth': sp.acoth, 'arcsech': sp.asech, 'arccsch': sp.acsch,
+        
+        # Logarithms
+        'ln': sp.log, 'log': sp.log,
+        
+        # Absolute value and rounding
+        'abs': sp.Abs, 'Abs': sp.Abs,
+        'floor': sp.floor, 'ceil': sp.ceiling, 'ceiling': sp.ceiling,
+        
+        # Miscellaneous wrappers/aliases
+        'sgn': sp.sign, 'sign': sp.sign
+    }
+    
+    # Merge the universal base functions with any custom logic/symbols provided (like x, n, a)
+    final_dict = base_dict.copy()
+    if local_dict:
+        final_dict.update(local_dict)
+
     transformations = (
         standard_transformations +
         (implicit_multiplication_application, convert_xor)
     )
-    expr = parse_expr(user_input, transformations=transformations, local_dict=local_dict)
+    expr = parse_expr(user_input, transformations=transformations, local_dict=final_dict)
     expr = _rationalize_float_exponents(expr)
     return expr
 

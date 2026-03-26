@@ -2,16 +2,7 @@ import sympy as sp
 import time
 from sympy.calculus.util import continuous_domain, periodicity, AccumBounds
 from sympy.calculus.singularities import singularities
-
-try:
-    from algo import get_sympified_expr
-except ImportError:
-    from sympy.parsing.sympy_parser import (
-        parse_expr, standard_transformations, implicit_multiplication_application
-    )
-    def get_sympified_expr(user_input):
-        transformations = (standard_transformations + (implicit_multiplication_application,))
-        return parse_expr(user_input, transformations=transformations)
+from algo import get_sympified_expr
 
 
 class FunctionAnalysisEngine:
@@ -1247,17 +1238,15 @@ class FunctionAnalysisEngine:
 
         start_time = time.time()
 
-        # Normalise input string
-        func_string = func_string.replace('^', '**')
-        func_string = func_string.replace('e**', 'E**').replace('e^', 'E**')
-        for old, new in [('arctan','atan'), ('arcsin','asin'), ('arccos','acos'),
-                         ('arccot','acot'), ('arcsec','asec'), ('arccsc','acsc')]:
-            func_string = func_string.replace(old, new)
-
-        expr = get_sympified_expr(func_string)
         real_x = sp.Symbol('x', real=True)
-        expr = expr.subs({s: real_x for s in expr.free_symbols if s.name == 'x'})
         self.x = real_x
+        
+        # We only need to provide engine-specific variable symbols now!
+        # get_sympified_expr in algo.py automatically handles e, ln, arctan, etc.
+        local_dict = {'x': real_x}
+
+        # get_sympified_expr handles implicit mult, '^' via convert_xor, float rationalization
+        expr = get_sympified_expr(func_string, local_dict=local_dict)
 
         # ── KEY: domain from original; simplified expr for everything else ──
         # This fixes the 12-second performance bug for cancellable rationals
@@ -1483,6 +1472,7 @@ if __name__ == "__main__":
 
     test_functions = [
         # Originals
+        "(sin(ln((x)^(1/2)))/x!)",
         "x^(1/x)",
         "x^3 - 6*x^2 + 9*x + 15",
         "1 / x",
