@@ -27,6 +27,8 @@ from sympy import (
 )
 import numpy as np
 
+from algo import get_sympified_expr
+
 # ── symbols ──────────────────────────────────────────────────────────────────
 x = symbols('x', real=True)   # running variable in the tangent line
 a = symbols('a', real=True)   # constant tangency point
@@ -54,15 +56,7 @@ class TangentResult:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _parse(func_str: str) -> sp.Expr:
-    ns = {
-        'x': x, 'pi': pi, 'E': E, 'e': E,
-        'sin': sin, 'cos': cos, 'tan': tan,
-        'exp': exp, 'log': log, 'sqrt': sqrt,
-        'asin': asin, 'acos': acos, 'atan': atan,
-        'abs': Abs, 'Abs': Abs,
-        'floor': floor, 'ceiling': ceiling, 'ceil': ceiling,
-    }
-    return sympify(func_str, locals=ns, evaluate=True)
+    return get_sympified_expr(func_str, local_dict={'x': x, 'a': a})
 
 
 def _simplify(expr: sp.Expr) -> sp.Expr:
