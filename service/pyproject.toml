@@ -12,6 +12,7 @@ dependencies = [
     "colorama>=0.4.6",
     "maturin>=1.11.5",
     "numpy>=2.4.1",
+    "ruff>=0.15.7",
     "scipy>=1.17.0",
     "sympy>=1.14.0",
 ]
