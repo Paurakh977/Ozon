@@ -947,6 +947,53 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
 
 
 # ─────────────────────────────────────────────────────────────────
+#  UNIVERSAL EVALUATOR ENGINE
+# ─────────────────────────────────────────────────────────────────
+
+def evaluate_expression(expr_str: str):
+    """
+    Automatically detects if an expression is a Power Series (contains 'x'),
+    or a Sequence/Series. Evaluates and returns the appropriate results.
+    """
+    from algo import get_sympified_expr
+    
+    n = sp.Symbol('n', integer=True, positive=True)
+    x = sp.Symbol('x', real=True)
+    
+    result_dict = {
+        "expr": expr_str,
+        "is_power_series": False,
+        "seq_result": None,
+        "ser_result": None,
+        "power_series_result": None,
+        "error": None
+    }
+    
+    try:
+        sym_expr = get_sympified_expr(expr_str, local_dict={"n": n, "x": x})
+        
+        # Proper check if 'x' is a free symbol
+        is_power_series = x in sym_expr.free_symbols
+        result_dict["is_power_series"] = is_power_series
+        
+        if is_power_series:
+            res = check_power_series(sym_expr, n, x)
+            result_dict["power_series_result"] = res
+        else:
+            # We must use string for sequence/series because their engine
+            # expects a string to possibly re-parse or we can just pass
+            # the expr_str. They handle strings fine.
+            seq_res = check_sequence_convergence(expr_str, n="n")
+            ser_res = check_series_convergence(expr_str, n="n", start_idx=1)
+            result_dict["seq_result"] = seq_res
+            result_dict["ser_result"] = ser_res
+    except Exception as e:
+        result_dict["error"] = str(e)
+        
+    return result_dict
+
+
+# ─────────────────────────────────────────────────────────────────
 #  FORMATTING
 # ─────────────────────────────────────────────────────────────────
 
