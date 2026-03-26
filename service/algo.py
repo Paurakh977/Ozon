@@ -11,7 +11,12 @@ from sympy import (Symbol, S, sympify, oo, zoo, nan, lambdify, Abs, floor, ceili
                    tan, cot, sec, csc, E, pi, Mul, Add)
 from sympy.calculus.util import continuous_domain, function_range, minimum, maximum, AccumBounds
 from sympy.sets import Interval, Union, FiniteSet, EmptySet, Reals, Integers
-from sympy.parsing.sympy_parser import parse_expr, standard_transformations, implicit_multiplication_application
+from sympy.parsing.sympy_parser import (
+    parse_expr,
+    standard_transformations,
+    implicit_multiplication_application,
+    convert_xor
+)
 import colorama
 from colorama import Fore, Style
 
@@ -190,9 +195,36 @@ def _rationalize_float_exponents(expr):
     return expr
 
 
-def get_sympified_expr(user_input):
-    transformations = (standard_transformations + (implicit_multiplication_application,))
-    expr = parse_expr(user_input, transformations=transformations)
+def get_sympified_expr(user_input, local_dict=None):
+    """
+    Parse a string input into a SymPy expression with proper transformations.
+
+    Parameters
+    ----------
+    user_input : str
+        Mathematical expression as a string
+    local_dict : dict, optional
+        Dictionary mapping variable names to SymPy symbols with specific assumptions.
+        Example: {'n': Symbol('n', integer=True, positive=True), 'x': Symbol('x', real=True)}
+        If None, symbols are created with default assumptions.
+
+    Returns
+    -------
+    sympy expression
+        Parsed and rationalized expression with proper symbol assumptions
+
+    Features
+    --------
+    - Implicit multiplication (e.g., "2x" -> 2*x)
+    - XOR as exponentiation (e.g., "x^2" -> x**2)
+    - Rationalized float exponents
+    - Custom symbol assumptions via local_dict
+    """
+    transformations = (
+        standard_transformations +
+        (implicit_multiplication_application, convert_xor)
+    )
+    expr = parse_expr(user_input, transformations=transformations, local_dict=local_dict)
     expr = _rationalize_float_exponents(expr)
     return expr
 
