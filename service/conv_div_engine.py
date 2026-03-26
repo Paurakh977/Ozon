@@ -320,7 +320,7 @@ def get_absolute_term(expr, n):
     return abs_n
 
 
-def check_sequence_convergence(expr, n, py_func=None):
+def check_sequence_convergence(expr, n=None, py_func=None):
     """
     Determine whether lim_{n→∞} expr converges.
 
@@ -330,6 +330,23 @@ def check_sequence_convergence(expr, n, py_func=None):
       n^3·(sin(1/n) − 1/n + 1/(6n³))
     and must not be used.
     """
+    from algo import get_sympified_expr
+
+    if n is None:
+        n = sp.Symbol("n", integer=True, positive=True)
+        n_name = "n"
+    elif isinstance(n, str):
+        n_name = n
+        n = sp.Symbol(n, integer=True, positive=True)
+    else:
+        n_name = str(n)
+
+    if isinstance(expr, str):
+        try:
+            expr = get_sympified_expr(expr, local_dict={n_name: n})
+        except Exception as e:
+            return None, f"Parse Error: {str(e)}", ""
+
     prof = Profiler()
 
     if expr.has(sp.binomial):
@@ -466,7 +483,7 @@ def check_sequence_convergence(expr, n, py_func=None):
 # ─────────────────────────────────────────────────────────────────
 
 
-def check_series_convergence(expr, n, start_idx: int = 1, py_func=None):
+def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
     """
     Determine whether Σ expr (n = start_idx … ∞) converges.
 
@@ -487,6 +504,23 @@ def check_series_convergence(expr, n, start_idx: int = 1, py_func=None):
     9.  Dirichlet Test
     10. SymPy Sum.is_convergent()    (last resort)
     """
+    from algo import get_sympified_expr
+
+    if n is None:
+        n = sp.Symbol("n", integer=True, positive=True)
+        n_name = "n"
+    elif isinstance(n, str):
+        n_name = n
+        n = sp.Symbol(n, integer=True, positive=True)
+    else:
+        n_name = str(n)
+
+    if isinstance(expr, str):
+        try:
+            expr = get_sympified_expr(expr, local_dict={n_name: n})
+        except Exception as e:
+            return None, f"Parse Error: {str(e)}", ""
+
     prof = Profiler()
     try:
         # ── 0. NumPy series fast path ─────────────────────────────
@@ -941,202 +975,48 @@ def main():
     # (sin(1/n) − 1/n destroys ~12 significant digits) and the numpy
     # prescreen would fire on pure floating-point noise, returning
     # ~1.29e-05 instead of 0.  The symbolic pipeline gives the correct 0.
-    sequences = [
-        (n * sp.sin(n), "n * sin(n) (Oscillatory Unbounded)", None),
-        (
-            sp.cos(2 / n) ** (n**2),
-            "cos(2/n)^(n^2) (Taylor Exp)",
-            lambda k: math.cos(2 / k) ** (k**2),
-        ),
-        (
-            sp.factorial(n) / 100**n,
-            "n! / 100^n (Heavy Growth)",
-            lambda k: math.exp(math.lgamma(k + 1) - k * math.log(100))
-            if k < 500
-            else float("inf"),
-        ),
-        (
-            (n / sp.log(n)) * (n ** (1 / n) - 1),
-            "n/ln(n) * (n^(1/n) - 1)",
-            lambda k: (k / math.log(k)) * (k ** (1 / k) - 1),
-        ),
-        (sp.sqrt(n**2 + n) - n, "sqrt(n^2 + n) - n", lambda k: math.sqrt(k**2 + k) - k),
-        (
-            (1 + 1 / n) ** (n**2),
-            "(1 + 1/n)^(n^2) (Exp explosion)",
-            lambda k: (1 + 1 / k) ** (k**2),
-        ),
-        (
-            sp.factorial(n) ** (1 / n) / n,
-            "(n!)^(1/n) / n (Stirling)",
-            lambda k: math.exp(math.lgamma(k + 1) / k - math.log(k)),
-        ),
-        (
-            sp.log(n) ** sp.log(n) / n,
-            "ln(n)^ln(n) / n (Tower vs Poly)",
-            lambda k: math.exp(math.log(math.log(k)) * math.log(k) - math.log(k))
-            if k > 2
-            else 1,
-        ),
-        ((-1) ** n * (n / (n + 1)), "(-1)^n * (n/(n+1)) (Alt Bounded)", None),
-        (
-            (1 - 2 / n) ** (3 * n),
-            "(1 - 2/n)^(3n) (Exp transform)",
-            lambda k: (1 - 2 / k) ** (3 * k),
-        ),
-        (
-            n ** sp.log(n) / 2**n,
-            "n^ln(n) / 2^n (Sub-exponential)",
-            lambda k: math.exp(math.log(k) ** 2 - k * math.log(2)),
-        ),
-        (
-            (
-                (2 ** (4 * n) * sp.factorial(n) ** 4)
-                / (sp.factorial(2 * n) ** 2 * (2 * n + 1))
-            ),
-            "Wallis Product (Factorial Form) -> pi/2",
-            lambda k: math.exp(
-                4 * k * math.log(2)
-                + 4 * math.lgamma(k + 1)
-                - 2 * math.lgamma(2 * k + 1)
-                - math.log(2 * k + 1)
-            ),
-        ),
-        # ↓ NO lambda — cancellation trap (see note above)
-        (
-            n**3 * (sp.sin(1 / n) - 1 / n + 1 / (6 * n**3)),
-            "n^3*(sin(1/n)-1/n+1/(6n^3))",
-            None,
-        ),
-        (
-            (1 + sp.sin(1 / n) / n) ** (n**2),
-            "(1 + sin(1/n)/n)^(n^2) (Tricky Exp)",
-            lambda k: (1 + math.sin(1 / k) / k) ** (k**2),
-        ),
-        (
-            sp.gamma(n + 0.5) / (sp.sqrt(n) * sp.gamma(n)),
-            "Gamma Boundary Asymptotics",
-            lambda k: math.exp(
-                math.lgamma(k + 0.5) - 0.5 * math.log(k) - math.lgamma(k)
-            ),
-        ),
-        (
-            n**2 * (sp.exp(1 / n) - 1 - 1 / n),
-            "n^2 * (e^(1/n) - 1 - 1/n) (Taylor Trap)",
-            lambda k: k**2 * (math.exp(1 / k) - 1 - 1 / k),
-        ),
-        (
-            (sp.log(n + 1) - sp.log(n)) * n,
-            "n(ln(n+1) - ln(n)) (Limit e Identity)",
-            lambda k: k * (math.log(k + 1) - math.log(k)),
-        ),
-    ]
-
+    sequences =[
+    "n * sin(n)",  # Oscillatory Unbounded
+    "cos(2/n)^(n^2)",  # Taylor Exp
+    "factorial(n) / 100^n",  # Heavy Growth
+    "(n / log(n)) * (n^(1/n) - 1)",  # n/ln(n) * (n^(1/n) - 1)
+    "sqrt(n^2 + n) - n",  # sqrt(n^2 + n) - n
+    "(1 + 1/n)^(n^2)",  # Exp explosion
+    "factorial(n)^(1/n) / n",  # Stirling
+    "log(n)^log(n) / n",  # Tower vs Poly
+    "(-1)^n * (n / (n + 1))",  # Alt Bounded
+    "(1 - 2/n)^(3*n)",  # Exp transform
+    "n^log(n) / 2^n",  # Sub-exponential
+    "(2^(4*n) * factorial(n)^4) / (factorial(2*n)^2 * (2*n + 1))",  # Wallis Product (Factorial Form) -> pi/2
+    "n^3 * (sin(1/n) - 1/n + 1/(6*n^3))",  # Cancellation trap
+    "(1 + sin(1/n)/n)^(n^2)",  # Tricky Exp
+    "gamma(n + 0.5) / (sqrt(n) * gamma(n))",  # Gamma Boundary Asymptotics
+    "n^2 * (exp(1/n) - 1 - 1/n)",  # Taylor Trap
+    "(log(n + 1) - log(n)) * n",  # Limit e Identity
+]
     # ── Series ────────────────────────────────────────────────────
     # Each tuple: (sympy_expr, start_idx, description, py_func | None)
-    series = [
-        ((-1) ** n * sp.log(n) / n, 2, "(-1)^n * ln(n)/n (Alt)", None),
-        (
-            1 / (n * sp.log(n)),
-            2,
-            "1 / (n * ln(n)) (Classic Divergent)",
-            lambda k: 1 / (k * math.log(k)),
-        ),
-        (
-            1 / (n * sp.log(n) ** 1.1),
-            2,
-            "1 / (n * ln(n)^1.1) (Classic Conv)",
-            lambda k: 1 / (k * math.log(k) ** 1.1),
-        ),
-        (sp.sin(1 / n), 1, "sin(1/n) (Harmonic Equivalent)", lambda k: math.sin(1 / k)),
-        (
-            1 - sp.cos(1 / n),
-            1,
-            "1 - cos(1/n) (Taylor ~1/n^2)",
-            lambda k: 1 - math.cos(1 / k),
-        ),
-        (
-            (n / (n + 1)) ** n,
-            1,
-            "(n/(n+1))^n (Nth term -> 1/e)",
-            lambda k: (k / (k + 1)) ** k,
-        ),
-        (
-            (n / (n + 1)) ** (n**2),
-            1,
-            "(n/(n+1))^(n^2) (Root)",
-            lambda k: (k / (k + 1)) ** (k**2),
-        ),
-        (
-            sp.factorial(n) / n**n,
-            1,
-            "n! / n^n (Ratio Test boundary)",
-            lambda k: math.exp(math.lgamma(k + 1) - k * math.log(k)),
-        ),
-        (
-            (sp.factorial(n) * sp.exp(n)) / n ** (n + 0.5),
-            1,
-            "n!*e^n / n^(n+0.5) (Gauss)",
-            lambda k: math.exp(math.lgamma(k + 1) + k - (k + 0.5) * math.log(k)),
-        ),
-        (
-            sp.factorial(2 * n) / (sp.factorial(n) ** 2 * 4**n),
-            1,
-            "Wallis Diverge",
-            lambda k: math.exp(
-                math.lgamma(2 * k + 1) - 2 * math.lgamma(k + 1) - k * math.log(4)
-            ),
-        ),
-        (
-            sp.log(n) ** sp.log(n) / n ** sp.log(n),
-            2,
-            "ln(n)^ln(n) / n^ln(n)",
-            lambda k: math.exp(math.log(math.log(k)) * math.log(k) - math.log(k) ** 2)
-            if k > 2
-            else 1,
-        ),
-        (
-            1 / (n ** (1 + 1 / sp.log(n))),
-            2,
-            "1 / n^(1 + 1/ln(n)) (Log Trap)",
-            lambda k: 1 / (k ** (1 + 1 / math.log(k))),
-        ),
-        ((-1) ** n * sp.sqrt(n) / (n + 100), 1, "(-1)^n * sqrt(n) / (n+100)", None),
-        (
-            sp.sqrt(n + 1) - sp.sqrt(n),
-            1,
-            "sqrt(n+1) - sqrt(n) (Telescope Div)",
-            lambda k: math.sqrt(k + 1) - math.sqrt(k),
-        ),
-        (
-            1 / (n * sp.log(n) * sp.log(sp.log(n)) ** 2),
-            3,
-            "1/(n*ln(n)*ln(ln(n))^2)",
-            lambda k: 1 / (k * math.log(k) * math.log(math.log(k)) ** 2)
-            if k > 2
-            else 0,
-        ),
-        (
-            (n ** (n + 1 / n)) / ((n + 1 / n) ** n),
-            1,
-            "n^(n+1/n) / (n+1/n)^n (Heavy Base)",
-            lambda k: math.exp((k + 1 / k) * math.log(k) - k * math.log(k + 1 / k)),
-        ),
-        (
-            1 / (n ** (sp.S(10001) / 10000)),
-            1,
-            "1 / n^(1.0001) (Poly Edge Trap)",
-            lambda k: 1 / k**1.0001,
-        ),
-        (
-            sp.log(n) ** sp.log(n) / 10**n,
-            2,
-            "ln(n)^ln(n) / 10^n (Root Extractor)",
-            lambda k: math.exp(math.log(math.log(k)) * math.log(k) - k * math.log(10))
-            if k > 2
-            else 1,
-        ),
-    ]
+    
+    series =[
+    "(-1)^n * log(n) / n",  # Alt
+    "1 / (n * log(n))",  # Classic Divergent
+    "1 / (n * log(n)^1.1)",  # Classic Conv
+    "sin(1/n)",  # Harmonic Equivalent
+    "1 - cos(1/n)",  # Taylor ~1/n^2
+    "(n / (n + 1))^n",  # Nth term -> 1/e
+    "(n / (n + 1))^(n^2)",  # Root
+    "factorial(n) / n^n",  # Ratio Test boundary
+    "(factorial(n) * exp(n)) / n^(n + 0.5)",  # Gauss
+    "factorial(2*n) / (factorial(n)^2 * 4^n)",  # Wallis Diverge
+    "log(n)^log(n) / n^log(n)",  # ln(n)^ln(n) / n^ln(n)
+    "1 / n^(1 + 1/log(n))",  # Log Trap
+    "(-1)^n * sqrt(n) / (n + 100)",  # (-1)^n * sqrt(n) / (n+100)
+    "sqrt(n + 1) - sqrt(n)",  # Telescope Div
+    "1 / (n * log(n) * log(log(n))^2)",  # 1/(n*ln(n)*ln(ln(n))^2)
+    "n^(n + 1/n) / (n + 1/n)^n",  # Heavy Base
+    "1 / n^(1.0001)",  # Poly Edge Trap
+    "log(n)^log(n) / 10^n",  # Root Extractor
+]
 
     # ── Print sequences ───────────────────────────────────────────
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
@@ -1150,13 +1030,13 @@ def main():
     print("-" * 155)
 
     total_seq_time = 0.0
-    for i, (expr, desc, py_func) in enumerate(sequences, 1):
+    for i, (expr) in enumerate(sequences, 1):
         t0 = time.perf_counter()
-        is_conv, reason, logs = check_sequence_convergence(expr, n, py_func)
+        is_conv, reason, logs = check_sequence_convergence(expr)
         ms = (time.perf_counter() - t0) * 1000
         total_seq_time += ms
         print(
-            f"{i:<3} | {desc:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     # ── Print series ──────────────────────────────────────────────
@@ -1171,13 +1051,13 @@ def main():
     print("-" * 155)
 
     total_ser_time = 0.0
-    for i, (expr, start_idx, desc, py_func) in enumerate(series, 1):
+    for i, (expr ) in enumerate(series, 1):
         t0 = time.perf_counter()
-        is_conv, reason, logs = check_series_convergence(expr, n, start_idx, py_func)
+        is_conv, reason, logs = check_series_convergence(expr, )
         ms = (time.perf_counter() - t0) * 1000
         total_ser_time += ms
         print(
-            f"{i:<3} | {desc:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
@@ -1202,245 +1082,54 @@ def second_main():
     n = sp.Symbol("n", integer=True, positive=True)
 
     # ── Sequences ─────────────────────────────────────────────────
-    sequences = [
-        (
-            ((n**2 + 1) / (n**2 - 1)) ** (n**2),
-            "((n^2+1)/(n^2-1))^(n^2)  -> e^2",
-            lambda k: ((k**2 + 1) / (k**2 - 1)) ** (k**2),
-        ),
-        (
-            (1 + sp.log(n) / n) ** n,
-            "(1 + ln(n)/n)^n  -> oo",
-            lambda k: (1 + math.log(k) / k) ** k,
-        ),
-        (
-            (sp.factorial(n)) ** (sp.S(1) / n**2),
-            "(n!)^(1/n^2)  -> 1",
-            lambda k: math.exp(math.lgamma(k + 1) / k**2),
-        ),
-        (
-            n * (sp.exp(1 / n) - sp.cos(1 / n)),
-            "n*(e^(1/n) - cos(1/n))  -> 1",
-            lambda k: k * (math.exp(1 / k) - math.cos(1 / k)),
-        ),
-        (
-            n**2 * (sp.log(1 + 1 / n) - sp.sin(1 / n)),
-            "n^2*(ln(1+1/n)-sin(1/n)) -> -1/2",
-            lambda k: k**2 * (math.log(1 + 1 / k) - math.sin(1 / k)),
-        ),
-        (
-            (sp.factorial(2 * n)) ** (sp.S(1) / n) / (4**n / n),
-            "(2n!)^(1/n) / (4^n/n)  -> 0",
-            lambda k: math.exp(
-                math.lgamma(2 * k + 1) / k - k * math.log(4) + math.log(k)
-            ),
-        ),
-        (
-            sp.factorial(2 * n) / (sp.factorial(n) * (2 * n) ** (n + sp.S(1) / 2)),
-            "(2n)!/(n!*(2n)^(n+1/2)) Stirling",
-            lambda k: math.exp(
-                math.lgamma(2 * k + 1)
-                - math.lgamma(k + 1)
-                - (k + 0.5) * math.log(2 * k)
-            ),
-        ),
-        (
-            sp.gamma(n + sp.S(3) / 2) / (sp.sqrt(n) * sp.gamma(n + 1)),
-            "Gamma(n+3/2)/(sqrt(n)*n!)  -> 1",
-            lambda k: math.exp(
-                math.lgamma(k + 1.5) - 0.5 * math.log(k) - math.lgamma(k + 1)
-            ),
-        ),
-        (sp.sin(n * sp.pi / 2) / n, "sin(n*pi/2)/n  -> 0", None),
-        (
-            n * sp.sin(sp.pi / n),
-            "n*sin(pi/n)  -> pi",
-            lambda k: k * math.sin(math.pi / k),
-        ),
-        (
-            (-1) ** n * n / (n**2 + 1) + sp.S(1) / 2,
-            "(-1)^n*n/(n^2+1) + 1/2  -> 1/2",
-            None,
-        ),
-        (
-            (sp.cos(1 / n)) ** (n**2),
-            "cos(1/n)^(n^2)  -> e^(-1/2)",
-            lambda k: math.cos(1 / k) ** (k**2),
-        ),
-        (
-            sp.log(n) ** sp.log(sp.log(n)) / n,
-            "ln(n)^ln(ln(n)) / n  -> 0",
-            lambda k: math.exp(
-                math.log(math.log(k)) * math.log(math.log(k)) - math.log(k)
-            )
-            if k > 2
-            else 1,
-        ),
-        (
-            n ** (sp.S(1) / sp.log(sp.log(n))),
-            "n^(1/ln(ln(n)))  -> oo",
-            lambda k: math.exp(math.log(k) / math.log(math.log(k))) if k > 2 else 1,
-        ),
-        (
-            sp.log(n + sp.log(n)) - sp.log(n),
-            "ln(n+ln(n)) - ln(n)  -> 0",
-            lambda k: math.log(k + math.log(k)) - math.log(k) if k > 1 else 0,
-        ),
-        (
-            (1 + sp.S(1) / n**2) ** (n**2),
-            "(1+1/n^2)^(n^2)  -> e",
-            lambda k: (1 + 1 / k**2) ** (k**2),
-        ),
-        (
-            n * (1 - sp.cos(1 / n)),
-            "n*(1-cos(1/n))  -> 0",
-            lambda k: k * (1 - math.cos(1 / k)),
-        ),
-        (
-            sp.factorial(n) ** 2 / sp.factorial(2 * n),
-            "(n!)^2 / (2n)!  -> 0",
-            lambda k: math.exp(2 * math.lgamma(k + 1) - math.lgamma(2 * k + 1)),
-        ),
-        (
-            (2 * n * sp.factorial(n)) ** 2 / sp.factorial(2 * n + 1),
-            "(2n*n!)^2 / (2n+1)!  -> 0",
-            lambda k: math.exp(
-                2 * math.log(2 * k) + 2 * math.lgamma(k + 1) - math.lgamma(2 * k + 2)
-            ),
-        ),
-        (
-            ((1 + sp.S(1) / n) ** (n**2)) / sp.exp(n),
-            "(1+1/n)^(n^2) / e^n  -> e^(-1/2)",
-            lambda k: (1 + 1 / k) ** (k**2) / math.exp(k),
-        ),
-    ]
+    
+    sequences =[
+    "((n^2 + 1) / (n^2 - 1))^(n^2)",  # -> e^2
+    "(1 + log(n)/n)^n",  # -> oo
+    "factorial(n)^(1/n^2)",  # -> 1
+    "n * (exp(1/n) - cos(1/n))",  # -> 1
+    "n^2 * (log(1 + 1/n) - sin(1/n))",  # -> -1/2
+    "factorial(2*n)^(1/n) / (4^n / n)",  # -> 0
+    "factorial(2*n) / (factorial(n) * (2*n)^(n + 1/2))",  # Stirling
+    "gamma(n + 3/2) / (sqrt(n) * gamma(n + 1))",  # -> 1
+    "sin(n*pi/2) / n",  # -> 0
+    "n * sin(pi/n)",  # -> pi
+    "(-1)^n * n / (n^2 + 1) + 1/2",  # -> 1/2
+    "cos(1/n)^(n^2)",  # -> e^(-1/2)
+    "log(n)^log(log(n)) / n",  # -> 0
+    "n^(1/log(log(n)))",  # -> oo
+    "log(n + log(n)) - log(n)",  # -> 0
+    "(1 + 1/n^2)^(n^2)",  # -> e
+    "n * (1 - cos(1/n))",  # -> 0
+    "factorial(n)^2 / factorial(2*n)",  # -> 0
+    "(2*n * factorial(n))^2 / factorial(2*n + 1)",  # -> 0
+    "(1 + 1/n)^(n^2) / exp(n)",  # -> e^(-1/2)
+]
 
     # ── Series ────────────────────────────────────────────────────
-    series = [
-        (
-            1 / (n * sp.log(n) * sp.log(sp.log(n))),
-            3,
-            "1/(n*ln(n)*ln(ln(n))) Div",
-            lambda k: 1 / (k * math.log(k) * math.log(math.log(k))) if k > 2 else 0,
-        ),
-        (
-            1 / (n ** (sp.S(1) + sp.S(1) / n)),
-            2,
-            "1/n^(1+1/n) Div (-> harmonic)",
-            lambda k: 1 / k ** (1 + 1 / k),
-        ),
-        (
-            1 / (n * sp.log(n) ** 2 * sp.log(sp.log(n))),
-            3,
-            "1/(n*ln^2(n)*ln(ln(n))) Conv",
-            lambda k: 1 / (k * math.log(k) ** 2 * math.log(math.log(k)))
-            if k > 2
-            else 0,
-        ),
-        (
-            sp.factorial(n) ** 2 / sp.factorial(2 * n),
-            1,
-            "(n!)^2 / (2n)! Conv",
-            lambda k: math.exp(2 * math.lgamma(k + 1) - math.lgamma(2 * k + 1)),
-        ),
-        (
-            (sp.factorial(n)) ** 3 / sp.factorial(3 * n),
-            1,
-            "(n!)^3 / (3n)! Conv",
-            lambda k: math.exp(3 * math.lgamma(k + 1) - math.lgamma(3 * k + 1)),
-        ),
-        (
-            sp.factorial(3 * n) / (sp.factorial(n) * sp.factorial(2 * n) * 3**n),
-            1,
-            "(3n)!/(n!(2n)!3^n) Div",
-            lambda k: math.exp(
-                math.lgamma(3 * k + 1)
-                - math.lgamma(k + 1)
-                - math.lgamma(2 * k + 1)
-                - k * math.log(3)
-            ),
-        ),
-        (
-            (sp.log(n)) ** n / n**n,
-            2,
-            "ln(n)^n / n^n  Conv (Root -> 0)",
-            lambda k: (math.log(k) / k) ** k if k > 1 else 0,
-        ),
-        (
-            ((2 * n + 1) / (3 * n - 1)) ** n,
-            1,
-            "((2n+1)/(3n-1))^n Conv Root->2/3",
-            lambda k: ((2 * k + 1) / (3 * k - 1)) ** k,
-        ),
-        (
-            (n / (n + sp.log(n))) ** n,
-            2,
-            "(n/(n+ln(n)))^n  Div (Root L=1)",
-            lambda k: (k / (k + math.log(k))) ** k,
-        ),
-        ((-1) ** n / (n + sp.log(n)), 2, "(-1)^n / (n+ln(n)) Cond Conv", None),
-        (
-            (-1) ** n * sp.log(n) / n ** (sp.S(3) / 2),
-            2,
-            "(-1)^n*ln(n)/n^(3/2) Abs Conv",
-            None,
-        ),
-        ((-1) ** n * (1 - 1 / n) ** n, 1, "(-1)^n*(1-1/n)^n  Div nth-term", None),
-        (
-            sp.log(n) ** sp.log(n) / n**2,
-            2,
-            "ln(n)^ln(n) / n^2  Div (terms -> oo)",
-            lambda k: math.exp(math.log(math.log(k)) * math.log(k) - 2 * math.log(k))
-            if k > 2
-            else 1,
-        ),
-        (
-            sp.log(n) ** n / sp.factorial(n),
-            1,
-            "ln(n)^n / n!  Conv (ratio->0)",
-            lambda k: math.exp(k * math.log(math.log(k)) - math.lgamma(k + 1))
-            if k > 1
-            else 0,
-        ),
-        (
-            1 / n ** (sp.S(1) + sp.sin(sp.S(1) / n)),
-            1,
-            "1/n^(1+sin(1/n)) Div",
-            lambda k: 1 / k ** (1 + math.sin(1 / k)),
-        ),
-        (
-            sp.factorial(n) * sp.factorial(n) / sp.factorial(2 * n + 1),
-            1,
-            "n!*n!/(2n+1)! Conv",
-            lambda k: math.exp(2 * math.lgamma(k + 1) - math.lgamma(2 * k + 2)),
-        ),
-        (
-            (4 * n**2) / (4 * n**2 - 1),
-            1,
-            "Wallis product terms Div (-> 1)",
-            lambda k: (4 * k**2) / (4 * k**2 - 1),
-        ),
-        (
-            1 / (n * sp.log(n) ** (sp.S(3) / 2)),
-            2,
-            "1/(n*ln(n)^1.5) Conv",
-            lambda k: 1 / (k * math.log(k) ** 1.5),
-        ),
-        (
-            1 / (n * sp.log(n) * sp.log(sp.log(n)) ** (sp.S(1) / 2)),
-            3,
-            "1/(n*ln*ln(ln)^0.5) Div",
-            lambda k: 1 / (k * math.log(k) * math.log(math.log(k)) ** 0.5)
-            if k > 2
-            else 0,
-        ),
-        (
-            sp.exp(-sp.sqrt(n)),
-            1,
-            "e^(-sqrt(n))  Conv",
-            lambda k: math.exp(-math.sqrt(k)),
-        ),
-    ]
+    
+    series =[
+    "1 / (n * log(n) * log(log(n)))",  # Div
+    "1 / n^(1 + 1/n)",  # Div (-> harmonic)
+    "1 / (n * log(n)^2 * log(log(n)))",  # Conv
+    "factorial(n)^2 / factorial(2*n)",  # Conv
+    "factorial(n)^3 / factorial(3*n)",  # Conv
+    "factorial(3*n) / (factorial(n) * factorial(2*n) * 3^n)",  # Div
+    "log(n)^n / n^n",  # Conv (Root -> 0)
+    "((2*n + 1) / (3*n - 1))^n",  # Conv Root->2/3
+    "(n / (n + log(n)))^n",  # Div (Root L=1)
+    "(-1)^n / (n + log(n))",  # Cond Conv
+    "(-1)^n * log(n) / n^(3/2)",  # Abs Conv
+    "(-1)^n * (1 - 1/n)^n",  # Div nth-term
+    "log(n)^log(n) / n^2",  # Div (terms -> oo)
+    "log(n)^n / factorial(n)",  # Conv (ratio->0)
+    "1 / n^(1 + sin(1/n))",  # Div
+    "factorial(n) * factorial(n) / factorial(2*n + 1)",  # Conv
+    "(4*n^2) / (4*n^2 - 1)",  # Wallis product terms Div (-> 1)
+    "1 / (n * log(n)^(3/2))",  # Conv
+    "1 / (n * log(n) * log(log(n))^(1/2))",  # Div
+    "exp(-sqrt(n))",  # Conv
+]
 
     # ── Print sequences ───────────────────────────────────────────
     print(f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
@@ -1454,13 +1143,13 @@ def second_main():
     print("-" * 155)
 
     total_seq_time = 0.0
-    for i, (expr, desc, py_func) in enumerate(sequences, 1):
+    for i, (expr) in enumerate(sequences, 1):
         t0 = time.perf_counter()
-        is_conv, reason, logs = check_sequence_convergence(expr, n, py_func)
+        is_conv, reason, logs = check_sequence_convergence(expr)
         ms = (time.perf_counter() - t0) * 1000
         total_seq_time += ms
         print(
-            f"{i:<3} | {desc:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     # ── Print series ──────────────────────────────────────────────
@@ -1475,13 +1164,13 @@ def second_main():
     print("-" * 155)
 
     total_ser_time = 0.0
-    for i, (expr, start_idx, desc, py_func) in enumerate(series, 1):
+    for i, (expr) in enumerate(series, 1):
         t0 = time.perf_counter()
-        is_conv, reason, logs = check_series_convergence(expr, n, start_idx, py_func)
+        is_conv, reason, logs = check_series_convergence(expr)
         ms = (time.perf_counter() - t0) * 1000
         total_ser_time += ms
         print(
-            f"{i:<3} | {desc:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
@@ -1529,84 +1218,139 @@ def power_series_main():
     n = sp.Symbol("n", integer=True, positive=True)
     x = sp.Symbol("x", real=True)
 
+    # power_series = [
+    #     # Original from conv_div_engine
+    #     (x**n / n, "x^n / n (Harmonic endpoints)"),
+    #     ((x - 2) ** n / (n * 3**n), "(x-2)^n / (n*3^n) (Shifted)"),
+    #     (sp.factorial(n) * x**n, "n! * x^n (0 Radius)"),
+    #     (x**n / sp.factorial(n), "x^n / n! (Infinite Radius)"),
+    #     (((-1) ** n * (x + 1) ** n) / n**2, "(-1)^n*(x+1)^n/n^2 (Both closed)"),
+    #     ((n**n / sp.factorial(n)) * x**n, "n^n / n! * x^n (R = 1/e)"),
+    #     (
+    #         ((sp.factorial(2 * n)) / (sp.factorial(n) ** 2)) * (x - 3) ** n,
+    #         "(2n)!/(n!)^2 * (x-3)^n (R=1/4)",
+    #     ),
+    #     ((1 + 1 / n) ** (n**2) * x**n, "(1+1/n)^(n^2) * x^n (Exp Limit)"),
+    #     ((sp.log(n) / n**2) * x**n, "ln(n)/n^2 * x^n (Cond/Abs)"),
+    #     ((3 * x - 2) ** n / (n * 5**n), "(3x-2)^n / (n*5^n) (Linear Shift)"),
+    #     # NEW TRICKY TEST CASES
+    #     ((x + 2) ** (2 * n) / (9**n * n), "(x+2)^(2n) / (9^n * n) (Power 2n)"),
+    #     (
+    #         (-1) ** n * (x - 1) ** n / (sp.sqrt(n) * 2**n),
+    #         "(-1)^n*(x-1)^n / (sqrt(n)*2^n)",
+    #     ),
+    #     ((2 * x - 1) ** n / n**3, "(2x-1)^n / n^3 (Multiplier on x)"),
+    #     ((sp.factorial(n) / n**n) * (x - 5) ** n, "n! / n^n * (x-5)^n (R = e)"),
+    #     (
+    #         ((n**2 + 1) / (n**2 - 1)) ** (n**2) * (x + 1) ** n,
+    #         "((n^2+1)/(n^2-1))^(n^2) * (x+1)^n",
+    #     ),
+    #     ((sp.log(n) / sp.sqrt(n)) * (x - sp.pi) ** n, "ln(n)/sqrt(n) * (x-pi)^n"),
+    #     (
+    #         (sp.factorial(3 * n) / (sp.factorial(n) ** 3)) * x**n,
+    #         "(3n)!/(n!)^3 * x^n (R = 1/27)",
+    #     ),
+    #     ((sp.sin(1 / n)) * x**n, "sin(1/n) * x^n (Harmonic Equivalent)"),
+    #     (
+    #         ((x + sp.E) ** n) / (n * sp.log(n) ** 2),
+    #         "(x+e)^n / (n*ln(n)^2) (Log Series)",
+    #     ),
+    #     (n ** (sp.S(1) / n) * x**n, "n^(1/n) * x^n (Root limit 1)"),
+    #     # From power_series_engine.py
+    #     (x**n / n**2, "x**n / n**2"),
+    #     (n**2 * x**n, "n**2 * x**n"),
+    #     (x**n / sp.sqrt(n), "x**n / sp.sqrt(n)"),
+    #     (((-1) ** n * x**n) / n, "((-1) ** n * x**n) / n"),
+    #     ((x - 3) ** n / (n * 4**n), "(x - 3) ** n / (n * 4**n)"),
+    #     ((x + 5) ** n / n**3, "(x + 5) ** n / n**3"),
+    #     ((2 * x - 1) ** n / n**2, "(2 * x - 1) ** n / n**2"),
+    #     ((3 * x + 2) ** n / (n * 2**n), "(3 * x + 2) ** n / (n * 2**n)"),
+    #     ((x - sp.pi) ** n / (n * sp.E**n), "(x - sp.pi) ** n / (n * sp.E**n)"),
+    #     (sp.factorial(n) ** 0 * (n**n / sp.factorial(n)) * x**n, "Stirling x^n"),
+    #     ((sp.factorial(n) / n**n) * x**n, "(n! / n**n) * x**n"),
+    #     ((sp.factorial(4 * n) / sp.factorial(n) ** 4) * x**n, "4n! / n!^4 * x^n"),
+    #     (sp.binomial(2 * n, n) * x**n, "binomial(2*n, n) * x**n"),
+    #     ((1 + 1 / n) ** n * x**n, "(1 + 1 / n) ** n * x**n"),
+    #     ((1 + 2 / n) ** n * x**n, "(1 + 2 / n) ** n * x**n"),
+    #     ((n / (n + 1)) ** (n**2) * x**n, "(n / (n + 1)) ** (n**2) * x**n"),
+    #     (x**n / (n * sp.log(n + 1)), "x**n / (n * sp.log(n + 1))"),
+    #     (x**n / (n * sp.log(n + 1) ** 2), "x**n / (n * sp.log(n + 1) ** 2)"),
+    #     (sp.log(n) / n * x**n, "sp.log(n) / n * x**n"),
+    #     (sp.log(n) / n**2 * x**n, "sp.log(n) / n**2 * x**n"),
+    #     (sp.log(n) ** 2 / n * x**n, "sp.log(n) ** 2 / n * x**n"),
+    #     (sp.sin(1 / n) * x**n, "sp.sin(1 / n) * x**n"),
+    #     (sp.sin(n) * x**n / n, "sp.sin(n) * x**n / n"),
+    #     (sp.cos(1 / n) * x**n, "sp.cos(1 / n) * x**n"),
+    #     (sp.tan(1 / n) * x**n, "sp.tan(1 / n) * x**n"),
+    #     (
+    #         (sp.factorial(2 * n) / (sp.factorial(n) ** 2 * 4**n)) * x**n,
+    #         "Catalan-adjacent",
+    #     ),
+    #     ((sp.factorial(n) / (n**n * sp.sqrt(n))) * x**n, "n! / (n^n * sqrt(n)) * x^n"),
+    #     ((sp.factorial(n) ** 2 / sp.factorial(2 * n)) * x**n, "n!^2 / (2n)! * x^n"),
+    #     (((n**2 + 1) / (n**2 - 1)) * x**n, "((n**2 + 1) / (n**2 - 1)) * x**n"),
+    #     (
+    #         ((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n,
+    #         "((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n",
+    #     ),
+    #     ((1 + 1 / n**2) ** (n**3) * x**n, "(1 + 1 / n**2) ** (n**3) * x**n"),
+    # ]
+
     power_series = [
-        # Original from conv_div_engine
-        (x**n / n, "x^n / n (Harmonic endpoints)"),
-        ((x - 2) ** n / (n * 3**n), "(x-2)^n / (n*3^n) (Shifted)"),
-        (sp.factorial(n) * x**n, "n! * x^n (0 Radius)"),
-        (x**n / sp.factorial(n), "x^n / n! (Infinite Radius)"),
-        (((-1) ** n * (x + 1) ** n) / n**2, "(-1)^n*(x+1)^n/n^2 (Both closed)"),
-        ((n**n / sp.factorial(n)) * x**n, "n^n / n! * x^n (R = 1/e)"),
-        (
-            ((sp.factorial(2 * n)) / (sp.factorial(n) ** 2)) * (x - 3) ** n,
-            "(2n)!/(n!)^2 * (x-3)^n (R=1/4)",
-        ),
-        ((1 + 1 / n) ** (n**2) * x**n, "(1+1/n)^(n^2) * x^n (Exp Limit)"),
-        ((sp.log(n) / n**2) * x**n, "ln(n)/n^2 * x^n (Cond/Abs)"),
-        ((3 * x - 2) ** n / (n * 5**n), "(3x-2)^n / (n*5^n) (Linear Shift)"),
-        # NEW TRICKY TEST CASES
-        ((x + 2) ** (2 * n) / (9**n * n), "(x+2)^(2n) / (9^n * n) (Power 2n)"),
-        (
-            (-1) ** n * (x - 1) ** n / (sp.sqrt(n) * 2**n),
-            "(-1)^n*(x-1)^n / (sqrt(n)*2^n)",
-        ),
-        ((2 * x - 1) ** n / n**3, "(2x-1)^n / n^3 (Multiplier on x)"),
-        ((sp.factorial(n) / n**n) * (x - 5) ** n, "n! / n^n * (x-5)^n (R = e)"),
-        (
-            ((n**2 + 1) / (n**2 - 1)) ** (n**2) * (x + 1) ** n,
-            "((n^2+1)/(n^2-1))^(n^2) * (x+1)^n",
-        ),
-        ((sp.log(n) / sp.sqrt(n)) * (x - sp.pi) ** n, "ln(n)/sqrt(n) * (x-pi)^n"),
-        (
-            (sp.factorial(3 * n) / (sp.factorial(n) ** 3)) * x**n,
-            "(3n)!/(n!)^3 * x^n (R = 1/27)",
-        ),
-        ((sp.sin(1 / n)) * x**n, "sin(1/n) * x^n (Harmonic Equivalent)"),
-        (
-            ((x + sp.E) ** n) / (n * sp.log(n) ** 2),
-            "(x+e)^n / (n*ln(n)^2) (Log Series)",
-        ),
-        (n ** (sp.S(1) / n) * x**n, "n^(1/n) * x^n (Root limit 1)"),
-        # From power_series_engine.py
-        (x**n / n**2, "x**n / n**2"),
-        (n**2 * x**n, "n**2 * x**n"),
-        (x**n / sp.sqrt(n), "x**n / sp.sqrt(n)"),
-        (((-1) ** n * x**n) / n, "((-1) ** n * x**n) / n"),
-        ((x - 3) ** n / (n * 4**n), "(x - 3) ** n / (n * 4**n)"),
-        ((x + 5) ** n / n**3, "(x + 5) ** n / n**3"),
-        ((2 * x - 1) ** n / n**2, "(2 * x - 1) ** n / n**2"),
-        ((3 * x + 2) ** n / (n * 2**n), "(3 * x + 2) ** n / (n * 2**n)"),
-        ((x - sp.pi) ** n / (n * sp.E**n), "(x - sp.pi) ** n / (n * sp.E**n)"),
-        (sp.factorial(n) ** 0 * (n**n / sp.factorial(n)) * x**n, "Stirling x^n"),
-        ((sp.factorial(n) / n**n) * x**n, "(n! / n**n) * x**n"),
-        ((sp.factorial(4 * n) / sp.factorial(n) ** 4) * x**n, "4n! / n!^4 * x^n"),
-        (sp.binomial(2 * n, n) * x**n, "binomial(2*n, n) * x**n"),
-        ((1 + 1 / n) ** n * x**n, "(1 + 1 / n) ** n * x**n"),
-        ((1 + 2 / n) ** n * x**n, "(1 + 2 / n) ** n * x**n"),
-        ((n / (n + 1)) ** (n**2) * x**n, "(n / (n + 1)) ** (n**2) * x**n"),
-        (x**n / (n * sp.log(n + 1)), "x**n / (n * sp.log(n + 1))"),
-        (x**n / (n * sp.log(n + 1) ** 2), "x**n / (n * sp.log(n + 1) ** 2)"),
-        (sp.log(n) / n * x**n, "sp.log(n) / n * x**n"),
-        (sp.log(n) / n**2 * x**n, "sp.log(n) / n**2 * x**n"),
-        (sp.log(n) ** 2 / n * x**n, "sp.log(n) ** 2 / n * x**n"),
-        (sp.sin(1 / n) * x**n, "sp.sin(1 / n) * x**n"),
-        (sp.sin(n) * x**n / n, "sp.sin(n) * x**n / n"),
-        (sp.cos(1 / n) * x**n, "sp.cos(1 / n) * x**n"),
-        (sp.tan(1 / n) * x**n, "sp.tan(1 / n) * x**n"),
-        (
-            (sp.factorial(2 * n) / (sp.factorial(n) ** 2 * 4**n)) * x**n,
-            "Catalan-adjacent",
-        ),
-        ((sp.factorial(n) / (n**n * sp.sqrt(n))) * x**n, "n! / (n^n * sqrt(n)) * x^n"),
-        ((sp.factorial(n) ** 2 / sp.factorial(2 * n)) * x**n, "n!^2 / (2n)! * x^n"),
-        (((n**2 + 1) / (n**2 - 1)) * x**n, "((n**2 + 1) / (n**2 - 1)) * x**n"),
-        (
-            ((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n,
-            "((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n",
-        ),
-        ((1 + 1 / n**2) ** (n**3) * x**n, "(1 + 1 / n**2) ** (n**3) * x**n"),
+        "x^n / n",  # Harmonic endpoints
+        "(x-2)^n / (n * 3^n)",  # Shifted center
+        "factorial(n) * x^n",  # Zero radius
+        "x^n / factorial(n)",  # Infinite radius
+        "(-1)^n * (x+1)^n / n^2",  # Both endpoints closed
+        "n^n / factorial(n) * x^n",  # R = 1/e
+        "factorial(2*n) / factorial(n)^2 * (x-3)^n",  # R = 1/4
+        "(1 + 1/n)^(n^2) * x^n",  # Exponential limit
+        "log(n) / n^2 * x^n",  # Logarithmic
+        "(3x - 2)^n / (n * 5^n)",  # Linear shift
+        "(x+2)^(2*n) / (9^n * n)",  # Power 2n
+        "(-1)^n * (x-1)^n / (sqrt(n) * 2^n)",  # Alternating with sqrt
+        "(2x - 1)^n / n^3",  # Multiplier on x
+        "factorial(n) / n^n * (x-5)^n",  # R = e
+        "((n^2 + 1) / (n^2 - 1))^(n^2) * (x+1)^n",  # Complex power
+        "log(n) / sqrt(n) * (x - pi)^n",  # Log/sqrt at pi
+        "factorial(3*n) / factorial(n)^3 * x^n",  # R = 1/27
+        "sin(1/n) * x^n",  # Harmonic equivalent
+        "(x + E)^n / (n * log(n)^2)",  # Log series
+        "n^(1/n) * x^n",  # Root limit 1
+        "x^n / n^2",  # P-series p=2
+        "n^2 * x^n",  # Polynomial growth
+        "x^n / sqrt(n)",  # P-series p=1/2
+        "(-1)^n * x^n / n",  # Alternating harmonic
+        "(x - 3)^n / (n * 4^n)",  # Shifted geometric
+        "(x + 5)^n / n^3",  # P-series p=3
+        "(2x - 1)^n / n^2",  # Linear transform
+        "(3x + 2)^n / (n * 2^n)",  # Linear shift
+        "(x - pi)^n / (n * E^n)",  # At pi, period e
+        "n^n / factorial(n) * x^n",  # Stirling
+        "factorial(n) / n^n * x^n",  # Inverse Stirling
+        "factorial(4*n) / factorial(n)^4 * x^n",  # 4-factorial
+        "binomial(2*n, n) * x^n",  # Central binomial
+        "(1 + 1/n)^n * x^n",  # Converges to e
+        "(1 + 2/n)^n * x^n",  # Converges to e^2
+        "(n / (n+1))^(n^2) * x^n",  # Complex limit
+        "x^n / (n * log(n+1))",  # Log denominator
+        "x^n / (n * log(n+1)^2)",  # Log squared
+        "log(n) / n * x^n",  # Log/n
+        "log(n) / n^2 * x^n",  # Log/n^2
+        "log(n)^2 / n * x^n",  # Log squared/n
+        "sin(1/n) * x^n",  # Sine
+        "sin(n) * x^n / n",  # Oscillating
+        "cos(1/n) * x^n",  # Cosine
+        "tan(1/n) * x^n",  # Tangent
+        "factorial(2*n) / (factorial(n)^2 * 4^n) * x^n",  # Catalan-adjacent
+        "factorial(n) / (n^n * sqrt(n)) * x^n",  # Stirling with sqrt
+        "factorial(n)^2 / factorial(2*n) * x^n",  # Inverse binomial
+        "((n^2 + 1) / (n^2 - 1)) * x^n",  # Rational coefficient
+        "((n^2 + 1) / (n^2 - 1))^(n^2) * x^n",  # Rational to power
+        "(1 + 1/n^2)^(n^3) * x^n",  # Triple power
     ]
 
+    
     print(f"\n{Fore.GREEN}{Style.BRIGHT}{'=' * 155}")
     print(
         f"{Fore.GREEN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 — POWER SERIES TESTS (ULTIMATE SUITE)':^155}"
@@ -1618,13 +1362,13 @@ def power_series_main():
     print("-" * 155)
 
     total_ps_time = 0.0
-    for i, (expr, desc) in enumerate(power_series, 1):
+    for i, (expr) in enumerate(power_series, 1):
         t0 = time.perf_counter()
         is_conv, reason, logs, details = check_power_series(expr, n, x)
         ms = (time.perf_counter() - t0) * 1000
         total_ps_time += ms
         print(
-            f"{i:<3} | {desc:<35} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<35} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
@@ -1636,6 +1380,6 @@ def power_series_main():
 
 if __name__ == "__main__":
     sp.init_printing(use_unicode=True)
-    # main()
-    # second_main()
+    main()
+    second_main()
     power_series_main()
