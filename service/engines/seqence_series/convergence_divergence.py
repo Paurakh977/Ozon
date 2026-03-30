@@ -33,11 +33,10 @@ import sympy as sp
 from sympy.solvers.inequalities import solve_univariate_inequality
 import numpy as np
 import warnings
-from colorama import init, Fore, Style
 from sympy.series.limitseq import limit_seq
 from engines import get_sympified_expr
 
-init(autoreset=True)
+
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -924,212 +923,12 @@ def evaluate_expression(expr_str: str):
 
 def format_result(res_bool) -> str:
     if res_bool is True:
-        return f"{Fore.GREEN}{'Converges':<10}{Style.RESET_ALL}"
+        return f"{'Converges':<10}"
     if res_bool is False:
-        return f"{Fore.RED}{'Diverges':<10}{Style.RESET_ALL}"
-    return f"{Fore.YELLOW}{'Unknown':<10}{Style.RESET_ALL}"
+        return f"{'Diverges':<10}"
+    return f"{'Unknown':<10}"
 
 
-# ─────────────────────────────────────────────────────────────────
-#  MAIN  (17 sequences + 18 series, all with py_func lambdas where safe)
-# ─────────────────────────────────────────────────────────────────
-
-
-def main():
-    n = sp.Symbol("n", integer=True, positive=True)
-
-    # ── Sequences ─────────────────────────────────────────────────
-    # Each tuple: (sympy_expr, description, py_func | None)
-    #
-    # CRITICAL: Seq 13  n^3*(sin(1/n)-1/n+1/(6n³)) has py_func=None.
-    # A lambda here causes catastrophic float64 cancellation
-    # (sin(1/n) − 1/n destroys ~12 significant digits) and the numpy
-    # prescreen would fire on pure floating-point noise, returning
-    # ~1.29e-05 instead of 0.  The symbolic pipeline gives the correct 0.
-    sequences = [
-        "n * sin(n)",  # Oscillatory Unbounded
-        "cos(2/n)^(n^2)",  # Taylor Exp
-        "factorial(n) / 100^n",  # Heavy Growth
-        "(n / log(n)) * (n^(1/n) - 1)",  # n/ln(n) * (n^(1/n) - 1)
-        "sqrt(n^2 + n) - n",  # sqrt(n^2 + n) - n
-        "(1 + 1/n)^(n^2)",  # Exp explosion
-        "factorial(n)^(1/n) / n",  # Stirling
-        "log(n)^log(n) / n",  # Tower vs Poly
-        "(-1)^n * (n / (n + 1))",  # Alt Bounded
-        "(1 - 2/n)^(3*n)",  # Exp transform
-        "n^log(n) / 2^n",  # Sub-exponential
-        "(2^(4*n) * factorial(n)^4) / (factorial(2*n)^2 * (2*n + 1))",  # Wallis Product (Factorial Form) -> pi/2
-        "n^3 * (sin(1/n) - 1/n + 1/(6*n^3))",  # Cancellation trap
-        "(1 + sin(1/n)/n)^(n^2)",  # Tricky Exp
-        "gamma(n + 0.5) / (sqrt(n) * gamma(n))",  # Gamma Boundary Asymptotics
-        "n^2 * (exp(1/n) - 1 - 1/n)",  # Taylor Trap
-        "(log(n + 1) - log(n)) * n",  # Limit e Identity
-    ]
-    # ── Series ────────────────────────────────────────────────────
-    # Each tuple: (sympy_expr, start_idx, description, py_func | None)
-
-    series = [
-        "(-1)^n * log(n) / n",  # Alt
-        "1 / (n * log(n))",  # Classic Divergent
-        "1 / (n * log(n)^1.1)",  # Classic Conv
-        "sin(1/n)",  # Harmonic Equivalent
-        "1 - cos(1/n)",  # Taylor ~1/n^2
-        "(n / (n + 1))^n",  # Nth term -> 1/e
-        "(n / (n + 1))^(n^2)",  # Root
-        "factorial(n) / n^n",  # Ratio Test boundary
-        "(factorial(n) * exp(n)) / n^(n + 0.5)",  # Gauss
-        "factorial(2*n) / (factorial(n)^2 * 4^n)",  # Wallis Diverge
-        "log(n)^log(n) / n^log(n)",  # ln(n)^ln(n) / n^ln(n)
-        "1 / n^(1 + 1/log(n))",  # Log Trap
-        "(-1)^n * sqrt(n) / (n + 100)",  # (-1)^n * sqrt(n) / (n+100)
-        "sqrt(n + 1) - sqrt(n)",  # Telescope Div
-        "1 / (n * log(n) * log(log(n))^2)",  # 1/(n*ln(n)*ln(ln(n))^2)
-        "n^(n + 1/n) / (n + 1/n)^n",  # Heavy Base
-        "1 / n^(1.0001)",  # Poly Edge Trap
-        "log(n)^log(n) / 10^n",  # Root Extractor
-    ]
-
-    # ── Print sequences ───────────────────────────────────────────
-    print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{Fore.CYAN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 (ULTIMATE MERGED EDITION) — SEQUENCE TESTS':^155}"
-    )
-    print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
-    )
-    print("-" * 155)
-
-    for i, (expr) in enumerate(sequences, 1):
-        is_conv, reason, logs = check_sequence_convergence(expr)
-        print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
-        )
-
-    # ── Print series ──────────────────────────────────────────────
-    print(f"\n{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{Fore.MAGENTA}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 (ULTIMATE MERGED EDITION) — SERIES TESTS':^155}"
-    )
-    print(f"{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
-    )
-    print("-" * 155)
-
-    for i, (expr) in enumerate(series, 1):
-        is_conv, reason, logs = check_series_convergence(
-            expr,
-        )
-        print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
-        )
-
-    print("\n" + "=" * 155)
-    print("=" * 155)
-
-
-# ─────────────────────────────────────────────────────────────────
-#  SECOND_MAIN  (20 sequences + 20 series — harder benchmark)
-# ─────────────────────────────────────────────────────────────────
-
-
-def second_main():
-    n = sp.Symbol("n", integer=True, positive=True)
-
-    # ── Sequences ─────────────────────────────────────────────────
-
-    sequences = [
-        "((n^2 + 1) / (n^2 - 1))^(n^2)",  # -> e^2
-        "(1 + log(n)/n)^n",  # -> oo
-        "factorial(n)^(1/n^2)",  # -> 1
-        "n * (exp(1/n) - cos(1/n))",  # -> 1
-        "n^2 * (log(1 + 1/n) - sin(1/n))",  # -> -1/2
-        "factorial(2*n)^(1/n) / (4^n / n)",  # -> 0
-        "factorial(2*n) / (factorial(n) * (2*n)^(n + 1/2))",  # Stirling
-        "gamma(n + 3/2) / (sqrt(n) * gamma(n + 1))",  # -> 1
-        "sin(n*pi/2) / n",  # -> 0
-        "n * sin(pi/n)",  # -> pi
-        "(-1)^n * n / (n^2 + 1) + 1/2",  # -> 1/2
-        "cos(1/n)^(n^2)",  # -> e^(-1/2)
-        "log(n)^log(log(n)) / n",  # -> 0
-        "n^(1/log(log(n)))",  # -> oo
-        "log(n + log(n)) - log(n)",  # -> 0
-        "(1 + 1/n^2)^(n^2)",  # -> e
-        "n * (1 - cos(1/n))",  # -> 0
-        "factorial(n)^2 / factorial(2*n)",  # -> 0
-        "(2*n * factorial(n))^2 / factorial(2*n + 1)",  # -> 0
-        "(1 + 1/n)^(n^2) / exp(n)",  # -> e^(-1/2)
-    ]
-
-    # ── Series ────────────────────────────────────────────────────
-
-    series = [
-        "1 / (n * log(n) * log(log(n)))",  # Div
-        "1 / n^(1 + 1/n)",  # Div (-> harmonic)
-        "1 / (n * log(n)^2 * log(log(n)))",  # Conv
-        "factorial(n)^2 / factorial(2*n)",  # Conv
-        "factorial(n)^3 / factorial(3*n)",  # Conv
-        "factorial(3*n) / (factorial(n) * factorial(2*n) * 3^n)",  # Div
-        "log(n)^n / n^n",  # Conv (Root -> 0)
-        "((2*n + 1) / (3*n - 1))^n",  # Conv Root->2/3
-        "(n / (n + log(n)))^n",  # Div (Root L=1)
-        "(-1)^n / (n + log(n))",  # Cond Conv
-        "(-1)^n * log(n) / n^(3/2)",  # Abs Conv
-        "(-1)^n * (1 - 1/n)^n",  # Div nth-term
-        "log(n)^log(n) / n^2",  # Div (terms -> oo)
-        "log(n)^n / factorial(n)",  # Conv (ratio->0)
-        "1 / n^(1 + sin(1/n))",  # Div
-        "factorial(n) * factorial(n) / factorial(2*n + 1)",  # Conv
-        "(4*n^2) / (4*n^2 - 1)",  # Wallis product terms Div (-> 1)
-        "1 / (n * log(n)^(3/2))",  # Conv
-        "1 / (n * log(n) * log(log(n))^(1/2))",  # Div
-        "exp(-sqrt(n))",  # Conv
-    ]
-
-    # ── Print sequences ───────────────────────────────────────────
-    print(f"\n{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{Fore.CYAN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 (LETHAL EDITION) — SEQUENCE TESTS':^155}"
-    )
-    print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
-    )
-    print("-" * 155)
-
-    for i, (expr) in enumerate(sequences, 1):
-        is_conv, reason, logs = check_sequence_convergence(expr)
-        print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
-        )
-
-    # ── Print series ──────────────────────────────────────────────
-    print(f"\n{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{Fore.MAGENTA}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 (LETHAL EDITION) — SERIES TESTS':^155}"
-    )
-    print(f"{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
-    )
-    print("-" * 155)
-
-    for i, (expr) in enumerate(series, 1):
-        is_conv, reason, logs = check_series_convergence(expr)
-        print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
-        )
-
-    print("\n" + "=" * 155)
-    print("=" * 155)
-
-
-# ─────────────────────────────────────────────────────────────────
-
-# ─────────────────────────────────────────────────────────────────
-#  POWER SERIES ENGINE
-# ─────────────────────────────────────────────────────────────────
 
 
 def check_power_series(expr, n, x):
@@ -1149,164 +948,22 @@ def check_power_series(expr, n, x):
     )
 
 
-def power_series_main():
-    n = sp.Symbol("n", integer=True, positive=True)
-    x = sp.Symbol("x", real=True)
-
-    # power_series = [
-    #     # Original from conv_div_engine
-    #     (x**n / n, "x^n / n (Harmonic endpoints)"),
-    #     ((x - 2) ** n / (n * 3**n), "(x-2)^n / (n*3^n) (Shifted)"),
-    #     (sp.factorial(n) * x**n, "n! * x^n (0 Radius)"),
-    #     (x**n / sp.factorial(n), "x^n / n! (Infinite Radius)"),
-    #     (((-1) ** n * (x + 1) ** n) / n**2, "(-1)^n*(x+1)^n/n^2 (Both closed)"),
-    #     ((n**n / sp.factorial(n)) * x**n, "n^n / n! * x^n (R = 1/e)"),
-    #     (
-    #         ((sp.factorial(2 * n)) / (sp.factorial(n) ** 2)) * (x - 3) ** n,
-    #         "(2n)!/(n!)^2 * (x-3)^n (R=1/4)",
-    #     ),
-    #     ((1 + 1 / n) ** (n**2) * x**n, "(1+1/n)^(n^2) * x^n (Exp Limit)"),
-    #     ((sp.log(n) / n**2) * x**n, "ln(n)/n^2 * x^n (Cond/Abs)"),
-    #     ((3 * x - 2) ** n / (n * 5**n), "(3x-2)^n / (n*5^n) (Linear Shift)"),
-    #     # NEW TRICKY TEST CASES
-    #     ((x + 2) ** (2 * n) / (9**n * n), "(x+2)^(2n) / (9^n * n) (Power 2n)"),
-    #     (
-    #         (-1) ** n * (x - 1) ** n / (sp.sqrt(n) * 2**n),
-    #         "(-1)^n*(x-1)^n / (sqrt(n)*2^n)",
-    #     ),
-    #     ((2 * x - 1) ** n / n**3, "(2x-1)^n / n^3 (Multiplier on x)"),
-    #     ((sp.factorial(n) / n**n) * (x - 5) ** n, "n! / n^n * (x-5)^n (R = e)"),
-    #     (
-    #         ((n**2 + 1) / (n**2 - 1)) ** (n**2) * (x + 1) ** n,
-    #         "((n^2+1)/(n^2-1))^(n^2) * (x+1)^n",
-    #     ),
-    #     ((sp.log(n) / sp.sqrt(n)) * (x - sp.pi) ** n, "ln(n)/sqrt(n) * (x-pi)^n"),
-    #     (
-    #         (sp.factorial(3 * n) / (sp.factorial(n) ** 3)) * x**n,
-    #         "(3n)!/(n!)^3 * x^n (R = 1/27)",
-    #     ),
-    #     ((sp.sin(1 / n)) * x**n, "sin(1/n) * x^n (Harmonic Equivalent)"),
-    #     (
-    #         ((x + sp.E) ** n) / (n * sp.log(n) ** 2),
-    #         "(x+e)^n / (n*ln(n)^2) (Log Series)",
-    #     ),
-    #     (n ** (sp.S(1) / n) * x**n, "n^(1/n) * x^n (Root limit 1)"),
-    #     # From power_series_engine.py
-    #     (x**n / n**2, "x**n / n**2"),
-    #     (n**2 * x**n, "n**2 * x**n"),
-    #     (x**n / sp.sqrt(n), "x**n / sp.sqrt(n)"),
-    #     (((-1) ** n * x**n) / n, "((-1) ** n * x**n) / n"),
-    #     ((x - 3) ** n / (n * 4**n), "(x - 3) ** n / (n * 4**n)"),
-    #     ((x + 5) ** n / n**3, "(x + 5) ** n / n**3"),
-    #     ((2 * x - 1) ** n / n**2, "(2 * x - 1) ** n / n**2"),
-    #     ((3 * x + 2) ** n / (n * 2**n), "(3 * x + 2) ** n / (n * 2**n)"),
-    #     ((x - sp.pi) ** n / (n * sp.E**n), "(x - sp.pi) ** n / (n * sp.E**n)"),
-    #     (sp.factorial(n) ** 0 * (n**n / sp.factorial(n)) * x**n, "Stirling x^n"),
-    #     ((sp.factorial(n) / n**n) * x**n, "(n! / n**n) * x**n"),
-    #     ((sp.factorial(4 * n) / sp.factorial(n) ** 4) * x**n, "4n! / n!^4 * x^n"),
-    #     (sp.binomial(2 * n, n) * x**n, "binomial(2*n, n) * x**n"),
-    #     ((1 + 1 / n) ** n * x**n, "(1 + 1 / n) ** n * x**n"),
-    #     ((1 + 2 / n) ** n * x**n, "(1 + 2 / n) ** n * x**n"),
-    #     ((n / (n + 1)) ** (n**2) * x**n, "(n / (n + 1)) ** (n**2) * x**n"),
-    #     (x**n / (n * sp.log(n + 1)), "x**n / (n * sp.log(n + 1))"),
-    #     (x**n / (n * sp.log(n + 1) ** 2), "x**n / (n * sp.log(n + 1) ** 2)"),
-    #     (sp.log(n) / n * x**n, "sp.log(n) / n * x**n"),
-    #     (sp.log(n) / n**2 * x**n, "sp.log(n) / n**2 * x**n"),
-    #     (sp.log(n) ** 2 / n * x**n, "sp.log(n) ** 2 / n * x**n"),
-    #     (sp.sin(1 / n) * x**n, "sp.sin(1 / n) * x**n"),
-    #     (sp.sin(n) * x**n / n, "sp.sin(n) * x**n / n"),
-    #     (sp.cos(1 / n) * x**n, "sp.cos(1 / n) * x**n"),
-    #     (sp.tan(1 / n) * x**n, "sp.tan(1 / n) * x**n"),
-    #     (
-    #         (sp.factorial(2 * n) / (sp.factorial(n) ** 2 * 4**n)) * x**n,
-    #         "Catalan-adjacent",
-    #     ),
-    #     ((sp.factorial(n) / (n**n * sp.sqrt(n))) * x**n, "n! / (n^n * sqrt(n)) * x^n"),
-    #     ((sp.factorial(n) ** 2 / sp.factorial(2 * n)) * x**n, "n!^2 / (2n)! * x^n"),
-    #     (((n**2 + 1) / (n**2 - 1)) * x**n, "((n**2 + 1) / (n**2 - 1)) * x**n"),
-    #     (
-    #         ((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n,
-    #         "((n**2 + 1) / (n**2 - 1)) ** (n**2) * x**n",
-    #     ),
-    #     ((1 + 1 / n**2) ** (n**3) * x**n, "(1 + 1 / n**2) ** (n**3) * x**n"),
-    # ]
-
-    power_series = [
-        "x^n / n",  # Harmonic endpoints
-        "(x-2)^n / (n * 3^n)",  # Shifted center
-        "factorial(n) * x^n",  # Zero radius
-        "x^n / factorial(n)",  # Infinite radius
-        "(-1)^n * (x+1)^n / n^2",  # Both endpoints closed
-        "n^n / factorial(n) * x^n",  # R = 1/e
-        "factorial(2*n) / factorial(n)^2 * (x-3)^n",  # R = 1/4
-        "(1 + 1/n)^(n^2) * x^n",  # Exponential limit
-        "log(n) / n^2 * x^n",  # Logarithmic
-        "(3x - 2)^n / (n * 5^n)",  # Linear shift
-        "(x+2)^(2*n) / (9^n * n)",  # Power 2n
-        "(-1)^n * (x-1)^n / (sqrt(n) * 2^n)",  # Alternating with sqrt
-        "(2x - 1)^n / n^3",  # Multiplier on x
-        "factorial(n) / n^n * (x-5)^n",  # R = e
-        "((n^2 + 1) / (n^2 - 1))^(n^2) * (x+1)^n",  # Complex power
-        "log(n) / sqrt(n) * (x - pi)^n",  # Log/sqrt at pi
-        "factorial(3*n) / factorial(n)^3 * x^n",  # R = 1/27
-        "sin(1/n) * x^n",  # Harmonic equivalent
-        "(x + E)^n / (n * log(n)^2)",  # Log series
-        "n^(1/n) * x^n",  # Root limit 1
-        "x^n / n^2",  # P-series p=2
-        "n^2 * x^n",  # Polynomial growth
-        "x^n / sqrt(n)",  # P-series p=1/2
-        "(-1)^n * x^n / n",  # Alternating harmonic
-        "(x - 3)^n / (n * 4^n)",  # Shifted geometric
-        "(x + 5)^n / n^3",  # P-series p=3
-        "(2x - 1)^n / n^2",  # Linear transform
-        "(3x + 2)^n / (n * 2^n)",  # Linear shift
-        "(x - pi)^n / (n * E^n)",  # At pi, period e
-        "n^n / factorial(n) * x^n",  # Stirling
-        "factorial(n) / n^n * x^n",  # Inverse Stirling
-        "factorial(4*n) / factorial(n)^4 * x^n",  # 4-factorial
-        "binomial(2*n, n) * x^n",  # Central binomial
-        "(1 + 1/n)^n * x^n",  # Converges to e
-        "(1 + 2/n)^n * x^n",  # Converges to e^2
-        "(n / (n+1))^(n^2) * x^n",  # Complex limit
-        "x^n / (n * log(n+1))",  # Log denominator
-        "x^n / (n * log(n+1)^2)",  # Log squared
-        "log(n) / n * x^n",  # Log/n
-        "log(n) / n^2 * x^n",  # Log/n^2
-        "log(n)^2 / n * x^n",  # Log squared/n
-        "sin(1/n) * x^n",  # Sine
-        "sin(n) * x^n / n",  # Oscillating
-        "cos(1/n) * x^n",  # Cosine
-        "tan(1/n) * x^n",  # Tangent
-        "factorial(2*n) / (factorial(n)^2 * 4^n) * x^n",  # Catalan-adjacent
-        "factorial(n) / (n^n * sqrt(n)) * x^n",  # Stirling with sqrt
-        "factorial(n)^2 / factorial(2*n) * x^n",  # Inverse binomial
-        "((n^2 + 1) / (n^2 - 1)) * x^n",  # Rational coefficient
-        "((n^2 + 1) / (n^2 - 1))^(n^2) * x^n",  # Rational to power
-        "(1 + 1/n^2)^(n^3) * x^n",  # Triple power
-    ]
-
-    print(f"\n{Fore.GREEN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{Fore.GREEN}{Style.BRIGHT}{'BRUTAL MATH ENGINE v11.0 — POWER SERIES TESTS (ULTIMATE SUITE)':^155}"
-    )
-    print(f"{Fore.GREEN}{Style.BRIGHT}{'=' * 155}")
-    print(
-        f"{'No.':<3} | {'Description':<35} | {'Result':<10} | {'Radius / Interval':<36} | {'Profiler Logs'}"
-    )
-    print("-" * 155)
-
-    for i, (expr) in enumerate(power_series, 1):
-        is_conv, reason, logs, details = check_power_series(expr, n, x)
-        print(
-            f"{i:<3} | {expr:<35} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
-        )
-
-    print("\n" + "=" * 155)
-    print("=" * 155)
 
 
 if __name__ == "__main__":
-    sp.init_printing(use_unicode=True)
-    main()
-    second_main()
-    power_series_main()
+    expressions = [
+        "x^n / n",
+        "(x-2)^n / (n * 3^n)",
+        "factorial(n) * x^n",
+        "x^n / factorial(n)",
+        "(-1)^n * (x+1)^n / n^2",
+    ]
+
+    for expr in expressions:
+        try:
+            result = evaluate_expression(expr)  
+            print(f"Expression: {expr}\nResult: {result}\n")
+        except Exception as e:
+            print(f"Expression: {expr}\nError: {e}\n")
+
+

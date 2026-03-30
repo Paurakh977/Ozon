@@ -19,16 +19,13 @@ class FunctionAnalysisEngine:
     - _safe_eval() strips negligible imaginary parts (fixes x^(1/3) monotonicity)
     - get_parity() numerical fallback (fixes ln(x+sqrt(x^2+1)) = arcsinh(x))
     - get_periodicity() tries trigsimp / expand_trig / rewrite fallbacks (fixes sin^2(x))
-    - print_report() filters AccumBounds at display level as final safety net
+
     """
 
     def __init__(self, debug=False):
         self.debug = debug
         self.x = sp.Symbol("x", real=True)
 
-    def _log(self, msg):
-        if self.debug:
-            print(f"[Engine] {msg}")
 
     # ─────────────────────────────────────────────────────────────
     # Pre-processing
@@ -46,7 +43,6 @@ class FunctionAnalysisEngine:
         try:
             cancelled = sp.cancel(expr)
             if cancelled != expr:
-                self._log(f"Cancelled: {expr} → {cancelled}")
                 return cancelled
         except Exception:
             pass
@@ -432,19 +428,15 @@ class FunctionAnalysisEngine:
         try:
             return sp.solveset(expr, self.x, domain=domain)
         except Exception as e:
-            self._log(f"Error solving {expr}: {e}")
             return sp.EmptySet
 
     def get_domain(self, expr):
-        self._log("Calculating Domain...")
         try:
             return continuous_domain(expr, self.x, sp.Reals)
         except Exception as e:
-            self._log(f"Domain calculation failed: {e}")
             return sp.Reals
 
     def get_intercepts(self, expr, domain):
-        self._log("Calculating Intercepts...")
         intercepts = {"x": [], "y": None}
 
         # Y-intercept: only if 0 is genuinely in the domain
@@ -680,7 +672,6 @@ class FunctionAnalysisEngine:
             return None
 
     def get_extrema(self, expr, domain):
-        self._log("Calculating Extrema...")
         extrema = {"minima": [], "maxima": []}
         try:
             f_prime = sp.diff(expr, self.x)
@@ -692,7 +683,6 @@ class FunctionAnalysisEngine:
             if self._roots_are_incomplete(roots) and self._has_infinite_oscillation(
                 expr
             ):
-                self._log("Infinite oscillation detected - cannot find finite extrema")
                 return extrema
 
             try:
@@ -789,11 +779,10 @@ class FunctionAnalysisEngine:
                 except:
                     pass
         except Exception as e:
-            self._log(f"Extrema calculation failed: {e}")
+            raise e
         return extrema
 
     def get_inflection_points(self, expr, domain):
-        self._log("Calculating Inflection Points...")
         inflections = []
         try:
             f_prime = sp.diff(expr, self.x)
@@ -850,11 +839,10 @@ class FunctionAnalysisEngine:
                 except:
                     pass
         except Exception as e:
-            self._log(f"Inflection points failed: {e}")
+            raise e
         return inflections
 
     def get_asymptotes(self, expr, domain):
-        self._log("Calculating Asymptotes...")
         asymptotes = {"vertical": [], "horizontal": [], "oblique": []}
 
         # ── Horizontal asymptotes ──────────────────────────────────
@@ -1084,8 +1072,7 @@ class FunctionAnalysisEngine:
                 if v not in asymptotes["vertical"]:
                     asymptotes["vertical"].append(v)
         except Exception as e:
-            self._log(f"Vertical asymptote failed: {e}")
-
+            raise e
         return asymptotes
 
     def get_parity(self, expr):
@@ -1093,7 +1080,6 @@ class FunctionAnalysisEngine:
         Check parity symbolically (multiple simplification strategies),
         then fall back to numerical sampling — fixes ln(x+sqrt(x^2+1)) = arcsinh(x).
         """
-        self._log("Calculating Parity...")
         try:
             f_neg = sp.simplify(expr.subs(self.x, -self.x))
             f_pos = sp.simplify(expr)
@@ -1193,7 +1179,6 @@ class FunctionAnalysisEngine:
         return fundamental
 
     def get_monotonicity(self, expr, domain, period=None):
-        self._log("Calculating Monotonicity...")
         intervals = {"increasing": [], "decreasing": []}
         try:
             f_prime = sp.diff(expr, self.x)
@@ -1223,9 +1208,6 @@ class FunctionAnalysisEngine:
             # immediately. Building intervals from partial nsolve results is meaningless
             # since there are infinitely many critical points we cannot enumerate.
             if suppress_infinity:
-                self._log(
-                    "Infinite oscillation detected - cannot determine monotonicity intervals"
-                )
                 return intervals
 
             if period is not None:
@@ -1343,7 +1325,7 @@ class FunctionAnalysisEngine:
             intervals = self._consolidate_monotonicity(intervals, domain)
 
         except Exception as e:
-            self._log(f"Monotonicity calculation failed: {e}")
+            raise e
         return intervals
 
     def _consolidate_monotonicity(self, intervals, domain):
@@ -1402,9 +1384,7 @@ class FunctionAnalysisEngine:
     # ─────────────────────────────────────────────────────────────
 
     def analyze(self, func_string):
-        print(f"\n{'=' * 50}")
-        print(f"[{func_string}] Analysis Starting...")
-        print(f"{'=' * 50}")
+    
 
         real_x = sp.Symbol("x", real=True)
         self.x = real_x
@@ -1442,284 +1422,6 @@ class FunctionAnalysisEngine:
             "Periodicity": period,
             "Monotonicity": monotonicity,
         }
-        self.print_report(results)
         return results
 
-    # ─────────────────────────────────────────────────────────────
-    # Report formatting
-    # ─────────────────────────────────────────────────────────────
-
-    def print_report(self, res):
-
-        def format_val(val):
-            try:
-                if isinstance(val, AccumBounds):
-                    return None  # Never leak AccumBounds
-                if val.has(sp.I):
-                    return None
-                val = sp.simplify(val)
-                if val.count_ops() > 15:
-                    return f"{val} (approx {val.evalf():.3f})"
-                if isinstance(val, sp.Float):
-                    return f"{float(val):.4f}"
-                return str(val)
-            except:
-                return str(val)
-
-        def clean_set(s):
-            if isinstance(s, AccumBounds):
-                return None  # Safety net
-            if s == sp.Reals:
-                return "(-oo, oo)"
-            if s == sp.EmptySet:
-                return "None"
-            if isinstance(s, list):
-                if not s:
-                    return "None"
-                parts = [
-                    clean_set(x) if isinstance(x, sp.Set) else format_val(x) for x in s
-                ]
-                return ", ".join(p for p in parts if p)
-            if isinstance(s, sp.FiniteSet):
-                if not s:
-                    return "None"
-                return ", ".join(format_val(arg) for arg in s)
-            elif isinstance(s, sp.ImageSet):
-                try:
-                    lam = s.lamda if hasattr(s, "lamda") else s.args[0]
-                    expr = lam.expr if hasattr(lam, "expr") else lam
-                    return f"{str(expr).replace('_n', 'n')} (for integer n)"
-                except:
-                    return str(s).replace("_n", "n")
-            elif isinstance(s, sp.Union):
-                parts = [clean_set(arg) for arg in s.args]
-                return " U ".join(p for p in parts if p)
-            elif isinstance(s, sp.Intersection):
-                return " & ".join(clean_set(arg) for arg in s.args)
-            elif isinstance(s, sp.Complement):
-                return f"{clean_set(s.args[0])} excluding {clean_set(s.args[1])}"
-            elif isinstance(s, sp.Interval):
-                lb = "(" if s.left_open else "["
-                rb = ")" if s.right_open else "]"
-                return f"{lb}{s.start}, {s.end}{rb}"
-            return str(s).replace("_n", "n")
-
-        print(f"Function:       f(x) = {res['Function']}")
-        print(f"Domain:         {clean_set(res['Domain'])}")
-
-        x_raw = res["Intercepts"]["x"]
-        if (
-            x_raw is None
-            or isinstance(x_raw, sp.EmptySet.__class__)
-            or (isinstance(x_raw, list) and not x_raw)
-        ):
-            print("X-Intercepts:   None")
-        else:
-            print(f"X-Intercepts:   {clean_set(x_raw)}")
-
-        y_raw = res["Intercepts"]["y"]
-        print(f"Y-Intercept:    {format_val(y_raw) if y_raw is not None else 'None'}")
-
-        period = res["Periodicity"]
-
-        def format_extrema(pts, period, expr=None):
-            if not pts:
-                return "None"
-
-            def fmt_pt(pt):
-                x_s = format_val(pt[0])
-                y_s = format_val(pt[1])
-                return f"({x_s}, {y_s})"
-
-            if period is None:
-                by_abs = sorted(
-                    pts,
-                    key=lambda p: (
-                        abs(float(p[0].evalf()))
-                        if getattr(p[0], "evalf", None)
-                        else float("inf")
-                    ),
-                )
-                # BUG 3 FIX: Force annotation for oscillating functions even if <= 6 extrema
-                force_annotation = expr is not None and self._oscillates_at_infinity(
-                    expr
-                )
-                if len(by_abs) > 6 or force_annotation:
-                    shown = sorted(by_abs[:6], key=lambda p: float(p[0].evalf()))
-                    return (
-                        ", ".join(fmt_pt(p) for p in shown)
-                        + " ... (and infinitely many more)"
-                    )
-                return ", ".join(
-                    fmt_pt(p) for p in sorted(by_abs, key=lambda p: float(p[0].evalf()))
-                )
-
-            # Periodic: deduplicate by modular equivalence
-            base_pts, seen_mod = [], []
-            for x_v, y_v in sorted(pts, key=lambda p: abs(float(p[0].evalf()))):
-                try:
-                    xf, pf = float(x_v.evalf()), float(period.evalf())
-                    mod = xf % pf
-                    if not any(
-                        abs(mod - sm) < 1e-3
-                        or abs(mod - sm - pf) < 1e-3
-                        or abs(mod - sm + pf) < 1e-3
-                        for sm in seen_mod
-                    ):
-                        seen_mod.append(mod)
-                        base_pts.append((x_v, y_v))
-                except:
-                    base_pts.append((x_v, y_v))
-            base_pts.sort(key=lambda p: float(p[0].evalf()))
-            return (
-                ", ".join(
-                    f"({format_val(x_v)} + n*{period}, {format_val(y_v)})"
-                    for x_v, y_v in base_pts
-                )
-                + " (for integer n)"
-            )
-
-        print(
-            f"Minima:         {format_extrema(res['Extrema']['minima'], period, res['Function'])}"
-        )
-        print(
-            f"Maxima:         {format_extrema(res['Extrema']['maxima'], period, res['Function'])}"
-        )
-        print(
-            f"Inflection pts: {format_extrema(res['Inflection Points'], period, res['Function'])}"
-        )
-
-        vert = ", ".join(f"x = {clean_set(v)}" for v in res["Asymptotes"]["vertical"])
-
-        # FIX: filter AccumBounds at display level (final safety net)
-        horz_list = [
-            h for h in res["Asymptotes"]["horizontal"] if not isinstance(h, AccumBounds)
-        ]
-        oblq_list = [
-            o for o in res["Asymptotes"]["oblique"] if not isinstance(o, AccumBounds)
-        ]
-
-        horz = ", ".join(f"y = {clean_set(h)}" for h in horz_list)
-        oblq = ", ".join(f"y = {clean_set(o)}" for o in oblq_list)
-        print(f"Vertical Asym:  {vert or 'None'}")
-        print(f"Horizontal Asym:{horz or 'None'}")
-        print(f"Oblique Asym:   {oblq or 'None'}")
-        print(f"Parity:         {res['Parity']}")
-        print(f"Periodicity:    {format_val(period) if period else 'None'}")
-
-        print("Monotonicity:")
-        if (
-            not res["Monotonicity"]["increasing"]
-            and not res["Monotonicity"]["decreasing"]
-        ):
-            print("  None or could not be determined.")
-        else:
-
-            def print_intervals(ivals, period, label, expr=None):
-                if not ivals:
-                    return
-                if period is None:
-                    by_abs = sorted(
-                        ivals,
-                        key=lambda i: (
-                            abs(float(i[0].evalf()))
-                            if getattr(i[0], "evalf", None)
-                            and i[0] not in (-sp.oo, sp.oo)
-                            else float("inf")
-                        ),
-                    )
-                    # BUG 2 FIX: Force annotation for oscillating functions even if < 6 intervals
-                    force_annotation = (
-                        expr is not None and self._oscillates_at_infinity(expr)
-                    )
-                    # But don't annotate if we have a single global interval (-∞, ∞)
-                    # since that's a globally monotone function (e.g., x - sin(x))
-                    is_single_global = (
-                        len(ivals) == 1
-                        and ivals[0][0] == -sp.oo
-                        and ivals[0][1] == sp.oo
-                    )
-                    if is_single_global:
-                        force_annotation = False
-                    if len(ivals) > 6 or force_annotation:
-                        shown = sorted(
-                            by_abs[:6],
-                            key=lambda i: (
-                                float(i[0].evalf())
-                                if i[0] not in (-sp.oo, sp.oo)
-                                else -float("inf")
-                            ),
-                        )
-                        for s, e in shown:
-                            print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
-                        print(
-                            f"  ... (and infinitely many more {label.lower()} intervals)"
-                        )
-                    else:
-                        for s, e in sorted(
-                            ivals,
-                            key=lambda i: (
-                                float(i[0].evalf())
-                                if i[0] not in (-sp.oo, sp.oo)
-                                else -float("inf")
-                            ),
-                        ):
-                            print(f"  ({format_val(s)}, {format_val(e)})\t{label}")
-                    return
-
-                base_ints, seen_mod = [], []
-                for s, e in sorted(
-                    ivals,
-                    key=lambda i: 0 if i[0] == -sp.oo else abs(float(i[0].evalf())),
-                ):
-                    try:
-                        if s == -sp.oo or e == sp.oo:
-                            base_ints.append((s, e))
-                            continue
-                        sf, pf = float(s.evalf()), float(period.evalf())
-                        mod = sf % pf
-                        if not any(
-                            abs(mod - sm) < 1e-3
-                            or abs(mod - sm - pf) < 1e-3
-                            or abs(mod - sm + pf) < 1e-3
-                            for sm in seen_mod
-                        ):
-                            seen_mod.append(mod)
-                            base_ints.append((s, e))
-                    except:
-                        base_ints.append((s, e))
-
-                base_ints.sort(
-                    key=lambda i: (
-                        float(i[0].evalf())
-                        if i[0] not in (-sp.oo, sp.oo)
-                        else -float("inf")
-                    )
-                )
-                for s, e in base_ints:
-                    ss = (
-                        f"{format_val(s)} + n*{period}"
-                        if s not in (-sp.oo, sp.oo)
-                        else "-oo"
-                    )
-                    es = (
-                        f"{format_val(e)} + n*{period}"
-                        if e not in (-sp.oo, sp.oo)
-                        else "oo"
-                    )
-                    print(f"  ({ss}, {es})\t{label} (for integer n)")
-
-            print_intervals(
-                res["Monotonicity"]["increasing"],
-                period,
-                "Increasing",
-                expr=res["Function"],
-            )
-            print_intervals(
-                res["Monotonicity"]["decreasing"],
-                period,
-                "Decreasing",
-                expr=res["Function"],
-            )
-
-        print("-" * 50)
+    
