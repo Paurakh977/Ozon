@@ -5,6 +5,13 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 
 from colorama import Fore
 from engines import solve
+
+def clean_printer(question, ans):
+    print(f"{Fore.CYAN}{question}")
+    print(f"{Fore.YELLOW}Domain: {ans['domain']}")
+    print(f"{Fore.GREEN}Range: {ans['range']}")
+    print(f"{Fore.MAGENTA}Method: {ans['method']}\n")
+
 def main():
     print(f"{Fore.MAGENTA}=== ROBUST SOLVER v4 ===")
 
@@ -27,6 +34,7 @@ def main():
         "1/(1+x**2)",
     ]:
         s = solve(fn)
+        clean_printer(fn, s)
         if s:
             all_stats.append(s)
             standard_stats.append(s)
@@ -47,6 +55,7 @@ def main():
     ]:
         s = solve(fn)
         if s:
+            clean_printer(fn, s)
             all_stats.append(s)
             hard_stats.append(s)
 
@@ -66,6 +75,7 @@ def main():
     ]:
         s = solve(fn)
         if s:
+            clean_printer(fn, s)
             all_stats.append(s)
             extreme_stats.append(s)
 
@@ -94,6 +104,7 @@ def main():
     ]:
         s = solve(fn)
         if s:
+            clean_printer(fn, s)
             all_stats.append(s)
             user_stats.append(s)
 
@@ -132,6 +143,7 @@ def main():
     ]:
         s = solve(fn)
         if s:
+            clean_printer(fn, s)
             all_stats.append(s)
             adversarial_stats.append(s)
 

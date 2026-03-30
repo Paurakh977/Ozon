@@ -14,6 +14,7 @@ from scipy.optimize import minimize, minimize_scalar
 
 import sympy as sp
 from sympy import (
+    Float,
     Abs,
     Add,
     E,
@@ -76,6 +77,7 @@ from sympy.sets import (
     Complement,
     EmptySet,
     FiniteSet,
+    ImageSet,
     Integers,
     Interval,
     Reals,
@@ -86,7 +88,7 @@ from .worker_process import worker_loop
 
 RUST_AVAILABLE = True
 SCIPY_AVAILABLE = True
-SCIPY_AVAILABLE = False
+DEBUG_ENGINE = True
 minimize_scalar = None
 
 
@@ -94,10 +96,9 @@ colorama.init(autoreset=True)
 warnings.filterwarnings("ignore")
 
 
-DEBUG_ENGINE = True
 
 
-def debug_print(msg, color=Fore.MAGENTA):
+def debugger(msg, color=Fore.MAGENTA):
     if DEBUG_ENGINE:
         print(f"{color}{Style.DIM}[DEBUG] {msg}{Style.RESET_ALL}")
 
@@ -153,7 +154,7 @@ def run_with_timeout(task_type, args, timeout_seconds, default=None):
     except queue.Empty:
         worker.p.terminate()
         worker.p.join()
-        debug_print(
+        debugger(
             f"TIMEOUT after {timeout_seconds}s — worker process killed and restarted",
             Fore.YELLOW,
         )
@@ -513,7 +514,7 @@ def expand_periodic_domain(f, x, domain):
         next_ok = bool(np.isfinite(val_next) and np.isreal(val_next))
 
         if not (base_ok and next_ok):
-            debug_print(
+            debugger(
                 f"Periodic expansion aborted: base_ok={base_ok}, next_ok={next_ok}",
                 Fore.YELLOW,
             )
@@ -530,7 +531,7 @@ def expand_periodic_domain(f, x, domain):
             return domain, False
 
     except Exception as exc:
-        debug_print(f"Periodic expansion numerical check failed: {exc}", Fore.YELLOW)
+        debugger(f"Periodic expansion numerical check failed: {exc}", Fore.YELLOW)
         return domain, False
 
     # ── Build the periodic union ───────────────────────────────────────────
@@ -546,7 +547,7 @@ def expand_periodic_domain(f, x, domain):
                 )
 
         expanded = Union(*all_intervals)
-        debug_print(
+        debugger(
             f"Periodic domain expanded: {len(component_list)} component(s) × "
             f"{2 * NUM_PERIODS + 1} periods (period={period_float:.4f})",
             Fore.GREEN,
@@ -554,7 +555,7 @@ def expand_periodic_domain(f, x, domain):
         return expanded, True
 
     except Exception as exc:
-        debug_print(f"Periodic expansion union build failed: {exc}", Fore.YELLOW)
+        debugger(f"Periodic expansion union build failed: {exc}", Fore.YELLOW)
         return domain, False
 
 
@@ -860,7 +861,7 @@ def detect_unbounded_oscillation(f_num, gen_min, gen_max):
                     ]
                     if any(r > 10 for r in ratios):
                         has_inf_neg = has_inf_pos = True
-                        debug_print(
+                        debugger(
                             f"Unbounded oscillation (neg dir): ratios={ratios[:3]}",
                             Fore.YELLOW,
                         )
@@ -884,7 +885,7 @@ def detect_unbounded_oscillation(f_num, gen_min, gen_max):
                 ]
                 if any(r > 10 for r in ratios):
                     has_inf_neg = has_inf_pos = True
-                    debug_print(
+                    debugger(
                         f"Unbounded oscillation (pos dir): ratios={ratios[:3]}",
                         Fore.YELLOW,
                     )
@@ -907,7 +908,7 @@ def detect_unbounded_oscillation(f_num, gen_min, gen_max):
                     valid = np.isfinite(ys)
                     if np.sum(valid) > 20 and np.max(np.abs(ys[valid])) > 1e10:
                         has_inf_neg = has_inf_pos = True
-                        debug_print("Large values at negative x detected", Fore.YELLOW)
+                        debugger("Large values at negative x detected", Fore.YELLOW)
             except Exception:
                 pass
 
@@ -1039,11 +1040,11 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
     try:
         f_num = make_safe_f_num_vectorized(f, x)
-        debug_print("Numerical range computation starting...", Fore.CYAN)
+        debugger("Numerical range computation starting...", Fore.CYAN)
 
         # --- STEP 0: PERIODIC FULL-RANGE SHORTCUT (tan, cot) ---
         if is_periodically_unbounded_no_gap(f):
-            debug_print("Detected tan/cot — full range with no gaps", Fore.YELLOW)
+            debugger("Detected tan/cot — full range with no gaps", Fore.YELLOW)
             return "Interval(-oo, oo)", "Exact (periodic unbounded)"
 
         # --- STEP 1: REUSE PRE-COMPUTED BEHAVIOUR INFO ---
@@ -1113,7 +1114,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                 v = f_num(interior_pt)
                                 if np.isfinite(v) and v < -1e4:
                                     has_inf_neg = True
-                                    debug_print(
+                                    debugger(
                                         f"Near-singularity probe: f({interior_pt:.2e})={v:.2e} → -∞ inferred",
                                         Fore.YELLOW,
                                     )
@@ -1197,7 +1198,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
         might_have_gaps = _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc)
 
         if has_inf_neg and has_inf_pos and not might_have_gaps:
-            debug_print("Fully unbounded, no gaps — skipping grid search", Fore.GREEN)
+            debugger("Fully unbounded, no gaps — skipping grid search", Fore.GREEN)
             return "Interval(-oo, oo)", "Hybrid Analysis"
 
         if might_have_gaps and not (has_inf_neg and has_inf_pos):
@@ -1260,7 +1261,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                         else f"{v:.6f}".rstrip("0").rstrip(".")
                                     )
 
-                                debug_print(
+                                debugger(
                                     f"Reciprocal trig gap: ({fv(gap_lower)}, {fv(gap_upper)})",
                                     Fore.CYAN,
                                 )
@@ -1270,7 +1271,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                                 )
                                 return result, "Hybrid Analysis (gap detected)"
             except Exception as exc:
-                debug_print(f"Reciprocal trig fast path failed: {exc}", Fore.YELLOW)
+                debugger(f"Reciprocal trig fast path failed: {exc}", Fore.YELLOW)
 
         # --- STEP 4: GRID SEARCH ---
         all_points = []
@@ -1599,7 +1600,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                         verified_gaps.append((gs, ge))
 
                 if verified_gaps:
-                    debug_print(
+                    debugger(
                         f"Detected {len(verified_gaps)} verified gap(s) in range",
                         Fore.CYAN,
                     )
@@ -1727,7 +1728,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                     holes.append(float(lv))
         holes = sorted(list(set(holes)))
         if holes:
-            debug_print(f"Detected interior holes: {holes}", Fore.CYAN)
+            debugger(f"Detected interior holes: {holes}", Fore.CYAN)
             intervals = []
             curr_left = final_min
             for i, hole in enumerate(holes):
@@ -1819,6 +1820,24 @@ def format_math_set(obj):
     if isinstance(obj, Interval):
         return fmt_interval(obj)
 
+    if isinstance(obj, ImageSet):
+        try:
+            expr = obj.lamda.expr
+            var = obj.lamda.variables[0]
+            n_sym = Symbol('n')
+            expr_n = expr.subs(var, n_sym)
+            return f"{{{fmt_val(expr_n)} | n in Z}}"
+        except Exception:
+            return str(obj)
+
+    if isinstance(obj, Complement):
+        base, exc = obj.args
+        base_str = format_math_set(base)
+        exc_str = format_math_set(exc)
+        if base_str == "(-oo, oo)":
+            base_str = "R"
+        return f"{base_str} \\ {exc_str}"
+
     if isinstance(obj, Union):
         # ── Attempt compact periodic representation ──────────────────────
         periodic_str = _format_periodic_union(obj, fmt_val, fmt_interval)
@@ -1833,11 +1852,32 @@ def format_math_set(obj):
                 items = sorted([fmt_val(x) for x in arg.args])
                 parts.append("{" + ", ".join(items) + "}")
             else:
-                parts.append(str(arg))
+                parts.append(format_math_set(arg))
         return " U ".join(parts)
 
     return str(obj)
 
+
+def round_sympy_expr(expr, digits=3):
+
+    if isinstance(expr, Float):
+        return Float(round(float(expr), digits), digits)
+
+    elif isinstance(expr, Interval):
+        return Interval(
+            round_sympy_expr(expr.start, digits),
+            round_sympy_expr(expr.end, digits),
+            expr.left_open,
+            expr.right_open,
+        )
+
+    elif isinstance(expr, Union):
+        return Union(*[round_sympy_expr(arg, digits) for arg in expr.args])
+
+    elif isinstance(expr, FiniteSet):
+        return FiniteSet(*[round_sympy_expr(arg, digits) for arg in expr.args])
+
+    return expr
 
 # =============================================================================
 # MAIN SOLVER
@@ -1846,7 +1886,6 @@ def format_math_set(obj):
 
 def solve(func_str):
     x = Symbol("x", real=True)
-    print(f"{Fore.CYAN}{Style.BRIGHT}Input: {func_str}")
 
     # --- PARSING ---
     try:
@@ -1854,34 +1893,21 @@ def solve(func_str):
         x_parsed = [s for s in f_raw.free_symbols if str(s) == "x"]
         f = f_raw.subs(x_parsed[0], x) if x_parsed else f_raw
     except Exception as e:
-        print(f"{Fore.RED}[FAIL] Parsing Error: {e}")
         return None
 
     if f in [zoo, oo, -oo, nan]:
-        print(f"{Fore.RED}[FAIL] Infinite/Undefined Expression")
-        print("-" * 40)
         return None
 
     # --- CONSTANT FUNCTION DETECTION ---
     if f.is_number:
-        print(f"{Fore.GREEN}Domain: (-oo, oo)")
-        print(
-            f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f))}  (constant function)"
-        )
-        print(f"{Style.DIM}Method: Exact (constant)")
-        print("-" * 40)
+        
         return
 
     if f.free_symbols:
         try:
             f_ts = trigsimp(f)
             if f_ts.is_number:
-                print(f"{Fore.GREEN}Domain: (-oo, oo)")
-                print(
-                    f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f_ts))}  (constant function)"
-                )
-                print(f"{Style.DIM}Method: Simplification (constant)")
-                print("-" * 40)
+                
                 return
         except Exception:
             pass
@@ -1892,7 +1918,6 @@ def solve(func_str):
     )
     if domain_timed_out:
         domain = S.Reals
-        print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (timeout)")
     elif domain_result is not None:
         domain = domain_result
     else:
@@ -1901,7 +1926,7 @@ def solve(func_str):
     # ── FIX-02: Expand periodic domains truncated by SymPy ───────────────
     domain, was_periodic = expand_periodic_domain(f, x, domain)
     if was_periodic:
-        debug_print(
+        debugger(
             "Periodic domain detected — expanded from single period to full ℤ-union",
             Fore.GREEN,
         )
@@ -1928,7 +1953,6 @@ def solve(func_str):
     except Exception:
         pass
 
-    print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
 
     # --- RANGE ---
     range_res = None
@@ -1949,7 +1973,7 @@ def solve(func_str):
             all_integer = True  # conservative: trust structural check
 
         if all_integer:
-            debug_print("Detected integer-valued function (floor/ceiling)", Fore.GREEN)
+            debugger("Detected integer-valued function (floor/ceiling)", Fore.GREEN)
             # ── Determine which integers are actually attained ────────────
             # Sample densely over multiple periods to collect all reachable
             # integer values; this correctly identifies e.g.:
@@ -1979,7 +2003,7 @@ def solve(func_str):
                         only_val = next(iter(int_vals))
                         range_res = FiniteSet(Integer(only_val))
                         method = "Exact (integer-valued function)"
-                        debug_print(
+                        debugger(
                             f"Integer-valued function with single value: {{{only_val}}}",
                             Fore.GREEN,
                         )
@@ -2012,7 +2036,7 @@ def solve(func_str):
                             range_res = S.Integers  # structural: still Z-like
                             # Override display method label
                             method = f"Exact (integer-valued function, step={min_gap})"
-                            debug_print(
+                            debugger(
                                 f"Integer-valued, step={min_gap}, range≈{min_gap}·ℤ+{offset}",
                                 Fore.GREEN,
                             )
@@ -2041,7 +2065,7 @@ def solve(func_str):
                                 range_res = "Irregular integers"
                                 method = "Exact (irregular integers)"
 
-                            debug_print(f"Irregular integers detected", Fore.GREEN)
+                            debugger(f"Irregular integers detected", Fore.GREEN)
 
                         if (
                             hasattr(range_res, "is_Set")
@@ -2060,7 +2084,7 @@ def solve(func_str):
             if not method:
                 method = "Exact (integer-valued function)"
         else:
-            debug_print(
+            debugger(
                 "floor/ceiling present but output is NOT integer-valued — "
                 "routing to full solver",
                 Fore.YELLOW,
@@ -2126,7 +2150,7 @@ def solve(func_str):
             if single_period_domain is not None:
                 t_a0 = min(SYMBOLIC_TIMEOUT, remaining())
                 if t_a0 > 0.1:
-                    debug_print(
+                    debugger(
                         f"Strategy A0: function_range on representative interval "
                         f"[{single_period_domain.start}, {single_period_domain.end}] "
                         f"(budget={t_a0:.1f}s)",
@@ -2137,11 +2161,11 @@ def solve(func_str):
                     )
                     if to_a0:
                         any_timed_out = True
-                        debug_print("Strategy A0 TIMED OUT", Fore.YELLOW)
+                        debugger("Strategy A0 TIMED OUT", Fore.YELLOW)
                     elif result_a0 is not None and is_valid_range(result_a0):
                         range_res = result_a0
                         method = "Exact (function_range, periodic)"
-                        debug_print(f"Strategy A0 SUCCESS: {result_a0}", Fore.GREEN)
+                        debugger(f"Strategy A0 SUCCESS: {result_a0}", Fore.GREEN)
 
             # Strategy A1: Composition decomposition
             if range_res is None and remaining() > 0.2:
@@ -2149,7 +2173,7 @@ def solve(func_str):
                 if f.count(x) == 1:
                     ta1 = min(SYMBOLIC_TIMEOUT, remaining())
                     if ta1 > 0.1:
-                        debug_print(
+                        debugger(
                             f"Strategy A1: composition decomposition (budget={ta1:.1f}s)",
                             Fore.BLUE,
                         )
@@ -2158,33 +2182,33 @@ def solve(func_str):
                         )
                         if timed_out:
                             any_timed_out = True
-                            debug_print("Strategy A1 TIMED OUT", Fore.YELLOW)
+                            debugger("Strategy A1 TIMED OUT", Fore.YELLOW)
                         elif result is not None and is_valid_range(result):
                             range_res = result
                             method = "Exact (function_range, composited)"
-                            debug_print(f"Strategy A1 SUCCESS: {result}", Fore.GREEN)
+                            debugger(f"Strategy A1 SUCCESS: {result}", Fore.GREEN)
 
             # Strategy A: function_range (full domain)
             ta = min(SYMBOLIC_TIMEOUT, remaining())
             if range_res is None and ta > 0.1:
-                debug_print(f"Strategy A: function_range (budget={ta:.1f}s)", Fore.BLUE)
+                debugger(f"Strategy A: function_range (budget={ta:.1f}s)", Fore.BLUE)
                 result, timed_out = run_with_timeout("range", (f, x, domain), ta)
                 if timed_out:
                     any_timed_out = True
-                    debug_print("Strategy A TIMED OUT", Fore.YELLOW)
+                    debugger("Strategy A TIMED OUT", Fore.YELLOW)
                 elif result is not None and is_valid_range(result):
                     range_res = result
                     method = "Exact (function_range)"
-                    debug_print(f"Strategy A SUCCESS: {result}", Fore.GREEN)
+                    debugger(f"Strategy A SUCCESS: {result}", Fore.GREEN)
 
             # Strategy B: symbolic min/max
             if range_res is None and remaining() > 0.2:
                 tb = min(SYMBOLIC_TIMEOUT, remaining())
-                debug_print(f"Strategy B: min/max (budget={tb:.1f}s)", Fore.BLUE)
+                debugger(f"Strategy B: min/max (budget={tb:.1f}s)", Fore.BLUE)
                 result, timed_out = run_with_timeout("min_max", (f, x, domain), tb)
                 if timed_out:
                     any_timed_out = True
-                    debug_print("Strategy B TIMED OUT", Fore.YELLOW)
+                    debugger("Strategy B TIMED OUT", Fore.YELLOW)
                 elif result is not None:
                     mn, mx = result
                     mn_ok = mn is not None and (mn.is_number or mn in [oo, -oo])
@@ -2199,40 +2223,40 @@ def solve(func_str):
                         else:
                             range_res = Interval(mn, mx)
                         method = "Exact (min/max)"
-                        debug_print(f"Strategy B SUCCESS: [{mn}, {mx}]", Fore.GREEN)
+                        debugger(f"Strategy B SUCCESS: [{mn}, {mx}]", Fore.GREEN)
 
             # Strategy C: limit analysis
             if range_res is None and remaining() > 0.2:
                 tc = min(SYMBOLIC_TIMEOUT, remaining())
-                debug_print(f"Strategy C: limit analysis (budget={tc:.1f}s)", Fore.BLUE)
+                debugger(f"Strategy C: limit analysis (budget={tc:.1f}s)", Fore.BLUE)
                 result, timed_out = run_with_timeout("limit", (f, x, domain), tc)
                 if timed_out:
                     any_timed_out = True
-                    debug_print("Strategy C TIMED OUT", Fore.YELLOW)
+                    debugger("Strategy C TIMED OUT", Fore.YELLOW)
                 elif result is not None:
                     has_neg_inf, has_pos_inf, left_lim, right_lim, sing_limits = result
                     behavior_info = result
                     if has_neg_inf and has_pos_inf:
                         if _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc):
-                            debug_print(
+                            debugger(
                                 "Strategy C: doubly unbounded but gapped — deferring to numerical",
                                 Fore.CYAN,
                             )
                         else:
                             range_res = Interval(-oo, oo)
                             method = "Exact (limit analysis)"
-                            debug_print(
+                            debugger(
                                 "Strategy C: unbounded in both directions", Fore.GREEN
                             )
                     elif has_neg_inf or has_pos_inf:
-                        debug_print(
+                        debugger(
                             f"Strategy C: one-sided unbounded — deferring to numerical",
                             Fore.CYAN,
                         )
 
     # Strategy D: numerical fallback
     if range_res is None:
-            debug_print(
+            debugger(
                 "Strategy D: numerical fallback"
                 + (" (after timeout)" if any_timed_out else ""),
                 Fore.CYAN,
@@ -2302,84 +2326,10 @@ def solve(func_str):
     else:
         col = Fore.YELLOW
 
-    print(f"{col}Range:  {format_math_set(range_res)}")
-    print(f"{Style.DIM}Method: {method}")
-
-    print("-" * 40)
-
-    return range_res
-
-
-# =============================================================================
-# TEST SUITE
-# =============================================================================
+    return {
+        "range": format_math_set(round_sympy_expr(range_res, 3)),
+        "domain": format_math_set(domain),
+        "method": method
+    }
 
 
-def main():
-    print(f"{Fore.MAGENTA}=== ROBUST SOLVER v4 ===")
-    print(
-        f"{Fore.MAGENTA}Rust: {'ENABLED' if RUST_AVAILABLE else 'DISABLED'}   "
-        f"SciPy: {'YES' if SCIPY_AVAILABLE else 'NO'}\n"
-    )
-
-    all_stats = []
-
-    print(f"{Fore.WHITE}--- Standard Tests ---")
-    standard_stats = []
-    for fn in [
-        "abs(x)",
-        "sin(x)/x",
-        "x**x",
-        "1/x",
-        "floor(x)",
-        "x**2",
-        "sin(x)",
-        "exp(x)",
-        "log(x)",
-        "x**3",
-        "1/(1+x**2)",
-    ]:
-        s = solve(fn)
-        if s:
-            all_stats.append(s)
-            standard_stats.append(s)
-    if standard_stats:
-        st_total = sum(s.total_time for s in standard_stats)
-        st_avg = st_total / len(standard_stats)
-        print(
-            f"{Fore.CYAN}Standard tests: {len(standard_stats)} funcs — total {st_total * 1000:.1f}ms, avg {st_avg * 1000:.1f}ms"
-        )
-
-    if all_stats:
-        total = sum(s.total_time for s in all_stats)
-        avg = total / len(all_stats)
-        fastest = min(s.total_time for s in all_stats)
-        slowest = max(s.total_time for s in all_stats)
-
-        p_parse = sum(s.parsing_time for s in all_stats)
-        p_domain = sum(s.domain_time for s in all_stats)
-        p_sym = sum(s.symbolic_range_time for s in all_stats)
-        p_num = sum(s.numerical_range_time for s in all_stats)
-
-        print(f"\n{Fore.MAGENTA}{'=' * 50}")
-        print(f"{Fore.MAGENTA}TIMING SUMMARY ({len(all_stats)} functions)")
-        print(f"{Fore.MAGENTA}{'=' * 50}")
-        print(
-            f"{Fore.WHITE}Total:   {total * 1000:.1f}ms   "
-            f"Avg: {avg * 1000:.1f}ms   "
-            f"Min: {fastest * 1000:.1f}ms   "
-            f"Max: {slowest * 1000:.1f}ms"
-        )
-        print(f"\n{Fore.CYAN}Breakdown:")
-        for label, t in [
-            ("Parsing", p_parse),
-            ("Domain", p_domain),
-            ("Symbolic range", p_sym),
-            ("Numerical range", p_num),
-        ]:
-            print(f"  {label:<20} {t * 1000:>8.1f}ms  ({100 * t / total:>5.1f}%)")
-
-
-if __name__ == "__main__":
-    multiprocessing.freeze_support()
-    main()
