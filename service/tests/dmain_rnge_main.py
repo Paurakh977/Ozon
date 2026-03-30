@@ -30,10 +30,6 @@ def main():
         if s:
             all_stats.append(s)
             standard_stats.append(s)
-    if standard_stats:
-        st_total = sum(s.total_time for s in standard_stats)
-        st_avg = st_total / len(standard_stats)
-        print(f"{Fore.CYAN}Standard tests: {len(standard_stats)} funcs — total {st_total*1000:.1f}ms, avg {st_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Hard/Complex Tests ---")
     hard_stats = []
@@ -53,10 +49,6 @@ def main():
         if s:
             all_stats.append(s)
             hard_stats.append(s)
-    if hard_stats:
-        ht_total = sum(s.total_time for s in hard_stats)
-        ht_avg = ht_total / len(hard_stats)
-        print(f"{Fore.CYAN}Hard/Complex tests: {len(hard_stats)} funcs — total {ht_total*1000:.1f}ms, avg {ht_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- Extreme/Challenging Tests ---")
     extreme_stats = []
@@ -76,10 +68,6 @@ def main():
         if s:
             all_stats.append(s)
             extreme_stats.append(s)
-    if extreme_stats:
-        ex_total = sum(s.total_time for s in extreme_stats)
-        ex_avg = ex_total / len(extreme_stats)
-        print(f"{Fore.CYAN}Extreme tests: {len(extreme_stats)} funcs — total {ex_total*1000:.1f}ms, avg {ex_avg*1000:.1f}ms")
 
     print(f"\n{Fore.WHITE}--- User Added Tests ---")
     user_stats = []
@@ -108,10 +96,6 @@ def main():
         if s:
             all_stats.append(s)
             user_stats.append(s)
-    if user_stats:
-        us_total = sum(s.total_time for s in user_stats)
-        us_avg = us_total / len(user_stats)
-        print(f"{Fore.CYAN}User tests: {len(user_stats)} funcs — total {us_total*1000:.1f}ms, avg {us_avg*1000:.1f}ms")
 
     # -------------------------------------------------------------------------
     # ADVERSARIAL TESTS
@@ -150,37 +134,8 @@ def main():
         if s:
             all_stats.append(s)
             adversarial_stats.append(s)
-    if adversarial_stats:
-        adv_total = sum(s.total_time for s in adversarial_stats)
-        adv_avg = adv_total / len(adversarial_stats)
-        print(f"{Fore.CYAN}Adversarial tests: {len(adversarial_stats)} funcs — total {adv_total*1000:.1f}ms, avg {adv_avg*1000:.1f}ms")
 
-    if all_stats:
-        total   = sum(s.total_time for s in all_stats)
-        avg     = total / len(all_stats)
-        fastest = min(s.total_time for s in all_stats)
-        slowest = max(s.total_time for s in all_stats)
-
-        p_parse  = sum(s.parsing_time         for s in all_stats)
-        p_domain = sum(s.domain_time          for s in all_stats)
-        p_sym    = sum(s.symbolic_range_time   for s in all_stats)
-        p_num    = sum(s.numerical_range_time  for s in all_stats)
-
-        print(f"\n{Fore.MAGENTA}{'='*50}")
-        print(f"{Fore.MAGENTA}TIMING SUMMARY ({len(all_stats)} functions)")
-        print(f"{Fore.MAGENTA}{'='*50}")
-        print(f"{Fore.WHITE}Total:   {total*1000:.1f}ms   "
-              f"Avg: {avg*1000:.1f}ms   "
-              f"Min: {fastest*1000:.1f}ms   "
-              f"Max: {slowest*1000:.1f}ms")
-        print(f"\n{Fore.CYAN}Breakdown:")
-        for label, t in [("Parsing",         p_parse),
-                          ("Domain",          p_domain),
-                          ("Symbolic range",  p_sym),
-                          ("Numerical range", p_num)]:
-            print(f"  {label:<20} {t*1000:>8.1f}ms  ({100*t/total:>5.1f}%)")
-
-
+   
 if __name__ == "__main__":
     import multiprocessing
     multiprocessing.freeze_support()

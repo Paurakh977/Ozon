@@ -1,5 +1,4 @@
 import sympy as sp
-import time
 from sympy.calculus.util import continuous_domain, periodicity, AccumBounds
 from sympy.calculus.singularities import singularities
 from engines import get_sympified_expr
@@ -1407,8 +1406,6 @@ class FunctionAnalysisEngine:
         print(f"[{func_string}] Analysis Starting...")
         print(f"{'=' * 50}")
 
-        start_time = time.time()
-
         real_x = sp.Symbol("x", real=True)
         self.x = real_x
 
@@ -1434,7 +1431,6 @@ class FunctionAnalysisEngine:
         period = self.get_periodicity(expr)
         monotonicity = self.get_monotonicity(expr, domain, period)
 
-        elapsed = time.time() - start_time
         results = {
             "Function": original_expr,  # always display original
             "Domain": domain,
@@ -1445,7 +1441,6 @@ class FunctionAnalysisEngine:
             "Parity": parity,
             "Periodicity": period,
             "Monotonicity": monotonicity,
-            "Time (s)": round(elapsed, 4),
         }
         self.print_report(results)
         return results
@@ -1727,5 +1722,4 @@ class FunctionAnalysisEngine:
                 expr=res["Function"],
             )
 
-        print(f"\n[Analyzed in {res['Time (s)']} seconds]")
         print("-" * 50)

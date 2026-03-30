@@ -162,44 +162,6 @@ def run_with_timeout(task_type, args, timeout_seconds, default=None):
         return default, True
 
 
-# TIMING
-
-
-class Timer:
-    def __init__(self, name=""):
-        self.name = name
-        self.elapsed = 0.0
-
-    def __enter__(self):
-        self.start = time.perf_counter()
-        return self
-
-    def __exit__(self, *args):
-        self.elapsed = time.perf_counter() - self.start
-        return False
-
-
-class TimingStats:
-    def __init__(self):
-        self.reset()
-
-    def reset(self):
-        self.parsing_time = 0.0
-        self.domain_time = 0.0
-        self.symbolic_range_time = 0.0
-        self.numerical_range_time = 0.0
-        self.total_time = 0.0
-
-    def __str__(self):
-        return (
-            f"Timing: parse={self.parsing_time * 1000:.2f}ms, "
-            f"domain={self.domain_time * 1000:.2f}ms, "
-            f"sym_range={self.symbolic_range_time * 1000:.2f}ms, "
-            f"num_range={self.numerical_range_time * 1000:.2f}ms, "
-            f"total={self.total_time * 1000:.2f}ms"
-        )
-
-
 # EXPRESSION HELPERS
 
 
@@ -1882,23 +1844,18 @@ def format_math_set(obj):
 # =============================================================================
 
 
-def solve(func_str, show_timing=True):
-    stats = TimingStats()
-    total_start = time.perf_counter()
-
+def solve(func_str):
     x = Symbol("x", real=True)
     print(f"{Fore.CYAN}{Style.BRIGHT}Input: {func_str}")
 
     # --- PARSING ---
-    with Timer("parsing") as t:
-        try:
-            f_raw = get_sympified_expr(func_str)
-            x_parsed = [s for s in f_raw.free_symbols if str(s) == "x"]
-            f = f_raw.subs(x_parsed[0], x) if x_parsed else f_raw
-        except Exception as e:
-            print(f"{Fore.RED}[FAIL] Parsing Error: {e}")
-            return None
-    stats.parsing_time = t.elapsed
+    try:
+        f_raw = get_sympified_expr(func_str)
+        x_parsed = [s for s in f_raw.free_symbols if str(s) == "x"]
+        f = f_raw.subs(x_parsed[0], x) if x_parsed else f_raw
+    except Exception as e:
+        print(f"{Fore.RED}[FAIL] Parsing Error: {e}")
+        return None
 
     if f in [zoo, oo, -oo, nan]:
         print(f"{Fore.RED}[FAIL] Infinite/Undefined Expression")
@@ -1912,11 +1869,8 @@ def solve(func_str, show_timing=True):
             f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f))}  (constant function)"
         )
         print(f"{Style.DIM}Method: Exact (constant)")
-        stats.total_time = time.perf_counter() - total_start
-        if show_timing:
-            print(f"{Fore.BLUE}{Style.DIM}{stats}")
         print("-" * 40)
-        return stats
+        return
 
     if f.free_symbols:
         try:
@@ -1927,26 +1881,22 @@ def solve(func_str, show_timing=True):
                     f"{Fore.GREEN}Range:  {format_math_set(FiniteSet(f_ts))}  (constant function)"
                 )
                 print(f"{Style.DIM}Method: Simplification (constant)")
-                stats.total_time = time.perf_counter() - total_start
-                if show_timing:
-                    print(f"{Fore.BLUE}{Style.DIM}{stats}")
                 print("-" * 40)
-                return stats
+                return
         except Exception:
             pass
 
     # --- DOMAIN ---
-    with Timer("domain") as t:
-        domain_result, domain_timed_out = run_with_timeout(
-            "domain", (f, x, S.Reals), timeout_seconds=3.0, default=S.Reals
-        )
-        if domain_timed_out:
-            domain = S.Reals
-            print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (timeout)")
-        elif domain_result is not None:
-            domain = domain_result
-        else:
-            domain = S.Reals
+    domain_result, domain_timed_out = run_with_timeout(
+        "domain", (f, x, S.Reals), timeout_seconds=3.0, default=S.Reals
+    )
+    if domain_timed_out:
+        domain = S.Reals
+        print(f"{Fore.YELLOW}Domain: {format_math_set(domain)} (timeout)")
+    elif domain_result is not None:
+        domain = domain_result
+    else:
+        domain = S.Reals
 
     # ── FIX-02: Expand periodic domains truncated by SymPy ───────────────
     domain, was_periodic = expand_periodic_domain(f, x, domain)
@@ -1979,7 +1929,6 @@ def solve(func_str, show_timing=True):
         pass
 
     print(f"{Fore.GREEN}Domain: {format_math_set(domain)}")
-    stats.domain_time = t.elapsed
 
     # --- RANGE ---
     range_res = None
@@ -2128,14 +2077,13 @@ def solve(func_str, show_timing=True):
 
     SYMBOLIC_TOTAL_BUDGET = 3.0
 
-    with Timer("symbolic_range") as t:
-        if range_res is None:
+    if range_res is None:
             budget_start = time.perf_counter()
             remaining = lambda: (
                 SYMBOLIC_TOTAL_BUDGET - (time.perf_counter() - budget_start)
             )
 
-            # Strategy A0: single-period shortcut for periodic domains
+        # Strategy A0: single-period shortcut for periodic domains
             # Handles two cases:
             #  1. Large periodic Union (e.g. sqrt(sin(x))) → pick one Interval component
             #  2. Complement domain (e.g. log(sin(x))) → extract the base Interval
@@ -2281,11 +2229,9 @@ def solve(func_str, show_timing=True):
                             f"Strategy C: one-sided unbounded — deferring to numerical",
                             Fore.CYAN,
                         )
-    stats.symbolic_range_time = t.elapsed
 
     # Strategy D: numerical fallback
-    with Timer("numerical_range") as t:
-        if range_res is None:
+    if range_res is None:
             debug_print(
                 "Strategy D: numerical fallback"
                 + (" (after timeout)" if any_timed_out else ""),
@@ -2304,7 +2250,6 @@ def solve(func_str, show_timing=True):
                     range_res = range_res_str
             else:
                 range_res = range_res_str
-    stats.numerical_range_time = t.elapsed
 
     # --- ENDPOINT OPEN/CLOSED REFINEMENT ---
     if range_res is not None and isinstance(range_res, (Interval, Union)):
@@ -2360,12 +2305,9 @@ def solve(func_str, show_timing=True):
     print(f"{col}Range:  {format_math_set(range_res)}")
     print(f"{Style.DIM}Method: {method}")
 
-    stats.total_time = time.perf_counter() - total_start
-    if show_timing:
-        print(f"{Fore.BLUE}{Style.DIM}{stats}")
     print("-" * 40)
 
-    return stats
+    return range_res
 
 
 # =============================================================================

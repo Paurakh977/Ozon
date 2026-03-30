@@ -21,7 +21,7 @@ from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,
 )
 from sympy.solvers.inequalities import solve_univariate_inequality
-from .convergence_divergence import Profiler, check_series_convergence
+from .convergence_divergence import  check_series_convergence
 from ..domain_range.domain_range_engine import get_sympified_expr, _rationalize_float_exponents
 import functools
 
@@ -95,10 +95,9 @@ def _fast_ratio_limit(expr, n, x):
     """
     Optimized ratio test computation using logarithmic form for stability.
     """
-    prof = Profiler()
+    
 
     # Compute ratio a_{n+1} / a_n
-    prof.start("Ratio-Compute")
     try:
         # Use combsimp for factorial-heavy expressions
         if expr.has(sp.factorial) or expr.has(sp.gamma) or expr.has(sp.binomial):
@@ -108,12 +107,9 @@ def _fast_ratio_limit(expr, n, x):
         else:
             ratio_expr = sp.cancel(expr.subs(n, n + 1) / expr)
     except Exception:
-        prof.stop("Ratio-Compute")
-        return None, prof
-    prof.stop("Ratio-Compute")
+        return None
 
     # Compute absolute value and limit
-    prof.start("Ratio-Limit")
     try:
         abs_ratio = sp.Abs(ratio_expr)
 
@@ -128,20 +124,16 @@ def _fast_ratio_limit(expr, n, x):
             if log_L is not None and not log_L.has(sp.Limit):
                 L = sp.exp(log_L)
 
-        prof.stop("Ratio-Limit")
-        return L, prof
+        return L
 
     except Exception:
-        prof.stop("Ratio-Limit")
-        return None, prof
+        return None
 
 
 def _fast_root_limit(expr, n, x):
     """
     Optimized root test computation using log form.
     """
-    prof = Profiler()
-    prof.start("Root-Test")
 
     try:
         abs_expr = sp.Abs(expr)
@@ -152,13 +144,11 @@ def _fast_root_limit(expr, n, x):
 
         if log_L is not None and not log_L.has(sp.Limit):
             L = sp.exp(log_L)
-            prof.stop("Root-Test")
-            return L, prof
+            return L
     except Exception:
         pass
 
-    prof.stop("Root-Test")
-    return None, prof
+    return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,8 +243,6 @@ def analyze_power_series(expr, n=None, x=None):
         except Exception as e:
             return {"error": f"Failed to parse expression string: {str(e)}"}
 
-    prof = Profiler()
-    prof.start("Total")
 
     has_fact = expr.has(sp.factorial) or expr.has(sp.gamma) or expr.has(sp.binomial)
 
@@ -266,20 +254,19 @@ def analyze_power_series(expr, n=None, x=None):
                 break
 
     if prefer_root:
-        L, prof_limit = _fast_root_limit(expr, n, x)
+        L = _fast_root_limit(expr, n, x)
         if L is None or L is sp.nan or L.has(sp.AccumBounds):
-            L, alt_prof = _fast_ratio_limit(expr, n, x)
+            L = _fast_ratio_limit(expr, n, x)
     else:
         # ── Step 1: Try ratio test (primary method) ────────────────────────────
-        L, prof_limit = _fast_ratio_limit(expr, n, x)
+        L = _fast_ratio_limit(expr, n, x)
 
         # ── Step 2: Fall back to root test if ratio fails ──────────────────────
         if L is None or L is sp.nan or L.has(sp.AccumBounds):
-            L, alt_prof = _fast_root_limit(expr, n, x)
+            L = _fast_root_limit(expr, n, x)
 
     # ── Step 3: Handle failed limit computation ────────────────────────────
     if L is None or L is sp.nan or L.has(sp.Limit):
-        prof.stop("Total")
         return {"error": "Could not compute symbolic limit for the series ratio/root."}
 
     # Clean up L (like x*sign(x) -> Abs(x)) for better output and math
@@ -290,7 +277,6 @@ def analyze_power_series(expr, n=None, x=None):
 
     # Case: L = 0 => R = infinity (converges everywhere)
     if L == 0:
-        prof.stop("Total")
         return {
             "radius": sp.oo,
             "interval": "(-oo, oo)",
@@ -303,16 +289,13 @@ def analyze_power_series(expr, n=None, x=None):
     # Case: L = infinity => R = 0 (converges only at center)
     if L == sp.oo or L.has(sp.oo) or (L.is_number and L > 1e100):
         # Find center by solving where first term is 0
-        prof.start("Center-Detection")
         try:
             term_1 = expr.subs(n, 1)
             roots = sp.solve(term_1, x)
             center = roots[0] if roots else 0
         except Exception:
             center = 0
-        prof.stop("Center-Detection")
 
-        prof.stop("Total")
         return {
             "radius": 0,
             "interval": f"[{center}, {center}]",
@@ -333,11 +316,9 @@ def analyze_power_series(expr, n=None, x=None):
     # Case: L depends on x => need to solve |L(x)| < 1 for convergence
     if L.has(sp.oo):
         # L contains infinity in some terms but isn't pure infinity
-        prof.stop("Total")
         return {"error": f"Limit contains unbounded terms: {L}"}
 
     # ── Step 5: Solve convergence inequality ───────────────────────────────
-    prof.start("Inequality-Solve")
     try:
         convergence_domain = _solve_convergence_inequality(L, x)
 
@@ -345,18 +326,15 @@ def analyze_power_series(expr, n=None, x=None):
             # Try standard solver as fallback
             convergence_domain = solve_univariate_inequality(L < 1, x, relational=False)
     except Exception as e:
-        prof.stop("Inequality-Solve")
-        prof.stop("Total")
         return {"error": f"Failed to solve inequality L < 1: {str(e)}"}
-    prof.stop("Inequality-Solve")
 
     # ── Step 6: Extract interval and radius ────────────────────────────────
     if isinstance(convergence_domain, sp.Interval):
-        a, b = convergence_domain.start, convergence_domain.end
+        a = convergence_domain.start
+        b = convergence_domain.end
         radius = (b - a) / 2
 
         # ── Step 7: Analyze endpoints ──────────────────────────────────────
-        prof.start("Endpoint-Analysis")
 
         left_expr = sp.simplify(expr.subs(x, a))
         right_expr = sp.simplify(expr.subs(x, b))
@@ -365,14 +343,12 @@ def analyze_power_series(expr, n=None, x=None):
         left_res, left_reason, _ = check_series_convergence(left_expr, n)
         right_res, right_reason, _ = check_series_convergence(right_expr, n)
 
-        prof.stop("Endpoint-Analysis")
 
         # Build interval string with appropriate brackets
         l_bracket = "[" if left_res else "("
         r_bracket = "]" if right_res else ")"
         interval_str = f"{l_bracket}{a}, {b}{r_bracket}"
 
-        prof.stop("Total")
         return {
             "radius": radius,
             "interval": interval_str,
@@ -383,7 +359,6 @@ def analyze_power_series(expr, n=None, x=None):
 
     elif isinstance(convergence_domain, sp.Union):
         # Handle union of intervals (rare but possible)
-        prof.stop("Total")
         return {
             "radius": "Complex",
             "interval_symbolic": convergence_domain,
@@ -391,7 +366,6 @@ def analyze_power_series(expr, n=None, x=None):
         }
 
     else:
-        prof.stop("Total")
         return {
             "radius": "Unknown",
             "interval_symbolic": convergence_domain,

@@ -20,7 +20,6 @@ Additions over the base:
                   NEVER used for sequences — that was Bug 1 in calude.py.
 
 Preserved exactly from conv_div_engine.py:
-  • Profiler class       — per-test scoped, no global accumulation
   • snap_limit()         — fixes floating-point precision traps
   • Cauchy Condensation  — 2-level algebraic test for log series
   • Log-Asymp-Test       — -ln(f)/ln(n) limit; fast for log-tower series
@@ -33,44 +32,12 @@ Preserved exactly from conv_div_engine.py:
 import sympy as sp
 from sympy.solvers.inequalities import solve_univariate_inequality
 import numpy as np
-import time
 import warnings
 from colorama import init, Fore, Style
 from sympy.series.limitseq import limit_seq
 from engines import get_sympified_expr
 
 init(autoreset=True)
-
-
-# ─────────────────────────────────────────────────────────────────
-#  PER-TEST PROFILER  (scoped per call — no global accumulation)
-# ─────────────────────────────────────────────────────────────────
-
-
-class Profiler:
-    """
-    Tracks elapsed time per named technique within a single function call.
-    Each Profiler instance is created fresh per check_*_convergence() call,
-    so timings never bleed between test cases.
-    """
-
-    def __init__(self):
-        self.starts: dict = {}
-        self.totals: dict = {}
-
-    def start(self, name: str):
-        self.starts[name] = time.perf_counter()
-        if name not in self.totals:
-            self.totals[name] = 0.0
-
-    def stop(self, name: str):
-        if self.starts.get(name) is not None:
-            self.totals[name] += (time.perf_counter() - self.starts[name]) * 1000
-            self.starts[name] = None
-
-    def get_log_string(self) -> str:
-        logs = [f"{k}: {v:.1f}ms" for k, v in self.totals.items() if v >= 0.1]
-        return "[Fast-Track: <0.1ms]" if not logs else "[" + " | ".join(logs) + "]"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -184,7 +151,7 @@ def numerical_divergence_check(expr, n) -> bool:
 # ─────────────────────────────────────────────────────────────────
 
 
-def super_fast_limit(expr, n, prof: Profiler):
+def super_fast_limit(expr, n):
     """
     Attempt to compute lim_{n→∞} expr using a cascade of increasingly
     expensive methods.  Returns a SymPy expression or None.
@@ -222,21 +189,16 @@ def super_fast_limit(expr, n, prof: Profiler):
     )
 
     # ── 1. Num-Heuristic ──────────────────────────────────────────
-    prof.start("Num-Heuristic")
     if numerical_divergence_check(expr, n):
-        prof.stop("Num-Heuristic")
         return sp.oo
-    prof.stop("Num-Heuristic")
 
     # ── 2. Asymp-LeadTerm ─────────────────────────────────────────
-    prof.start("Asymp-LeadTerm")
     if not expr.has(sp.factorial) and not expr.has(sp.gamma) and not has_n_exp:
         try:
             _z = sp.Symbol("_z", positive=True)
             expr_x = expr.subs(n, 1 / _z)
             c, p = expr_x.leadterm(_z)
             if not c.has(sp.O) and not p.has(sp.O) and not c.has(_z):
-                prof.stop("Asymp-LeadTerm")
                 if p > 0:
                     return sp.S(0)
                 if p < 0:
@@ -247,25 +209,20 @@ def super_fast_limit(expr, n, prof: Profiler):
                         return snap_limit(c_lim)
         except Exception:
             pass
-    prof.stop("Asymp-LeadTerm")
 
     # ── 3. Stirling-Log ───────────────────────────────────────────
-    prof.start("Stirling-Log")
     if expr.has(sp.factorial) or expr.has(sp.gamma):
         try:
             s_expr = apply_stirling(expr)
             L_direct = sp.limit(s_expr, n, sp.oo)
             if L_direct is not None and not L_direct.has(sp.Limit):
-                prof.stop("Stirling-Log")
                 return snap_limit(L_direct)
             log_s = sp.expand_log(sp.log(s_expr), force=True)
             L_log = sp.limit(log_s, n, sp.oo)
             if L_log is not None and not L_log.has(sp.Limit):
-                prof.stop("Stirling-Log")
                 return snap_limit(sp.exp(L_log))
         except Exception:
             pass
-    prof.stop("Stirling-Log")
 
     # ── 4. LimitSeq  (NEW — discrete-sequence specialist) ─────────
     #
@@ -275,7 +232,6 @@ def super_fast_limit(expr, n, prof: Profiler):
     # check_sequence_convergence().  It is also faster than sp.limit()
     # for Gamma-heavy expressions.  We gate it behind a pattern check
     # to avoid paying its overhead on every expression.
-    prof.start("LimitSeq")
     if (
         expr.has((-1) ** n)
         or expr.has(sp.gamma)
@@ -285,20 +241,15 @@ def super_fast_limit(expr, n, prof: Profiler):
         try:
             res = limit_seq(expr, n)
             if res is not None and not res.has(sp.Limit):
-                prof.stop("LimitSeq")
                 return snap_limit(res)
         except Exception:
             pass
-    prof.stop("LimitSeq")
 
     # ── 5. SymPy-Fallback ─────────────────────────────────────────
-    prof.start("SymPy-Fallback")
     try:
         res = sp.limit(expr, n, sp.oo)
-        prof.stop("SymPy-Fallback")
         return snap_limit(res)
     except Exception:
-        prof.stop("SymPy-Fallback")
         return None
 
 
@@ -346,8 +297,6 @@ def check_sequence_convergence(expr, n=None, py_func=None):
         except Exception as e:
             return None, f"Parse Error: {str(e)}", ""
 
-    prof = Profiler()
-
     if expr.has(sp.binomial):
         expr = expr.replace(
             sp.binomial,
@@ -369,12 +318,10 @@ def check_sequence_convergence(expr, n=None, py_func=None):
 
     # ── Alternating sequence — even/odd branch split ───────────────
     if expr.has((-1) ** n) or expr.has((-1) ** (n + 1)) or expr.has((-1) ** (n - 1)):
-        prof.start("Seq-Alt-Check")
         expr_even = expr.subs({(-1) ** n: 1, (-1) ** (n + 1): -1, (-1) ** (n - 1): -1})
         expr_odd = expr.subs({(-1) ** n: -1, (-1) ** (n + 1): 1, (-1) ** (n - 1): 1})
-        L_even = super_fast_limit(expr_even, n, prof)
-        L_odd = super_fast_limit(expr_odd, n, prof)
-        prof.stop("Seq-Alt-Check")
+        L_even = super_fast_limit(expr_even, n)
+        L_odd = super_fast_limit(expr_odd, n)
         if (
             L_even is not None
             and L_odd is not None
@@ -382,38 +329,35 @@ def check_sequence_convergence(expr, n=None, py_func=None):
             and not L_odd.has(sp.Limit)
         ):
             if L_even == L_odd:
-                return True, f"Converges to {L_even}", prof.get_log_string()
+                return True, f"Converges to {L_even}", ""
             else:
                 return (
                     False,
                     f"Diverges (Oscillates between {L_even} and {L_odd})",
-                    prof.get_log_string(),
+                    "",
                 )
 
     # ── Sequence Ratio Test ────────────────────────────────────────
     if has_fact and not has_n_root:
-        prof.start("Seq-Ratio-Test")
         try:
             ratio_expr = sp.cancel(sp.combsimp(abs_n.subs(n, n + 1) / abs_n))
-            ratio_limit = super_fast_limit(ratio_expr, n, prof)
+            ratio_limit = super_fast_limit(ratio_expr, n)
             if (
                 ratio_limit is not None
                 and ratio_limit.is_number
                 and not ratio_limit.has(sp.Limit)
             ):
                 if ratio_limit < 1:
-                    prof.stop("Seq-Ratio-Test")
                     return (
                         True,
                         f"Converges to 0 (Ratio L = {ratio_limit})",
-                        prof.get_log_string(),
+                        "",
                     )
                 if ratio_limit > 1:
-                    prof.stop("Seq-Ratio-Test")
                     return (
                         False,
                         f"Diverges to oo (Ratio L = {ratio_limit})",
-                        prof.get_log_string(),
+                        "",
                     )
                 if ratio_limit == 1:
                     inv_ratio = sp.cancel(1 / ratio_expr)
@@ -421,29 +365,26 @@ def check_sequence_convergence(expr, n=None, py_func=None):
                     c, p = (inv_ratio.subs(n, 1 / _z) - 1).leadterm(_z)
                     if p == 1 and not c.has(_z):
                         h = sp.limit(c, _z, 0)
-                        prof.stop("Seq-Ratio-Test")
                         if h > 0:
                             return (
                                 True,
                                 f"Converges to 0 (Asymp Ratio h={h} > 0)",
-                                prof.get_log_string(),
+                                "",
                             )
                         if h < 0:
                             return (
                                 False,
                                 f"Diverges to oo (Asymp Ratio h={h} < 0)",
-                                prof.get_log_string(),
+                                "",
                             )
         except Exception:
             pass
-        prof.stop("Seq-Ratio-Test")
 
     # ── Sequence Root Test ────────────────────────────────────────
     if has_n_exp and not has_fact:
-        prof.start("Seq-Root-Test")
         try:
             log_root_expr = sp.cancel(sp.expand_log(sp.log(abs_n), force=True) / n)
-            log_root_limit = super_fast_limit(log_root_expr, n, prof)
+            log_root_limit = super_fast_limit(log_root_expr, n)
             if (
                 log_root_limit is not None
                 and log_root_limit.is_number
@@ -451,32 +392,29 @@ def check_sequence_convergence(expr, n=None, py_func=None):
             ):
                 root_limit = sp.exp(log_root_limit)
                 if root_limit < 1:
-                    prof.stop("Seq-Root-Test")
                     return (
                         True,
                         f"Converges to 0 (Root L = {root_limit})",
-                        prof.get_log_string(),
+                        "",
                     )
                 if root_limit > 1:
-                    prof.stop("Seq-Root-Test")
                     return (
                         False,
                         f"Diverges to oo (Root L = {root_limit})",
-                        prof.get_log_string(),
+                        "",
                     )
         except Exception:
             pass
-        prof.stop("Seq-Root-Test")
 
     # ── General limit ─────────────────────────────────────────────
-    L = super_fast_limit(expr, n, prof)
+    L = super_fast_limit(expr, n)
     if L is None or L.has(sp.Limit):
-        return None, "Undetermined", prof.get_log_string()
+        return None, "Undetermined", ""
     if isinstance(L, sp.AccumBounds) or L is sp.nan:
-        return False, "Divergent (Oscillates or DNE)", prof.get_log_string()
+        return False, "Divergent (Oscillates or DNE)", ""
     if L.is_finite and L.is_real:
-        return True, f"Converges to {L}", prof.get_log_string()
-    return False, f"Diverges to {L}", prof.get_log_string()
+        return True, f"Converges to {L}", ""
+    return False, f"Diverges to {L}", ""
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -521,7 +459,6 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
         except Exception as e:
             return None, f"Parse Error: {str(e)}", ""
 
-    prof = Profiler()
     try:
         # ── 0. NumPy series fast path ─────────────────────────────
         #
@@ -566,21 +503,18 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
         )
 
         # ── 1. Nth-Term divergence test ───────────────────────────
-        prof.start("Nth-Term")
-        term_limit = super_fast_limit(abs_n, n, prof)
-        prof.stop("Nth-Term")
+        term_limit = super_fast_limit(abs_n, n)
         if term_limit is not None and not term_limit.has(sp.Limit):
             if term_limit != 0 and not isinstance(term_limit, sp.AccumBounds):
                 return (
                     False,
                     f"Divergent (nth-term L={term_limit} != 0)",
-                    prof.get_log_string(),
+                    "",
                 )
             if isinstance(term_limit, sp.AccumBounds) or term_limit is sp.nan:
-                return False, "Divergent (Oscillates or DNE)", prof.get_log_string()
+                return False, "Divergent (Oscillates or DNE)", ""
 
         # ── 2. Asymptotic p-test ──────────────────────────────────
-        prof.start("Asymp-p-test")
         if not has_fact:
             try:
                 _z = sp.Symbol("_z", positive=True)
@@ -588,83 +522,72 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
                 if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
                     if not c.has(_z):
                         if p > 1:
-                            prof.stop("Asymp-p-test")
                             return (
                                 True,
                                 f"Absolutely Convergent (Asymptotic p={p} > 1)",
-                                prof.get_log_string(),
+                                "",
                             )
                         elif not is_oscillatory:
                             if p < 1:
-                                prof.stop("Asymp-p-test")
                                 return (
                                     False,
                                     f"Divergent (Asymptotic p={p} < 1)",
-                                    prof.get_log_string(),
+                                    "",
                                 )
                             if p == 1:
-                                prof.stop("Asymp-p-test")
                                 return (
                                     False,
                                     "Divergent (Asymptotic Harmonic p=1)",
-                                    prof.get_log_string(),
+                                    "",
                                 )
                     else:
                         # Mixed log-polynomial term
                         if p > 1:
-                            prof.stop("Asymp-p-test")
                             return (
                                 True,
                                 f"Absolutely Convergent (Asymp p'={(1 + p) / 2} > 1)",
-                                prof.get_log_string(),
+                                "",
                             )
                         elif not is_oscillatory and p < 1:
-                            prof.stop("Asymp-p-test")
                             return (
                                 False,
                                 f"Divergent (Asymp p'={(1 + p) / 2} < 1)",
-                                prof.get_log_string(),
+                                "",
                             )
             except Exception:
                 pass
-        prof.stop("Asymp-p-test")
 
         # ── 3. Logarithmic Asymptotic test ────────────────────────
         #
         # Computes lim -ln(f)/ln(n).  Faster than Cauchy for log-tower
         # series like ln(n)^ln(n) / n^ln(n).
-        prof.start("Log-Asymp-Test")
         if not has_fact and abs_n.has(sp.log):
             try:
                 log_asymp = sp.cancel(
                     -sp.expand_log(sp.log(abs_n), force=True) / sp.log(n)
                 )
-                L_la = super_fast_limit(log_asymp, n, prof)
+                L_la = super_fast_limit(log_asymp, n)
                 if L_la is not None and L_la.is_number and not L_la.has(sp.Limit):
                     if L_la > 1:
-                        prof.stop("Log-Asymp-Test")
                         return (
                             True,
                             f"Absolutely Convergent (Log-Asymp p={L_la} > 1)",
-                            prof.get_log_string(),
+                            "",
                         )
                     elif not is_oscillatory and L_la < 1:
-                        prof.stop("Log-Asymp-Test")
                         return (
                             False,
                             f"Divergent (Log-Asymp p={L_la} < 1)",
-                            prof.get_log_string(),
+                            "",
                         )
             except Exception:
                 pass
-        prof.stop("Log-Asymp-Test")
 
         # ── 4. Cauchy Condensation (2 levels) ─────────────────────
         #
         # Purely algebraic: substitutes n → 2^n and runs leadterm.
         # Never misfires.  Gold standard for iterated-log series like
         # 1/(n·ln²n·ln(ln n)) where direct integration would time out.
-        prof.start("Cauchy-Condensation")
         if not has_fact and abs_n.has(sp.log):
             current = abs_n
             for level in range(1, 3):
@@ -675,45 +598,39 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
                     if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
                         if not c.has(_z):
                             if p > 1:
-                                prof.stop("Cauchy-Condensation")
                                 return (
                                     True,
                                     f"Absolutely Convergent (Condensation L{level} p={p} > 1)",
-                                    prof.get_log_string(),
+                                    "",
                                 )
                             elif not is_oscillatory:
                                 if p < 1:
-                                    prof.stop("Cauchy-Condensation")
                                     return (
                                         False,
                                         f"Divergent (Condensation L{level} p={p} < 1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                                 if p == 1:
-                                    prof.stop("Cauchy-Condensation")
                                     return (
                                         False,
                                         f"Divergent (Condensation L{level} p=1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                         else:
                             if p > 1:
-                                prof.stop("Cauchy-Condensation")
                                 return (
                                     True,
                                     f"Absolutely Convergent (Condensation L{level} p'={(1 + p) / 2} > 1)",
-                                    prof.get_log_string(),
+                                    "",
                                 )
                             elif not is_oscillatory and p < 1:
-                                prof.stop("Cauchy-Condensation")
                                 return (
                                     False,
                                     f"Divergent (Condensation L{level} p'={(1 + p) / 2} < 1)",
-                                    prof.get_log_string(),
+                                    "",
                                 )
                 except Exception:
                     pass
-        prof.stop("Cauchy-Condensation")
 
         # ── 4b. Integral Test (conditional) ──────────────────────
         #
@@ -732,7 +649,6 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
         # ambiguous (e.g. oo from a failed antiderivative on an
         # iterated-log integrand), we fall through silently.
         # This prevents the Bug 2 failure mode from calude.py.
-        prof.start("Integral-Test")
         if (
             not has_fact
             and abs_n.has(sp.log)
@@ -747,44 +663,38 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
                 result = sp.integrate(integrand, (_z_sym, 3, sp.oo))
                 if result is not None and result.is_number and not result.has(sp.Limit):
                     if result.is_finite and result >= 0:
-                        prof.stop("Integral-Test")
                         return (
                             True,
                             "Absolutely Convergent (Integral Test)",
-                            prof.get_log_string(),
+                            "",
                         )
                     elif result == sp.oo:
-                        prof.stop("Integral-Test")
-                        return False, "Divergent (Integral Test)", prof.get_log_string()
+                        return False, "Divergent (Integral Test)", ""
                     # Ambiguous result → fall through silently
             except Exception:
                 pass
-        prof.stop("Integral-Test")
 
         # ── 5. Ratio + Gauss/Raabe test ───────────────────────────
         if has_fact:
-            prof.start("Ratio-Test")
             try:
                 ratio_expr = sp.cancel(sp.combsimp(abs_n.subs(n, n + 1) / abs_n))
-                ratio_limit = super_fast_limit(ratio_expr, n, prof)
+                ratio_limit = super_fast_limit(ratio_expr, n)
                 if (
                     ratio_limit is not None
                     and ratio_limit.is_number
                     and not ratio_limit.has(sp.Limit)
                 ):
                     if ratio_limit < 1:
-                        prof.stop("Ratio-Test")
                         return (
                             True,
                             f"Absolutely Convergent (Ratio L = {ratio_limit})",
-                            prof.get_log_string(),
+                            "",
                         )
                     if ratio_limit > 1:
-                        prof.stop("Ratio-Test")
                         return (
                             False,
                             f"Divergent (Ratio L = {ratio_limit})",
-                            prof.get_log_string(),
+                            "",
                         )
                     if ratio_limit == 1:
                         inv_ratio = sp.cancel(1 / ratio_expr)
@@ -793,43 +703,38 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
                             c, p = (inv_ratio.subs(n, 1 / _z) - 1).leadterm(_z)
                             if p == 1 and not c.has(_z):
                                 h = sp.limit(c, _z, 0)
-                                prof.stop("Ratio-Test")
                                 if h > 1:
                                     return (
                                         True,
                                         f"Absolutely Convergent (Gauss/Raabe h={h} > 1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                                 elif not is_oscillatory and h <= 1:
                                     return (
                                         False,
                                         f"Divergent (Gauss/Raabe h={h} <= 1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                             elif p < 1 and p.is_number and not c.has(_z):
                                 if not is_oscillatory:
-                                    prof.stop("Ratio-Test")
                                     return (
                                         False,
                                         f"Divergent (Gauss/Raabe p={p} < 1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                             elif p > 1 and p.is_number and not c.has(_z):
                                 if not is_oscillatory:
-                                    prof.stop("Ratio-Test")
                                     return (
                                         False,
                                         "Divergent (Gauss/Raabe h=0 <= 1)",
-                                        prof.get_log_string(),
+                                        "",
                                     )
                         except Exception:
                             pass
             except Exception:
                 pass
-            prof.stop("Ratio-Test")
 
         # ── 6. Asymptotic Stirling test ───────────────────────────
-        prof.start("Asymp-Stirling")
         if has_fact:
             try:
                 st = apply_stirling(abs_n)
@@ -838,114 +743,131 @@ def check_series_convergence(expr, n=None, start_idx: int = 1, py_func=None):
                 if not c.has(sp.O) and not p.has(sp.O) and p.is_number:
                     if not c.has(_z):
                         if p > 1:
-                            prof.stop("Asymp-Stirling")
                             return (
                                 True,
                                 f"Absolutely Convergent (Stirling ~ 1/n^{p})",
-                                prof.get_log_string(),
+                                "",
                             )
                         elif not is_oscillatory and p <= 1:
-                            prof.stop("Asymp-Stirling")
                             return (
                                 False,
                                 f"Divergent (Stirling ~ 1/n^{p})",
-                                prof.get_log_string(),
+                                "",
                             )
                     else:
                         if p > 1:
-                            prof.stop("Asymp-Stirling")
                             return (
                                 True,
                                 f"Absolutely Convergent (Stirling p'={(1 + p) / 2} > 1)",
-                                prof.get_log_string(),
+                                "",
                             )
                         elif not is_oscillatory and p < 1:
-                            prof.stop("Asymp-Stirling")
                             return (
                                 False,
                                 f"Divergent (Stirling p'={(1 + p) / 2} < 1)",
-                                prof.get_log_string(),
+                                "",
                             )
             except Exception:
-                pass
-        prof.stop("Asymp-Stirling")
+                # leadterm() failed (e.g., for 2^n * exp(-n) / sqrt(n))
+                # Fall back to root test on the Stirling-simplified form
+                try:
+                    st = apply_stirling(abs_n)
+                    log_root_expr = sp.cancel(sp.expand_log(sp.log(st), force=True) / n)
+                    log_root_limit = super_fast_limit(log_root_expr, n)
+                    if (
+                        log_root_limit is not None
+                        and log_root_limit.is_number
+                        and not log_root_limit.has(sp.Limit)
+                    ):
+                        root_limit = sp.exp(log_root_limit)
+                        if root_limit < 1:
+                            return (
+                                True,
+                                f"Absolutely Convergent (Stirling-Root L = {root_limit})",
+                                "",
+                            )
+                        if root_limit > 1:
+                            return (
+                                False,
+                                f"Divergent (Stirling-Root L = {root_limit})",
+                                "",
+                            )
+                except Exception:
+                    pass
 
         # ── 7. Root Test (log-expanded) ───────────────────────────
         if has_n_exp and not has_fact:
-            prof.start("Root-Test")
             try:
                 log_root_expr = sp.cancel(sp.expand_log(sp.log(abs_n), force=True) / n)
-                log_root_limit = super_fast_limit(log_root_expr, n, prof)
+                log_root_limit = super_fast_limit(log_root_expr, n)
                 if (
                     log_root_limit is not None
                     and log_root_limit.is_number
                     and not log_root_limit.has(sp.Limit)
                 ):
                     root_limit = sp.exp(log_root_limit)
-                    prof.stop("Root-Test")
                     if root_limit < 1:
                         return (
                             True,
                             f"Absolutely Convergent (Root L = {root_limit})",
-                            prof.get_log_string(),
+                            "",
                         )
                     if root_limit > 1:
                         return (
                             False,
                             f"Divergent (Root L = {root_limit})",
-                            prof.get_log_string(),
+                            "",
                         )
             except Exception:
                 pass
-            prof.stop("Root-Test")
 
         # ── 8. Alternating Test ───────────────────────────────────
-        prof.start("Alt-Test")
         if (
             expr.has((-1) ** n)
             or expr.has((-1) ** (n + 1))
             or expr.has((-1) ** (n - 1))
             or has_negative_base
         ) and not (expr.has(sp.sin(n)) or expr.has(sp.cos(n))):
-            if super_fast_limit(abs_n, n, prof) == 0:
-                prof.stop("Alt-Test")
+            if super_fast_limit(abs_n, n) == 0:
                 return (
                     True,
                     "Convergent (Conditionally via Alternating Test)",
-                    prof.get_log_string(),
+                    "",
                 )
-        prof.stop("Alt-Test")
 
         # ── 9. Dirichlet Test ─────────────────────────────────────
-        prof.start("Dirichlet-Test")
         if expr.has(sp.sin(n)) or expr.has(sp.cos(n)):
             rest = abs_n.subs({sp.sin(n): 1, sp.cos(n): 1})
-            if super_fast_limit(rest, n, prof) == 0:
-                prof.stop("Dirichlet-Test")
+            if super_fast_limit(rest, n) == 0:
                 return (
                     True,
                     "Convergent (Conditionally via Dirichlet Test)",
-                    prof.get_log_string(),
+                    "",
                 )
-        prof.stop("Dirichlet-Test")
 
         # ── 10. SymPy built-in fallback ───────────────────────────
-        prof.start("SymPy-SeriesFallback")
         try:
             S = sp.Sum(expr, (n, start_idx, sp.oo))
             is_conv = S.is_convergent()
-            prof.stop("SymPy-SeriesFallback")
             if is_conv == sp.S.true:
-                return True, "Convergent (Built-in SymPy)", prof.get_log_string()
+                return True, "Convergent (Built-in SymPy)", ""
             if is_conv == sp.S.false:
-                return False, "Divergent (Built-in SymPy)", prof.get_log_string()
+                return False, "Divergent (Built-in SymPy)", ""
         except NotImplementedError:
-            prof.stop("SymPy-SeriesFallback")
+            pass
+        except RecursionError:
+            # SymPy's Gruntz algorithm can hit infinite recursion on some
+            # complex factorial/exponential expressions. Fall through to
+            # return "Undetermined" rather than crashing.
+            pass
 
-        return None, "Undetermined by all available heuristics", prof.get_log_string()
+        return None, "Undetermined by all available heuristics", ""
 
+    except RecursionError:
+        # Catch recursion errors that escape the inner handlers
+        return None, "Undetermined (expression too complex for symbolic analysis)", ""
     except Exception as e:
-        return None, f"Error: {e}", prof.get_log_string()
+        return None, f"Error: {e}", ""
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -1074,18 +996,14 @@ def main():
     )
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
     print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Time':<8} | {'Details':<36} | {'Profiler Logs'}"
+        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
     )
     print("-" * 155)
 
-    total_seq_time = 0.0
     for i, (expr) in enumerate(sequences, 1):
-        t0 = time.perf_counter()
         is_conv, reason, logs = check_sequence_convergence(expr)
-        ms = (time.perf_counter() - t0) * 1000
-        total_seq_time += ms
         print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     # ── Print series ──────────────────────────────────────────────
@@ -1095,32 +1013,19 @@ def main():
     )
     print(f"{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
     print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Time':<8} | {'Details':<36} | {'Profiler Logs'}"
+        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
     )
     print("-" * 155)
 
-    total_ser_time = 0.0
     for i, (expr) in enumerate(series, 1):
-        t0 = time.perf_counter()
         is_conv, reason, logs = check_series_convergence(
             expr,
         )
-        ms = (time.perf_counter() - t0) * 1000
-        total_ser_time += ms
         print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}TOTAL SEQUENCE ENGINE TIME : {total_seq_time:.1f} ms"
-    )
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}TOTAL SERIES ENGINE TIME   : {total_ser_time:.1f} ms"
-    )
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}GRAND TOTAL COMPUTE TIME   : {(total_seq_time + total_ser_time):.1f} ms"
-    )
     print("=" * 155)
 
 
@@ -1189,18 +1094,14 @@ def second_main():
     )
     print(f"{Fore.CYAN}{Style.BRIGHT}{'=' * 155}")
     print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Time':<8} | {'Details':<36} | {'Profiler Logs'}"
+        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
     )
     print("-" * 155)
 
-    total_seq_time = 0.0
     for i, (expr) in enumerate(sequences, 1):
-        t0 = time.perf_counter()
         is_conv, reason, logs = check_sequence_convergence(expr)
-        ms = (time.perf_counter() - t0) * 1000
-        total_seq_time += ms
         print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     # ── Print series ──────────────────────────────────────────────
@@ -1210,30 +1111,17 @@ def second_main():
     )
     print(f"{Fore.MAGENTA}{Style.BRIGHT}{'=' * 155}")
     print(
-        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Time':<8} | {'Details':<36} | {'Profiler Logs'}"
+        f"{'No.':<3} | {'Description':<42} | {'Result':<10} | {'Details':<36} | {'Profiler Logs'}"
     )
     print("-" * 155)
 
-    total_ser_time = 0.0
     for i, (expr) in enumerate(series, 1):
-        t0 = time.perf_counter()
         is_conv, reason, logs = check_series_convergence(expr)
-        ms = (time.perf_counter() - t0) * 1000
-        total_ser_time += ms
         print(
-            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<42} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}TOTAL SEQUENCE ENGINE TIME : {total_seq_time:.1f} ms"
-    )
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}TOTAL SERIES ENGINE TIME   : {total_ser_time:.1f} ms"
-    )
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}GRAND TOTAL COMPUTE TIME   : {(total_seq_time + total_ser_time):.1f} ms"
-    )
     print("=" * 155)
 
 
@@ -1247,20 +1135,16 @@ def second_main():
 def check_power_series(expr, n, x):
 
     from .power_sereis import analyze_power_series
-    prof = Profiler()
-    prof.start("Power-Series-Engine")
 
     res = analyze_power_series(expr, n, x)
 
-    prof.stop("Power-Series-Engine")
-
     if "error" in res:
-        return False, res["error"], prof.get_log_string(), None
+        return False, res["error"], "", None
 
     return (
         True,
         f"R={res.get('radius')}, I={res.get('interval', res.get('interval_symbolic'))}",
-        prof.get_log_string(),
+        "",
         res,
     )
 
@@ -1407,24 +1291,17 @@ def power_series_main():
     )
     print(f"{Fore.GREEN}{Style.BRIGHT}{'=' * 155}")
     print(
-        f"{'No.':<3} | {'Description':<35} | {'Result':<10} | {'Time':<8} | {'Radius / Interval':<36} | {'Profiler Logs'}"
+        f"{'No.':<3} | {'Description':<35} | {'Result':<10} | {'Radius / Interval':<36} | {'Profiler Logs'}"
     )
     print("-" * 155)
 
-    total_ps_time = 0.0
     for i, (expr) in enumerate(power_series, 1):
-        t0 = time.perf_counter()
         is_conv, reason, logs, details = check_power_series(expr, n, x)
-        ms = (time.perf_counter() - t0) * 1000
-        total_ps_time += ms
         print(
-            f"{i:<3} | {expr:<35} | {format_result(is_conv)} | {ms:>5.1f} ms | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
+            f"{i:<3} | {expr:<35} | {format_result(is_conv)} | {reason:<36} | {Fore.LIGHTBLACK_EX}{logs}{Style.RESET_ALL}"
         )
 
     print("\n" + "=" * 155)
-    print(
-        f"{Fore.YELLOW}{Style.BRIGHT}TOTAL POWER SERIES TIME    : {total_ps_time:.1f} ms"
-    )
     print("=" * 155)
 
 
