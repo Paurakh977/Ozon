@@ -21,10 +21,9 @@ from sympy.parsing.sympy_parser import (
     implicit_multiplication_application,
 )
 from sympy.solvers.inequalities import solve_univariate_inequality
-from conv_div_engine import Profiler, super_fast_limit, check_series_convergence
-from algo import get_sympified_expr, _rationalize_float_exponents
+from .convergence_divergence import Profiler, check_series_convergence
+from ..domain_range.domain_range_engine import get_sympified_expr, _rationalize_float_exponents
 import functools
-import time
 
 
 # ─────────────────────────────────────────────────────────────────────────────

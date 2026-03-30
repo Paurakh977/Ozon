@@ -38,7 +38,6 @@ import warnings
 from colorama import init, Fore, Style
 from sympy.series.limitseq import limit_seq
 from engines import get_sympified_expr
-from .power_sereis import analyze_power_series
 
 init(autoreset=True)
 
@@ -1247,6 +1246,7 @@ def second_main():
 
 def check_power_series(expr, n, x):
 
+    from .power_sereis import analyze_power_series
     prof = Profiler()
     prof.start("Power-Series-Engine")
 
