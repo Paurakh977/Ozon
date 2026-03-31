@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package calculator;
+
+service CalculatorService {
+  rpc AnalyzeFunction (AnalyzeRequest) returns (AnalyzeResponse) {}
+}
+
+message AnalyzeRequest {
+  string expression = 1;
+}
+
+message AnalyzeResponse {
+  string domain_range = 1; // JSON string
+  string function_analysis = 2; // JSON string
+  string sequence_series = 3; // JSON string
+  bool has_error = 4;
+  string error_message = 5;
+}
