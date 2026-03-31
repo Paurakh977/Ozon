@@ -2,6 +2,51 @@ import sys,os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from engines import FunctionAnalysisEngine
+
+def pretty_print(result):
+    print("\n" + "="*60)
+    
+    # Function
+    print(f"Function: {result.get('Function')}")
+    print(f"Domain  : {result.get('Domain')}")
+    
+    # Intercepts
+    intercepts = result.get('Intercepts', {})
+    print("\nIntercepts:")
+    print(f"  x-intercepts: {intercepts.get('x')}")
+    print(f"  y-intercept : {intercepts.get('y')}")
+    
+    # Extrema
+    extrema = result.get('Extrema', {})
+    print("\nExtrema:")
+    print(f"  Minima: {extrema.get('minima')}")
+    print(f"  Maxima: {extrema.get('maxima')}")
+    
+    # Inflection Points
+    print("\nInflection Points:")
+    print(f"  {result.get('Inflection Points')}")
+    
+    # Asymptotes
+    asym = result.get('Asymptotes', {})
+    print("\nAsymptotes:")
+    print(f"  Vertical  : {asym.get('vertical')}")
+    print(f"  Horizontal: {asym.get('horizontal')}")
+    print(f"  Oblique   : {asym.get('oblique')}")
+    
+    # Other properties
+    print("\nOther Properties:")
+    print(f"  Parity      : {result.get('Parity')}")
+    print(f"  Periodicity : {result.get('Periodicity')}")
+    
+    # Monotonicity
+    mono = result.get('Monotonicity', {})
+    print("\nMonotonicity:")
+    print(f"  Increasing: {mono.get('increasing')}")
+    print(f"  Decreasing: {mono.get('decreasing')}")
+    
+    print("="*60)
+
+
 if __name__ == "__main__":
     engine = FunctionAnalysisEngine(debug=False)
 
@@ -64,4 +109,5 @@ if __name__ == "__main__":
     ]
 
     for f_str in test_functions:
-        engine.analyze(f_str)
+        result = engine.analyze(f_str)
+        pretty_print(result)
