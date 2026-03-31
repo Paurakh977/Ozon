@@ -1,8 +1,8 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown, Play, Pause, Info, Loader2 } from "lucide-react";
+import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown, Play, Pause, Info, Loader2, Activity, TrendingUp, Maximize, Infinity as InfinityIcon, List, Crosshair } from "lucide-react";
 import { MathExpression, VisibilityMode } from "../components/calculator/types";
 import { analyzeFunction } from "../app/actions";
-import { latexToHuman } from "../utils/latexToHuman";
+import { latexToHuman, extractCoreFunctionForAnalysis } from "../utils/latexToHuman";
 
 // Custom inline shortcuts for calculus operations
 const CUSTOM_INLINE_SHORTCUTS = {
@@ -114,6 +114,15 @@ const isDefiniteIntegral = (latex: string): boolean => {
     return hasInt && hasLower && hasUpper;
 };
 
+const formatAnalysisValue = (val: any): string => {
+    if (val === null || val === undefined || val === 'None' || val === '[]' || val === '{}' || val === '') return '-';
+    let s = String(val);
+    // Remove outer brackets for arrays of tuples like [(0, 0)] -> (0, 0)
+    s = s.replace(/^\[(.*)\]$/, '$1');
+    if (s === '') return '-';
+    return s;
+};
+
 const getVisibilityIcon = (mode: VisibilityMode, visible: boolean) => {
     if (!visible || mode === 'none') return <EyeOff size={15} />;
     return <Eye size={15} />;
@@ -140,19 +149,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     // Analysis state
     const [analysisData, setAnalysisData] = useState<Record<string, any>>({});
     const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
-    const [expandedAnalysisId, setExpandedAnalysisId] = useState<string | null>(null);
+    const [activeAnalysisId, setActiveAnalysisId] = useState<string | null>(null);
 
     const handleAnalyze = async (id: string, latex: string) => {
-        if (expandedAnalysisId === id) {
-            setExpandedAnalysisId(null);
-            return;
-        }
+        setActiveAnalysisId(id);
 
-        const humanExpr = latexToHuman(latex);
+        const humanExpr = extractCoreFunctionForAnalysis(latex);
         if (!humanExpr) return;
 
         setAnalyzingIds(prev => new Set(prev).add(id));
-        setExpandedAnalysisId(id);
 
         try {
             const result = await analyzeFunction(humanExpr);
@@ -233,8 +238,235 @@ export const Sidebar: React.FC<SidebarProps> = ({
     }, [addExpr]); 
     
     return (
-        <div className="flex flex-col h-full relative">
-            <div className="p-3 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 pb-6">
+        <div className="flex flex-col h-full relative overflow-hidden">
+            {activeAnalysisId ? (
+                (() => {
+                    const expr = expressions.find(e => e.id === activeAnalysisId);
+                    if (!expr) {
+                        setTimeout(() => setActiveAnalysisId(null), 0);
+                        return null;
+                    }
+
+                    const data = analysisData[activeAnalysisId];
+                    const isLoading = analyzingIds.has(activeAnalysisId);
+
+                    return (
+                        <div className="flex flex-col h-full bg-background animate-in slide-in-from-right-8 fade-in duration-300 z-50 absolute inset-0">
+                            {/* Header */}
+                            <div className="flex items-center p-3 border-b border-border/50 gap-3 shrink-0 bg-card">
+                                <button 
+                                    onClick={() => setActiveAnalysisId(null)}
+                                    className="flex items-center justify-center w-10 h-10 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-sm shrink-0"
+                                    title="Back to expressions"
+                                >
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                                </button>
+                                <div className="flex-1 min-w-0 bg-muted/40 rounded-lg px-4 py-2.5 flex items-center overflow-x-auto custom-scrollbar border border-border/50">
+                                    {/* @ts-ignore */}
+                                    <math-field read-only style={{ backgroundColor: 'transparent', border: 'none', padding: 0, margin: 0, minWidth: 'min-content' }}>
+                                        {expr.latex}
+                                    </math-field>
+                                </div>
+                            </div>
+
+                            {/* Content */}
+                            <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-background">
+                                <h2 className="text-xl font-bold mb-8 text-foreground/90">Function analysis</h2>
+                                
+                                {isLoading ? (
+                                    <div className="flex flex-col items-center justify-center py-20 opacity-60">
+                                        <Loader2 size={40} className="animate-spin mb-6 text-primary" />
+                                        <p className="text-sm font-medium">Analyzing mathematical properties...</p>
+                                    </div>
+                                ) : data?.has_error ? (
+                                    <div className="text-destructive bg-destructive/10 p-5 rounded-xl border border-destructive/20 shadow-sm">
+                                        <p className="font-semibold mb-2">Analysis Failed</p>
+                                        <p className="text-sm opacity-90">{data.error_message}</p>
+                                    </div>
+                                ) : data ? (
+                                    <div className="space-y-7 text-[13px]">
+                                        {/* Domain & Range */}
+                                        {data.domain_range && !data.domain_range.error && (
+                                            <>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Domain</div>
+                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.domain)}</div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Range</div>
+                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.range)}</div>
+                                                </div>
+                                            </>
+                                        )}
+                                        
+                                        {/* Intercepts */}
+                                        {data.function_analysis && !data.function_analysis.error && (
+                                            <>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">X-Intercept</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.x) !== '-' ? `x = ${formatAnalysisValue(data.function_analysis.Intercepts?.x)}` : <span className="font-sans text-[13px] opacity-70">The function does not have any x-intercepts.</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Y-Intercept</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.y) !== '-' ? `y = ${formatAnalysisValue(data.function_analysis.Intercepts?.y)}` : <span className="font-sans text-[13px] opacity-70">The function does not have any y-intercepts.</span>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Minima</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Extrema?.minima) !== '-' ? formatAnalysisValue(data.function_analysis.Extrema?.minima) : <span className="font-sans text-[13px] opacity-70">The function does not have any minima points.</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Maxima</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Extrema?.maxima) !== '-' ? formatAnalysisValue(data.function_analysis.Extrema?.maxima) : <span className="font-sans text-[13px] opacity-70">The function does not have any maxima points.</span>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Inflection points</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis['Inflection Points']) !== '-' ? formatAnalysisValue(data.function_analysis['Inflection Points']) : <span className="font-sans text-[13px] opacity-70">The function does not have any inflection points.</span>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Vertical asymptotes</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Asymptotes?.vertical) !== '-' ? formatAnalysisValue(data.function_analysis.Asymptotes?.vertical) : <span className="font-sans text-[13px] opacity-70">The function does not have any vertical asymptotes.</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Horizontal asymptotes</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Asymptotes?.horizontal) !== '-' ? formatAnalysisValue(data.function_analysis.Asymptotes?.horizontal) : <span className="font-sans text-[13px] opacity-70">The function does not have any horizontal asymptotes.</span>}
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Oblique asymptotes</div>
+                                                    <div className="font-mono text-base">
+                                                        {formatAnalysisValue(data.function_analysis.Asymptotes?.oblique) !== '-' ? formatAnalysisValue(data.function_analysis.Asymptotes?.oblique) : <span className="font-sans text-[13px] opacity-70">The function does not have any oblique asymptotes.</span>}
+                                                    </div>
+                                                </div>
+
+                                                <div className="space-y-1.5">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Parity</div>
+                                                    <div className="font-sans text-[13px]">
+                                                        {formatAnalysisValue(data.function_analysis.Parity) !== '-' ? `The function is ${formatAnalysisValue(data.function_analysis.Parity).toLowerCase()}.` : 'Neither even nor odd.'}
+                                                    </div>
+                                                </div>
+                                                
+                                                <div className="space-y-2">
+                                                    <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold mb-1">Monotonicity</div>
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing) !== '-' && (
+                                                        <div className="flex items-center gap-5">
+                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.increasing)}</div>
+                                                            <div className="font-medium text-[13px]">Increasing</div>
+                                                        </div>
+                                                    )}
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing) !== '-' && (
+                                                        <div className="flex items-center gap-5 mt-2">
+                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing)}</div>
+                                                            <div className="font-medium text-[13px]">Decreasing</div>
+                                                        </div>
+                                                    )}
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing) === '-' && formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing) === '-' && (
+                                                        <div className="font-sans text-[13px] opacity-70">Constant or undefined.</div>
+                                                    )}
+                                                </div>
+
+                                                {/* Tangent Equation */}
+                                                {data.function_analysis['Tangent Equation'] && (
+                                                    <div className="space-y-3 pt-6 border-t border-border/40 mt-4">
+                                                        <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center gap-2">
+                                                            <TrendingUp size={14} /> Tangent Equation (at x = a)
+                                                        </div>
+                                                        <div className="bg-muted/30 p-4 rounded-xl overflow-x-auto custom-scrollbar border border-border/50">
+                                                            {/* @ts-ignore */}
+                                                            <math-field read-only style={{ backgroundColor: 'transparent', border: 'none', padding: 0, margin: 0, minWidth: 'min-content' }} className="text-base">
+                                                                {data.function_analysis['Tangent Equation']}
+                                                            </math-field>
+                                                        </div>
+                                                        <button 
+                                                            onClick={() => {
+                                                                // Convert tangent equation to use graphable format if necessary
+                                                                // The engine returns y - f(a) = f'(a)(x-a) or similar
+                                                                // Desmos/Ozon handles this perfectly if we just pass the raw equation!
+                                                                addExpr(data.function_analysis['Tangent Equation']);
+                                                                addExpr('a=1');
+                                                                setActiveAnalysisId(null); // Return to graph list so user sees it
+                                                            }}
+                                                            className="px-4 py-2 bg-primary text-primary-foreground hover:bg-primary/90 rounded-lg text-sm font-medium transition-colors shadow-sm inline-flex items-center gap-2"
+                                                        >
+                                                            <Plus size={16} /> Plot Tangent Line
+                                                        </button>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                        
+                                        {/* Sequence / Series */}
+                                        {(() => {
+                                            const seqData = data.sequence_series;
+                                            const hasValidData = seqData && !seqData.error && (
+                                                seqData.seq_result || 
+                                                seqData.ser_result || 
+                                                (seqData.is_power_series && seqData.power_series_result && !seqData.power_series_result[1]?.includes('Could not parse'))
+                                            );
+
+                                            if (!hasValidData) return null;
+
+                                            return (
+                                                <div className="space-y-4 pt-6 border-t border-border/40 mt-4">
+                                                    <div className="text-base font-bold flex items-center gap-2">
+                                                        <List size={18} /> Sequence & Series
+                                                    </div>
+                                                    <div className="space-y-5">
+                                                        {seqData.seq_result && (
+                                                            <div className="space-y-1.5">
+                                                                <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
+                                                                    <span>Sequence Limit</span>
+                                                                    <span className={seqData.seq_result[0] ? 'text-green-500 font-bold' : 'text-amber-500 font-bold'}>{seqData.seq_result[0] ? 'Converges' : 'Diverges'}</span>
+                                                                </div>
+                                                                <div className="font-mono text-base">{formatAnalysisValue(seqData.seq_result[1])}</div>
+                                                            </div>
+                                                        )}
+                                                        {seqData.ser_result && (
+                                                            <div className="space-y-1.5">
+                                                                <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
+                                                                    <span>Series Sum</span>
+                                                                    <span className={seqData.ser_result[0] ? 'text-green-500 font-bold' : 'text-amber-500 font-bold'}>{seqData.ser_result[0] ? 'Converges' : 'Diverges'}</span>
+                                                                </div>
+                                                                <div className="font-mono text-base">{formatAnalysisValue(seqData.ser_result[1])}</div>
+                                                            </div>
+                                                        )}
+                                                        {seqData.is_power_series && seqData.power_series_result && (
+                                                            <div className="space-y-1.5">
+                                                                <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold flex items-center justify-between">
+                                                                    <span>Power Series</span>
+                                                                    <span className={seqData.power_series_result[0] ? 'text-green-500 font-bold' : 'text-amber-500 font-bold'}>{seqData.power_series_result[0] ? 'Converges' : 'Diverges'}</span>
+                                                                </div>
+                                                                <div className="font-mono text-base">{formatAnalysisValue(seqData.power_series_result[1])}</div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                    </div>
+                                ) : null}
+                            </div>
+                        </div>
+                    );
+                })()
+            ) : (
+                <>
+                    <div className="p-3 flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 pb-6">
                 {expressions.map((expr, i) => {
                     const isDark = resolvedTheme === 'dark';
                     const displayColor = invertColorForDarkMode(expr.color, isDark);
@@ -399,106 +631,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                 </div>
                             )}
 
-                            {/* Analysis Results Display */}
-                            {expandedAnalysisId === expr.id && analysisData[expr.id] && (
-                                <div className="mt-2 text-xs bg-muted/20 p-3 rounded-md border border-border/50 space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
-                                    {analysisData[expr.id].has_error ? (
-                                        <div className="text-destructive font-medium">
-                                            Analysis failed: {analysisData[expr.id].error_message}
-                                        </div>
-                                    ) : (
-                                        <>
-                                            {/* Domain & Range */}
-                                            {analysisData[expr.id].domain_range && !analysisData[expr.id].domain_range.error && (
-                                                <div className="pb-2 border-b border-border/30">
-                                                    <div className="font-semibold text-primary/80 mb-1">Domain & Range</div>
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Domain:</span> <span className="text-muted-foreground">{analysisData[expr.id].domain_range.domain}</span><br/>
-                                                        <span className="font-medium text-foreground/70">Range:</span> <span className="text-muted-foreground">{analysisData[expr.id].domain_range.range}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-                                            
-                                            {/* Function Analysis */}
-                                            {analysisData[expr.id].function_analysis && !analysisData[expr.id].function_analysis.error && (
-                                                <div className="space-y-1.5 pb-2 border-b border-border/30">
-                                                    <div className="font-semibold text-primary/80 mb-1">Function Properties</div>
-                                                    
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Intercepts:</span>
-                                                        <span className="pl-2 block text-muted-foreground">x: {analysisData[expr.id].function_analysis.Intercepts?.x || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">y: {analysisData[expr.id].function_analysis.Intercepts?.y || 'None'}</span>
-                                                    </div>
-
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Extrema:</span>
-                                                        <span className="pl-2 block text-muted-foreground">Min: {analysisData[expr.id].function_analysis.Extrema?.minima || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">Max: {analysisData[expr.id].function_analysis.Extrema?.maxima || 'None'}</span>
-                                                    </div>
-
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Inflection Points:</span>
-                                                        <span className="pl-2 block text-muted-foreground">{analysisData[expr.id].function_analysis['Inflection Points'] || 'None'}</span>
-                                                    </div>
-
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Asymptotes:</span>
-                                                        <span className="pl-2 block text-muted-foreground">Vertical: {analysisData[expr.id].function_analysis.Asymptotes?.vertical || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">Horizontal: {analysisData[expr.id].function_analysis.Asymptotes?.horizontal || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">Oblique: {analysisData[expr.id].function_analysis.Asymptotes?.oblique || 'None'}</span>
-                                                    </div>
-
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Monotonicity:</span>
-                                                        <span className="pl-2 block text-muted-foreground">Inc: {analysisData[expr.id].function_analysis.Monotonicity?.increasing || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">Dec: {analysisData[expr.id].function_analysis.Monotonicity?.decreasing || 'None'}</span>
-                                                    </div>
-
-                                                    <div className="pl-1">
-                                                        <span className="font-medium text-foreground/70">Other Properties:</span>
-                                                        <span className="pl-2 block text-muted-foreground">Parity: {analysisData[expr.id].function_analysis.Parity || 'None'}</span>
-                                                        <span className="pl-2 block text-muted-foreground">Periodicity: {analysisData[expr.id].function_analysis.Periodicity || 'None'}</span>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Sequence / Series */}
-                                            {(() => {
-                                                const seqData = analysisData[expr.id].sequence_series;
-                                                const hasValidData = seqData && !seqData.error && (
-                                                    seqData.seq_result || 
-                                                    seqData.ser_result || 
-                                                    (seqData.is_power_series && seqData.power_series_result && !seqData.power_series_result[1]?.includes('Could not parse'))
-                                                );
-
-                                                if (!hasValidData) return null;
-
-                                                return (
-                                                    <div>
-                                                        <div className="font-semibold text-primary/80 mb-1">Sequence/Series</div>
-                                                        {seqData.seq_result && (
-                                                            <span className="pl-2 block text-muted-foreground">
-                                                                <span className="font-medium">Seq:</span> {seqData.seq_result[0] ? 'Conv' : 'Div'} - {seqData.seq_result[1]}
-                                                            </span>
-                                                        )}
-                                                        {seqData.ser_result && (
-                                                            <span className="pl-2 block text-muted-foreground">
-                                                                <span className="font-medium">Ser:</span> {seqData.ser_result[0] ? 'Conv' : 'Div'} - {seqData.ser_result[1]}
-                                                            </span>
-                                                        )}
-                                                        {seqData.is_power_series && seqData.power_series_result && (
-                                                            <span className="pl-2 block text-muted-foreground">
-                                                                <span className="font-medium">Power Series:</span> {seqData.power_series_result[0] ? 'Conv' : 'Div'} - {seqData.power_series_result[1]}
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })()}
-                                        </>
-                                    )}
-                                </div>
-                            )}
-
                             {/* Advanced Slider UI */}
                             {isSlider && (
                                 <div className="flex flex-col gap-3 mt-1.5 p-3 bg-muted/20 rounded-lg border border-border/50">
@@ -601,6 +733,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     <div className="truncate max-w-[200px] text-right text-muted-foreground" title={debugInfo}>{debugInfo}</div>
                 </div>
             </div>
+            </>
+            )}
         </div>
     );
 };
