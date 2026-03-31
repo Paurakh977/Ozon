@@ -616,6 +616,70 @@ export function latexToHuman(latex: string): string {
 }
 
 /**
+ * Extracts the core mathematical function for analysis, stripping assignments, integrals, and derivatives.
+ */
+export function extractCoreFunctionForAnalysis(latex: string): string {
+    if (!latex || typeof latex !== 'string' || !latex.trim()) return '';
+    let s = latex.trim();
+    
+    // 1. Strip assignments (e.g. y = ..., f(x) = ...)
+    const eqMatch = s.match(/^[a-zA-Z_0-9]+(?:\([^)]+\))?\s*=\s*([\s\S]+)$/);
+    if (eqMatch) {
+        s = eqMatch[1].trim();
+    }
+
+    s = preNormalise(s).trim();
+
+    // 2. Handle Derivatives (e.g. \frac{d}{dx} ...)
+    const derivRe = /^\\frac\s*\{\s*d[^{}]*\}\s*\{\s*d[^{}]*\}\s*([\s\S]+)$/;
+    const derivMatch = s.match(derivRe);
+    if (derivMatch) s = derivMatch[1].trim();
+
+    const partialRe = /^\\frac\s*\{\s*\\partial[^{}]*\}\s*\{\s*\\partial[^{}]*\}\s*([\s\S]+)$/;
+    const partialMatch = s.match(partialRe);
+    if (partialMatch) s = partialMatch[1].trim();
+
+    // 3. Handle Limits (e.g. \lim_{x \to 0} ...)
+    const limRe = /^\\lim(?:_[^{]*|_\s*\{[^}]*\})\s*([\s\S]+)$/;
+    const limMatch = s.match(limRe);
+    if (limMatch) s = limMatch[1].trim();
+
+    // 4. Handle Integrals
+    if (/^\\(i+nt|oint)/.test(s)) {
+        let i = 0;
+        while (i < s.length && /[a-zA-Z\\]/.test(s[i])) i++;
+        for(let a=0;a<2;a++){
+            i=skipSpace(s,i); 
+            if(i>=s.length) break;
+            if(s[i]==='_'||s[i]==='^'){
+                i++;
+                if(s[i]==='{') {
+                    const g=extractGroup(s,i); 
+                    i=g.end;
+                } else if(s[i]==='\\') {
+                    const t=readToken(s,i);
+                    i=t.end;
+                } else {
+                    i++;
+                }
+            } else break;
+        }
+        let rest = s.substring(i).trim();
+        const dMatch = rest.match(/^([\s\S]*?)\s*d[a-zA-Zα-ωθφ]\s*$/);
+        if (dMatch) s = dMatch[1].trim();
+        else s = rest;
+    }
+
+    // Clean up any outer brackets like \left[ ... \right] or [ ... ]
+    s = s.replace(/^\\left\[([\s\S]*)\\right\]$/, '$1').trim();
+    s = s.replace(/^\\left\(([\s\S]*)\\right\)$/, '$1').trim();
+    if (s.startsWith('[') && s.endsWith(']')) s = s.slice(1, -1).trim();
+    if (s.startsWith('(') && s.endsWith(')')) s = s.slice(1, -1).trim();
+
+    return latexToHuman(s);
+}
+
+/**
  * Log both human-readable and raw LaTeX for an expression.
  * Call right after the visibility guard in processExpression.
  *
