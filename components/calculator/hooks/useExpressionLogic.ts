@@ -3,6 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { MathExpression, VisibilityMode } from "../types";
 import { getNextColor } from "../../../utils/colors";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
+import { logHumanInput } from '../../../utils/latexToHuman';
 
 // Helper to determine if parent curve should be visible based on mode
 const isParentVisible = (mode: VisibilityMode): boolean => mode === 'all' || mode === 'parent';
@@ -27,6 +28,9 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         if (visibilityUpdateInProgress.current.has(id)) {
             return;
         }
+
+        // Log the raw LaTeX and human-readable form immediately (before any cleaning)
+        try { logHumanInput(id, rawLatex); } catch (e) { /* noop */ }
         
         const Calc = calculatorInstance.current;
         if (!Calc) return;

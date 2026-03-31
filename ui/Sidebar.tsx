@@ -1,6 +1,8 @@
 import React, { useRef, useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown, Play, Pause } from "lucide-react";
+import { Plus, Trash2, Terminal, Eye, EyeOff, ChevronDown, Play, Pause, Info, Loader2 } from "lucide-react";
 import { MathExpression, VisibilityMode } from "../components/calculator/types";
+import { analyzeFunction } from "../app/actions";
+import { latexToHuman } from "../utils/latexToHuman";
 
 // Custom inline shortcuts for calculus operations
 const CUSTOM_INLINE_SHORTCUTS = {
@@ -134,6 +136,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
     const mathFieldRefs = useRef<Map<string, HTMLElement>>(new Map());
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const prevExpressionsLength = useRef(expressions.length);
+
+    // Analysis state
+    const [analysisData, setAnalysisData] = useState<Record<string, any>>({});
+    const [analyzingIds, setAnalyzingIds] = useState<Set<string>>(new Set());
+    const [expandedAnalysisId, setExpandedAnalysisId] = useState<string | null>(null);
+
+    const handleAnalyze = async (id: string, latex: string) => {
+        if (expandedAnalysisId === id) {
+            setExpandedAnalysisId(null);
+            return;
+        }
+
+        const humanExpr = latexToHuman(latex);
+        if (!humanExpr) return;
+
+        setAnalyzingIds(prev => new Set(prev).add(id));
+        setExpandedAnalysisId(id);
+
+        try {
+            const result = await analyzeFunction(humanExpr);
+            setAnalysisData(prev => ({ ...prev, [id]: result }));
+        } catch (error) {
+            console.error("Analysis failed", error);
+        } finally {
+            setAnalyzingIds(prev => {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            });
+        }
+    };
 
     useEffect(() => {
         if (expressions.length > prevExpressionsLength.current) {
@@ -321,14 +354,26 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         {safeLatex}
                                     </math-field>
                                 </div>
-
-                                <button 
-                                    onClick={() => removeExpr(expr.id)} 
-                                    className="shrink-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-all mt-1"
-                                    title="Remove expression"
-                                >
-                                    <Trash2 size={16} />
-                                </button>
+                                <div className="flex gap-1 mt-1 shrink-0">
+                                    <button 
+                                        onClick={() => handleAnalyze(expr.id, safeLatex)} 
+                                        className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 p-1.5 text-muted-foreground hover:text-blue-500 hover:bg-blue-500/10 rounded-md transition-all"
+                                        title="Analyze function"
+                                    >
+                                        {analyzingIds.has(expr.id) ? (
+                                            <Loader2 size={16} className="animate-spin" />
+                                        ) : (
+                                            <Info size={16} />
+                                        )}
+                                    </button>
+                                    <button 
+                                        onClick={() => removeExpr(expr.id)} 
+                                        className="opacity-0 group-hover:opacity-100 focus-within:opacity-100 p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-all"
+                                        title="Remove expression"
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Bottom Rows: Result and Modes */}
@@ -350,6 +395,106 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         >
                                             Area Mode
                                         </button>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Analysis Results Display */}
+                            {expandedAnalysisId === expr.id && analysisData[expr.id] && (
+                                <div className="mt-2 text-xs bg-muted/20 p-3 rounded-md border border-border/50 space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                                    {analysisData[expr.id].has_error ? (
+                                        <div className="text-destructive font-medium">
+                                            Analysis failed: {analysisData[expr.id].error_message}
+                                        </div>
+                                    ) : (
+                                        <>
+                                            {/* Domain & Range */}
+                                            {analysisData[expr.id].domain_range && !analysisData[expr.id].domain_range.error && (
+                                                <div className="pb-2 border-b border-border/30">
+                                                    <div className="font-semibold text-primary/80 mb-1">Domain & Range</div>
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Domain:</span> <span className="text-muted-foreground">{analysisData[expr.id].domain_range.domain}</span><br/>
+                                                        <span className="font-medium text-foreground/70">Range:</span> <span className="text-muted-foreground">{analysisData[expr.id].domain_range.range}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+                                            
+                                            {/* Function Analysis */}
+                                            {analysisData[expr.id].function_analysis && !analysisData[expr.id].function_analysis.error && (
+                                                <div className="space-y-1.5 pb-2 border-b border-border/30">
+                                                    <div className="font-semibold text-primary/80 mb-1">Function Properties</div>
+                                                    
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Intercepts:</span>
+                                                        <span className="pl-2 block text-muted-foreground">x: {analysisData[expr.id].function_analysis.Intercepts?.x || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">y: {analysisData[expr.id].function_analysis.Intercepts?.y || 'None'}</span>
+                                                    </div>
+
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Extrema:</span>
+                                                        <span className="pl-2 block text-muted-foreground">Min: {analysisData[expr.id].function_analysis.Extrema?.minima || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">Max: {analysisData[expr.id].function_analysis.Extrema?.maxima || 'None'}</span>
+                                                    </div>
+
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Inflection Points:</span>
+                                                        <span className="pl-2 block text-muted-foreground">{analysisData[expr.id].function_analysis['Inflection Points'] || 'None'}</span>
+                                                    </div>
+
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Asymptotes:</span>
+                                                        <span className="pl-2 block text-muted-foreground">Vertical: {analysisData[expr.id].function_analysis.Asymptotes?.vertical || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">Horizontal: {analysisData[expr.id].function_analysis.Asymptotes?.horizontal || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">Oblique: {analysisData[expr.id].function_analysis.Asymptotes?.oblique || 'None'}</span>
+                                                    </div>
+
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Monotonicity:</span>
+                                                        <span className="pl-2 block text-muted-foreground">Inc: {analysisData[expr.id].function_analysis.Monotonicity?.increasing || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">Dec: {analysisData[expr.id].function_analysis.Monotonicity?.decreasing || 'None'}</span>
+                                                    </div>
+
+                                                    <div className="pl-1">
+                                                        <span className="font-medium text-foreground/70">Other Properties:</span>
+                                                        <span className="pl-2 block text-muted-foreground">Parity: {analysisData[expr.id].function_analysis.Parity || 'None'}</span>
+                                                        <span className="pl-2 block text-muted-foreground">Periodicity: {analysisData[expr.id].function_analysis.Periodicity || 'None'}</span>
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Sequence / Series */}
+                                            {(() => {
+                                                const seqData = analysisData[expr.id].sequence_series;
+                                                const hasValidData = seqData && !seqData.error && (
+                                                    seqData.seq_result || 
+                                                    seqData.ser_result || 
+                                                    (seqData.is_power_series && seqData.power_series_result && !seqData.power_series_result[1]?.includes('Could not parse'))
+                                                );
+
+                                                if (!hasValidData) return null;
+
+                                                return (
+                                                    <div>
+                                                        <div className="font-semibold text-primary/80 mb-1">Sequence/Series</div>
+                                                        {seqData.seq_result && (
+                                                            <span className="pl-2 block text-muted-foreground">
+                                                                <span className="font-medium">Seq:</span> {seqData.seq_result[0] ? 'Conv' : 'Div'} - {seqData.seq_result[1]}
+                                                            </span>
+                                                        )}
+                                                        {seqData.ser_result && (
+                                                            <span className="pl-2 block text-muted-foreground">
+                                                                <span className="font-medium">Ser:</span> {seqData.ser_result[0] ? 'Conv' : 'Div'} - {seqData.ser_result[1]}
+                                                            </span>
+                                                        )}
+                                                        {seqData.is_power_series && seqData.power_series_result && (
+                                                            <span className="pl-2 block text-muted-foreground">
+                                                                <span className="font-medium">Power Series:</span> {seqData.power_series_result[0] ? 'Conv' : 'Div'} - {seqData.power_series_result[1]}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })()}
+                                        </>
                                     )}
                                 </div>
                             )}
