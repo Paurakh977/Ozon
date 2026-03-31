@@ -9,6 +9,8 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@grpc/grpc-js": "^1.14.3",
+    "@grpc/proto-loader": "^0.8.0",
     "clsx": "^2.1.1",
     "copy-to-clipboard": "^3.3.3",
     "desmos": "^1.5.4",
