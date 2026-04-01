@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import os
+from pathlib import Path
+from dotenv import load_dotenv
 from concurrent import futures
 import grpc
 
@@ -86,11 +89,28 @@ class CalculatorService(calculator_pb2_grpc.CalculatorServiceServicer):
         return response
 
 async def serve():
+    # Load environment variables with fallback
+    service_dir = Path(__file__).resolve().parent
+    root_dir = service_dir.parent
+    
+    root_env = root_dir / '.env'
+    service_env = service_dir / '.env'
+    
+    if root_env.exists():
+        load_dotenv(root_env)
+        logging.info("Loaded .env from root: %s", root_env)
+    elif service_env.exists():
+        load_dotenv(service_env)
+        logging.info("Loaded .env from service: %s", service_env)
+    else:
+        logging.info("No .env file found. Using default/system environment variables.")
+
     server = grpc.aio.server()
     calculator_pb2_grpc.add_CalculatorServiceServicer_to_server(CalculatorService(), server)
-    listen_addr = '[::]:50051'
+    port = os.getenv('GRPC_SERVER_PORT', '50051')
+    listen_addr = f'[::]:{port}'
     server.add_insecure_port(listen_addr)
-    logging.info("Starting server on %s", listen_addr)
+    logging.info("Starting server on %s (loaded GRPC_SERVER_PORT=%s)", listen_addr, port)
     await server.start()
     await server.wait_for_termination()
 

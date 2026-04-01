@@ -21,8 +21,10 @@ let client: any = null;
 
 function getClient() {
   if (!client) {
+    const grpcUrl = process.env.GRPC_SERVER_URL || 'localhost:50051';
+    console.log(`[gRPC Client] Connecting to gRPC server at: ${grpcUrl}`);
     client = new calculatorProto.CalculatorService(
-      'localhost:50051',
+      grpcUrl,
       grpc.credentials.createInsecure()
     );
   }
