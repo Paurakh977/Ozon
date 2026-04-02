@@ -1,7 +1,58 @@
+import multiprocessing
+import queue
+import signal
+import sys
+import threading
+import time
+from contextlib import contextmanager
+
 import sympy as sp
 from sympy.calculus.util import continuous_domain, periodicity, AccumBounds
 from sympy.calculus.singularities import singularities
 from engines import get_sympified_expr
+
+
+# ─────────────────────────────────────────────────────────────
+# Timeout Handler
+# ─────────────────────────────────────────────────────────────
+
+class TimeoutException(Exception):
+    """Raised when an operation times out."""
+    pass
+
+
+def run_with_timeout(func, args=(), kwargs=None, timeout_seconds=10.0, default=None):
+    """
+    Run a function with timeout using threading (works on Windows).
+    
+    Returns: (result, timed_out: bool)
+    """
+    if kwargs is None:
+        kwargs = {}
+    
+    result = [default]  # Use list to allow modification in nested function
+    exception = [None]
+    
+    def wrapper():
+        try:
+            result[0] = func(*args, **kwargs)
+        except Exception as e:
+            exception[0] = e
+    
+    thread = threading.Thread(target=wrapper, daemon=True)
+    thread.start()
+    thread.join(timeout=timeout_seconds)
+    
+    if thread.is_alive():
+        # Timeout occurred - thread is still running
+        # Note: We can't kill threads in Python, but since it's daemon it will die with the program
+        return default, True
+    
+    if exception[0] is not None:
+        # Function raised an exception
+        return default, False
+    
+    return result[0], False
 
 
 class FunctionAnalysisEngine:
@@ -1384,7 +1435,10 @@ class FunctionAnalysisEngine:
     # ─────────────────────────────────────────────────────────────
 
     def analyze(self, func_string):
-    
+        """
+        Analyze a mathematical function with timeout protection.
+        Returns analysis dict or None if parsing/timeout fails.
+        """
 
         real_x = sp.Symbol("x", real=True)
         self.x = real_x
@@ -1393,23 +1447,67 @@ class FunctionAnalysisEngine:
         # get_sympified_expr in algo.py automatically handles e, ln, arctan, etc.
         local_dict = {"x": real_x}
 
-        # get_sympified_expr handles implicit mult, '^' via convert_xor, float rationalization
-        expr = get_sympified_expr(func_string, local_dict=local_dict)
+        try:
+            # get_sympified_expr handles implicit mult, '^' via convert_xor, float rationalization
+            expr = get_sympified_expr(func_string, local_dict=local_dict)
+            
+            # Validate expression
+            if expr is None or expr in [sp.zoo, sp.oo, -sp.oo, sp.nan]:
+                if self.debug:
+                    print(f"Invalid expression: {func_string}")
+                return None
+                
+        except Exception as e:
+            if self.debug:
+                print(f"Failed to parse expression '{func_string}': {e}")
+            return None
 
         # ── KEY: domain from original; simplified expr for everything else ──
         # This fixes the 12-second performance bug for cancellable rationals
         # while keeping correct domain holes.
         original_expr = expr
-        domain = self.get_domain(original_expr)
-        expr = self._preprocess_expr(original_expr)  # e.g. (x³-x)/(x²-1) → x
+        
+        try:
+            domain = self.get_domain(original_expr)
+        except Exception as e:
+            if self.debug:
+                print(f"Domain computation failed: {e}")
+            domain = sp.Reals
+            
+        try:
+            expr = self._preprocess_expr(original_expr)  # e.g. (x³-x)/(x²-1) → x
+        except Exception as e:
+            if self.debug:
+                print(f"Preprocessing failed: {e}")
+            expr = original_expr
 
-        intercepts = self.get_intercepts(expr, domain)
-        extrema = self.get_extrema(expr, domain)
-        inflections = self.get_inflection_points(expr, domain)
-        asymptotes = self.get_asymptotes(expr, domain)
-        parity = self.get_parity(expr)
-        period = self.get_periodicity(expr)
-        monotonicity = self.get_monotonicity(expr, domain, period)
+        # Use timeout wrappers for expensive operations
+        # Set generous timeouts to handle complex expressions, but prevent infinite hangs
+        timeout = 5.0  # 5 seconds per operation
+        
+        def safe_call(func, *args, default=None, name="operation"):
+            """Wrapper to call function with timeout and error handling."""
+            result, timed_out = run_with_timeout(func, args=args, timeout_seconds=timeout, default=default)
+            if timed_out and self.debug:
+                print(f"{name} timed out after {timeout}s")
+            return result
+
+        intercepts = safe_call(self.get_intercepts, expr, domain, 
+                              default={"x": [], "y": None}, name="Intercepts")
+        extrema = safe_call(self.get_extrema, expr, domain,
+                           default={"minima": [], "maxima": []}, name="Extrema")
+        inflections = safe_call(self.get_inflection_points, expr, domain,
+                               default=[], name="Inflection Points")
+        asymptotes = safe_call(self.get_asymptotes, expr, domain,
+                              default={"vertical": [], "horizontal": [], "oblique": []},
+                              name="Asymptotes")
+        parity = safe_call(self.get_parity, expr,
+                          default="Neither even nor odd", name="Parity")
+        period = safe_call(self.get_periodicity, expr,
+                          default=None, name="Periodicity")
+        monotonicity = safe_call(self.get_monotonicity, expr, domain, period,
+                                default={"increasing": [], "decreasing": []},
+                                name="Monotonicity")
 
         results = {
             "Function": original_expr,  # always display original
