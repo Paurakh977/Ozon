@@ -565,7 +565,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     {/* @ts-ignore */}
                                     <math-field
                                         ref={(el: HTMLElement | null) => handleMathFieldRef(expr.id, el)}
-                                        smart-fence="on"
+                                        smart-fence="off"
                                         virtual-keyboard-mode="onfocus"
                                         onInput={(e: any) => handleInput(expr.id, e.target.value)}
                                         onFocus={(e: any) => {
