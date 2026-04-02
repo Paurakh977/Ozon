@@ -810,7 +810,9 @@ def analyze_function_behavior(f, x, domain):
 def find_critical_points_numerical(f, x, domain, f_num):
     critical_points = []
     try:
-        df = diff(f, x)
+        df, timed_out = run_with_timeout("diff", (f, x), 1.0)
+        if timed_out or df is None:
+            return critical_points
         df_num = lambdify(x, df, modules=["numpy"])
 
         x_min = (
@@ -1041,6 +1043,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
     try:
         f_num = make_safe_f_num_vectorized(f, x)
         debugger("Numerical range computation starting...", Fore.CYAN)
+        debugger("Computing X_grid", Fore.CYAN)
 
         # --- STEP 0: PERIODIC FULL-RANGE SHORTCUT (tan, cot) ---
         if is_periodically_unbounded_no_gap(f):
@@ -1340,6 +1343,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
 
             X_grid = get_sample_points(domain_sympy, [10, 100])
 
+        debugger("Computing Y_grid", Fore.CYAN)
         if len(X_grid) > 0:
             try:
                 Y_grid = f_num(X_grid)
@@ -1350,9 +1354,12 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                 if np.any(mask):
                     all_points.extend(list(zip(X_grid[mask], Y_grid[mask])))
 
+                debugger("Rust adaptive grid", Fore.CYAN)
                 if RUST_AVAILABLE and np.any(mask):
                     try:
-                        df_sym = diff(f, x)
+                        df_sym, to_diff = run_with_timeout("diff", (f, x), 1.0)
+                        if to_diff or df_sym is None:
+                            raise ValueError("diff timed out")
                         df_num = lambdify(x, df_sym, modules=["numpy"])
                         df_vals = df_num(X_grid)
                         if np.isscalar(df_vals):
@@ -1435,6 +1442,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             return "Numerical Eval Failed (All Complex/NaN)", "Error"
 
         # --- STEP 5: CRITICAL POINTS ---
+        debugger("Finding critical points numerical", Fore.CYAN)
         for cp in find_critical_points_numerical(f, x, domain_sympy, f_num):
             if isinstance(cp, tuple) and len(cp) == 2:
                 cx, cy = cp
@@ -1450,6 +1458,7 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
             if np.isfinite(lv):
                 all_y_values.append(lv)
 
+        debugger("Minimizing scalar", Fore.CYAN)
         if minimize_scalar is not None:
             bounds_lo = max(gen_min, -100)
             bounds_hi = min(gen_max, 100)
@@ -1890,9 +1899,26 @@ def solve(func_str):
     # --- PARSING ---
     try:
         f_raw = get_sympified_expr(func_str)
+        
+        # Validate the expression before processing
+        if f_raw is None or f_raw in [zoo, oo, -oo, nan]:
+            debugger(f"Invalid expression after parsing: {func_str}", Fore.RED)
+            return None
+            
+        # Check for empty function calls (like abs() with no args)
+        # This happens when parsing invalid expressions
+        if hasattr(f_raw, 'atoms'):
+            for atom in f_raw.atoms():
+                if hasattr(atom, 'func') and hasattr(atom, 'args'):
+                    # Check if it's a function with zero arguments when it shouldn't be
+                    if atom.func in [Abs, sym_sin, sym_cos, tan, exp, log] and len(atom.args) == 0:
+                        debugger(f"Invalid expression - empty function call: {atom.func}", Fore.RED)
+                        return None
+        
         x_parsed = [s for s in f_raw.free_symbols if str(s) == "x"]
         f = f_raw.subs(x_parsed[0], x) if x_parsed else f_raw
     except Exception as e:
+        debugger(f"Expression parsing failed: {e}", Fore.RED)
         return None
 
     if f in [zoo, oo, -oo, nan]:
@@ -1900,15 +1926,15 @@ def solve(func_str):
 
     # --- CONSTANT FUNCTION DETECTION ---
     if f.is_number:
-        
-        return
+        debugger("Constant function detected", Fore.YELLOW)
+        return None
 
     if f.free_symbols:
         try:
             f_ts = trigsimp(f)
             if f_ts.is_number:
-                
-                return
+                debugger("Expression simplifies to constant", Fore.YELLOW)
+                return None
         except Exception:
             pass
 
