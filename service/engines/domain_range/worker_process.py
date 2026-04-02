@@ -561,6 +561,11 @@ def worker_loop(q_in, q_out):
                 f, x, domain = args
                 res = _analyze_function_behavior_standalone(f, x, domain)
 
+            # ── diff ──────────────────────────────────────────────────────
+            elif task_type == "diff":
+                f, x = args
+                res = f.diff(x)
+
             # ── solveset_empty ────────────────────────────────────────────
             elif task_type == "solveset_empty":
                 f, x, val, domain = args
