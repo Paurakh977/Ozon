@@ -173,54 +173,71 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // ========================================
         // ABSOLUTE VALUE NORMALIZATION (Comprehensive)
         // ========================================
-        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\\left\(([^)]*?)\\right\)/g, "\\left|$1\\right|");
-        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\(([^)]*?)\)/g, "\\left|$1\\right|");
-        clean = clean.replace(/\\mathrm\{\\?abs\}\s*\{([^}]*?)\}/g, "\\left|$1\\right|");
-        clean = clean.replace(/\\operatorname\{abs\}\s*\\left\(([^)]*?)\\right\)/g, "\\left|$1\\right|");
-        clean = clean.replace(/\\operatorname\{abs\}\s*\(([^)]*?)\)/g, "\\left|$1\\right|");
+        // Convert any \mathrm{abs}, \operatorname{abs}, \abs, or plain abs into \operatorname{abs}
+        // which Desmos fully supports, including for nested patterns natively.
+        clean = clean.replace(/\\mathrm\{\\?abs\}/g, "\\operatorname{abs}");
+        clean = clean.replace(/\\abs(?![a-zA-Z])/g, "\\operatorname{abs}");
+        clean = clean.replace(/(^|[^a-zA-Z\\])abs(?![a-zA-Z])/g, "$1\\operatorname{abs}");
+
         clean = clean.replace(/\\left\\vert\s*/g, "\\left|");
         clean = clean.replace(/\\right\\vert\s*/g, "\\right|");
         clean = clean.replace(/\\lvert\s*/g, "\\left|");
         clean = clean.replace(/\\rvert\s*/g, "\\right|");
-        clean = clean.replace(/\\vert\s*([^\\]*?)\\vert/g, "\\left|$1\\right|");
-        clean = clean.replace(/\\abs\s*\{([^}]*)\}/g, "\\left|$1\\right|");
+        clean = clean.replace(/\\vert\s*/g, "|");
 
+        // Evaluate ambiguous pipes |x| or nested pipes |x-|x|| heuristically using depth and context.
         const convertSimplePipes = (str: string): string => {
-            let result = '';
-            let i = 0;
-            while (i < str.length) {
-                if (str[i] === '|') {
-                    const before = str.substring(Math.max(0, i - 6), i);
-                    if (before.endsWith('\\left') || before.endsWith('\\right')) {
-                        result += str[i];
-                        i++;
-                        continue;
+            let result = str;
+            result = result.replace(/\\left\|/g, "LEFT_PIPE_TOKEN");
+            result = result.replace(/\\right\|/g, "RIGHT_PIPE_TOKEN");
+            
+            let finalStr = "";
+            let depth = 0;
+            
+            for (let i = 0; i < result.length; i++) {
+                const char = result[i];
+                if (char === '|') {
+                    let prev = '';
+                    for (let k = i - 1; k >= 0; k--) {
+                        if (result[k] !== ' ') { prev = result[k]; break; }
                     }
-                    let j = i + 1;
-                    let depth = 1;
-                    while (j < str.length && depth > 0) {
-                        if (str[j] === '|') {
-                            const beforeJ = str.substring(Math.max(0, j - 6), j);
-                            if (!beforeJ.endsWith('\\left') && !beforeJ.endsWith('\\right')) {
-                                depth--;
+                    let next = '';
+                    for (let k = i + 1; k < result.length; k++) {
+                        if (result[k] !== ' ') { next = result[k]; break; }
+                    }
+                    
+                    let isOpen = false;
+                    if (depth === 0) {
+                        isOpen = true;
+                    } else {
+                        if (/[-+*/=({\[<>,_^]/.test(prev)) {
+                            isOpen = true;
+                        } else if (/[0-9a-zA-Z)\]}]/.test(prev)) {
+                            isOpen = false;
+                        } else {
+                            if (/[0-9a-zA-Z(\[]/.test(next)) {
+                                isOpen = true; 
+                            } else {
+                                isOpen = false; 
                             }
                         }
-                        if (depth > 0) j++;
                     }
-                    if (depth === 0) {
-                        const content = str.substring(i + 1, j);
-                        result += '\\left|' + content + '\\right|';
-                        i = j + 1;
+                    
+                    if (isOpen) {
+                        finalStr += "\\left|";
+                        depth++;
                     } else {
-                        result += str[i];
-                        i++;
+                        finalStr += "\\right|";
+                        depth = Math.max(0, depth - 1);
                     }
                 } else {
-                    result += str[i];
-                    i++;
+                    finalStr += char;
                 }
             }
-            return result;
+            
+            finalStr = finalStr.replace(/LEFT_PIPE_TOKEN/g, "\\left|");
+            finalStr = finalStr.replace(/RIGHT_PIPE_TOKEN/g, "\\right|");
+            return finalStr;
         };
         clean = convertSimplePipes(clean);
 

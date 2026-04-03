@@ -376,9 +376,35 @@ function convertLatex(latex: string): string {
 
         // ── |expr| → abs(expr) ──────────────────────────────────
         if (ch==="|") {
-            const j=s.indexOf("|",i+1);
-            if (j!==-1) { emit(`abs(${convertLatex(s.substring(i+1,j))})`); i=j+1; }
-            else        { emit("|"); i++; }
+            // Find matching pipeline bracket heuristically using the depth aware converter logic
+            // Since we can't reliably pair just any | without depth context, we will build a stack logic:
+            let depth = 1;
+            let j = i + 1;
+            while(j < s.length) {
+                if (s[j] === '|') {
+                    let prev = j > 0 ? s[j-1] : '';
+                    let isOpen = false;
+                    if (/[-+*/=({\[<>,_^]/.test(prev)) isOpen = true;
+                    else if (/[0-9a-zA-Z)\]}]/.test(prev)) isOpen = false;
+                    else if (j+1 < s.length && /[0-9a-zA-Z(\[]/.test(s[j+1])) isOpen = true;
+                    else isOpen = false;
+
+                    if (isOpen) depth++;
+                    else depth--;
+
+                    if (depth === 0) break;
+                }
+                j++;
+            }
+            
+            if (depth === 0 && j < s.length) { 
+                emit(`abs(${convertLatex(s.substring(i+1,j))})`); 
+                i=j+1; 
+            }
+            else { 
+                emit("|"); 
+                i++; 
+            }
             continue;
         }
 
