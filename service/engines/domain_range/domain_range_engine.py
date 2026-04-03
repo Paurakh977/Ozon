@@ -96,8 +96,6 @@ colorama.init(autoreset=True)
 warnings.filterwarnings("ignore")
 
 
-
-
 def debugger(msg, color=Fore.MAGENTA):
     if DEBUG_ENGINE:
         print(f"{color}{Style.DIM}[DEBUG] {msg}{Style.RESET_ALL}")
@@ -120,14 +118,15 @@ class SympyWorker:
         self.p.start()
 
 
-_sympy_worker: "SympyWorker | None" = None
+import threading
+
+_thread_local = threading.local()
 
 
 def get_worker() -> SympyWorker:
-    global _sympy_worker
-    if _sympy_worker is None:
-        _sympy_worker = SympyWorker()
-    return _sympy_worker
+    if not hasattr(_thread_local, "worker") or getattr(_thread_local, "worker") is None:
+        _thread_local.worker = SympyWorker()
+    return _thread_local.worker
 
 
 def run_with_timeout(task_type, args, timeout_seconds, default=None):
@@ -158,8 +157,7 @@ def run_with_timeout(task_type, args, timeout_seconds, default=None):
             f"TIMEOUT after {timeout_seconds}s — worker process killed and restarted",
             Fore.YELLOW,
         )
-        global _sympy_worker
-        _sympy_worker = SympyWorker()
+        _thread_local.worker = SympyWorker()
         return default, True
 
 
@@ -1833,7 +1831,7 @@ def format_math_set(obj):
         try:
             expr = obj.lamda.expr
             var = obj.lamda.variables[0]
-            n_sym = Symbol('n')
+            n_sym = Symbol("n")
             expr_n = expr.subs(var, n_sym)
             return f"{{{fmt_val(expr_n)} | n in Z}}"
         except Exception:
@@ -1888,6 +1886,7 @@ def round_sympy_expr(expr, digits=3):
 
     return expr
 
+
 # =============================================================================
 # MAIN SOLVER
 # =============================================================================
@@ -1899,22 +1898,28 @@ def solve(func_str):
     # --- PARSING ---
     try:
         f_raw = get_sympified_expr(func_str)
-        
+
         # Validate the expression before processing
         if f_raw is None or f_raw in [zoo, oo, -oo, nan]:
             debugger(f"Invalid expression after parsing: {func_str}", Fore.RED)
             return None
-            
+
         # Check for empty function calls (like abs() with no args)
         # This happens when parsing invalid expressions
-        if hasattr(f_raw, 'atoms'):
+        if hasattr(f_raw, "atoms"):
             for atom in f_raw.atoms():
-                if hasattr(atom, 'func') and hasattr(atom, 'args'):
+                if hasattr(atom, "func") and hasattr(atom, "args"):
                     # Check if it's a function with zero arguments when it shouldn't be
-                    if atom.func in [Abs, sym_sin, sym_cos, tan, exp, log] and len(atom.args) == 0:
-                        debugger(f"Invalid expression - empty function call: {atom.func}", Fore.RED)
+                    if (
+                        atom.func in [Abs, sym_sin, sym_cos, tan, exp, log]
+                        and len(atom.args) == 0
+                    ):
+                        debugger(
+                            f"Invalid expression - empty function call: {atom.func}",
+                            Fore.RED,
+                        )
                         return None
-        
+
         x_parsed = [s for s in f_raw.free_symbols if str(s) == "x"]
         f = f_raw.subs(x_parsed[0], x) if x_parsed else f_raw
     except Exception as e:
@@ -1978,7 +1983,6 @@ def solve(func_str):
         domain = refine_domain_boundaries(domain, f_num_dom)
     except Exception:
         pass
-
 
     # --- RANGE ---
     range_res = None
@@ -2128,178 +2132,173 @@ def solve(func_str):
     SYMBOLIC_TOTAL_BUDGET = 3.0
 
     if range_res is None:
-            budget_start = time.perf_counter()
-            remaining = lambda: (
-                SYMBOLIC_TOTAL_BUDGET - (time.perf_counter() - budget_start)
-            )
+        budget_start = time.perf_counter()
+        remaining = lambda: SYMBOLIC_TOTAL_BUDGET - (time.perf_counter() - budget_start)
 
         # Strategy A0: single-period shortcut for periodic domains
-            # Handles two cases:
-            #  1. Large periodic Union (e.g. sqrt(sin(x))) → pick one Interval component
-            #  2. Complement domain (e.g. log(sin(x))) → extract the base Interval
-            # In both cases: for a periodic function, range over one period == range over all ℝ.
-            single_period_domain = None
-            if isinstance(domain, Union):
-                comp_list = [a for a in domain.args if isinstance(a, Interval)]
-                if len(comp_list) >= 4:
-                    # Pick the component closest to x=0
-                    try:
-                        single_period_domain = min(
-                            comp_list,
-                            key=lambda iv: min(
-                                abs(float(iv.start.evalf())), abs(float(iv.end.evalf()))
-                            ),
-                        )
-                    except Exception:
-                        single_period_domain = None
-
-            # Complement domain: extract the base set if it's a finite Interval
-            # e.g.  Complement(Interval.open(0, pi), {0, pi})  → Interval.open(0, pi)
-            if single_period_domain is None:
+        # Handles two cases:
+        #  1. Large periodic Union (e.g. sqrt(sin(x))) → pick one Interval component
+        #  2. Complement domain (e.g. log(sin(x))) → extract the base Interval
+        # In both cases: for a periodic function, range over one period == range over all ℝ.
+        single_period_domain = None
+        if isinstance(domain, Union):
+            comp_list = [a for a in domain.args if isinstance(a, Interval)]
+            if len(comp_list) >= 4:
+                # Pick the component closest to x=0
                 try:
-                    if isinstance(domain, Complement):
-                        base = domain.args[0]
-                        if (
-                            isinstance(base, Interval)
-                            and base.start.is_finite
-                            and base.end.is_finite
-                        ):
-                            # Verify there's a trig function so this really is periodic
-                            if any(
-                                f.has(fc)
-                                for fc in [sym_sin, sym_cos, tan, cot, sec, csc]
-                            ):
-                                single_period_domain = base
+                    single_period_domain = min(
+                        comp_list,
+                        key=lambda iv: min(
+                            abs(float(iv.start.evalf())), abs(float(iv.end.evalf()))
+                        ),
+                    )
                 except Exception:
-                    pass
+                    single_period_domain = None
 
-            if single_period_domain is not None:
-                t_a0 = min(SYMBOLIC_TIMEOUT, remaining())
-                if t_a0 > 0.1:
+        # Complement domain: extract the base set if it's a finite Interval
+        # e.g.  Complement(Interval.open(0, pi), {0, pi})  → Interval.open(0, pi)
+        if single_period_domain is None:
+            try:
+                if isinstance(domain, Complement):
+                    base = domain.args[0]
+                    if (
+                        isinstance(base, Interval)
+                        and base.start.is_finite
+                        and base.end.is_finite
+                    ):
+                        # Verify there's a trig function so this really is periodic
+                        if any(
+                            f.has(fc) for fc in [sym_sin, sym_cos, tan, cot, sec, csc]
+                        ):
+                            single_period_domain = base
+            except Exception:
+                pass
+
+        if single_period_domain is not None:
+            t_a0 = min(SYMBOLIC_TIMEOUT, remaining())
+            if t_a0 > 0.1:
+                debugger(
+                    f"Strategy A0: function_range on representative interval "
+                    f"[{single_period_domain.start}, {single_period_domain.end}] "
+                    f"(budget={t_a0:.1f}s)",
+                    Fore.BLUE,
+                )
+                result_a0, to_a0 = run_with_timeout(
+                    "range", (f, x, single_period_domain), t_a0
+                )
+                if to_a0:
+                    any_timed_out = True
+                    debugger("Strategy A0 TIMED OUT", Fore.YELLOW)
+                elif result_a0 is not None and is_valid_range(result_a0):
+                    range_res = result_a0
+                    method = "Exact (function_range, periodic)"
+                    debugger(f"Strategy A0 SUCCESS: {result_a0}", Fore.GREEN)
+
+        # Strategy A1: Composition decomposition
+        if range_res is None and remaining() > 0.2:
+            # Useful for f(x) like sin(1/x) or exp(-x**2)
+            if f.count(x) == 1:
+                ta1 = min(SYMBOLIC_TIMEOUT, remaining())
+                if ta1 > 0.1:
                     debugger(
-                        f"Strategy A0: function_range on representative interval "
-                        f"[{single_period_domain.start}, {single_period_domain.end}] "
-                        f"(budget={t_a0:.1f}s)",
+                        f"Strategy A1: composition decomposition (budget={ta1:.1f}s)",
                         Fore.BLUE,
                     )
-                    result_a0, to_a0 = run_with_timeout(
-                        "range", (f, x, single_period_domain), t_a0
+                    result, timed_out = run_with_timeout(
+                        "composited_range", (f, x, domain), ta1
                     )
-                    if to_a0:
+                    if timed_out:
                         any_timed_out = True
-                        debugger("Strategy A0 TIMED OUT", Fore.YELLOW)
-                    elif result_a0 is not None and is_valid_range(result_a0):
-                        range_res = result_a0
-                        method = "Exact (function_range, periodic)"
-                        debugger(f"Strategy A0 SUCCESS: {result_a0}", Fore.GREEN)
+                        debugger("Strategy A1 TIMED OUT", Fore.YELLOW)
+                    elif result is not None and is_valid_range(result):
+                        range_res = result
+                        method = "Exact (function_range, composited)"
+                        debugger(f"Strategy A1 SUCCESS: {result}", Fore.GREEN)
 
-            # Strategy A1: Composition decomposition
-            if range_res is None and remaining() > 0.2:
-                # Useful for f(x) like sin(1/x) or exp(-x**2)
-                if f.count(x) == 1:
-                    ta1 = min(SYMBOLIC_TIMEOUT, remaining())
-                    if ta1 > 0.1:
+        # Strategy A: function_range (full domain)
+        ta = min(SYMBOLIC_TIMEOUT, remaining())
+        if range_res is None and ta > 0.1:
+            debugger(f"Strategy A: function_range (budget={ta:.1f}s)", Fore.BLUE)
+            result, timed_out = run_with_timeout("range", (f, x, domain), ta)
+            if timed_out:
+                any_timed_out = True
+                debugger("Strategy A TIMED OUT", Fore.YELLOW)
+            elif result is not None and is_valid_range(result):
+                range_res = result
+                method = "Exact (function_range)"
+                debugger(f"Strategy A SUCCESS: {result}", Fore.GREEN)
+
+        # Strategy B: symbolic min/max
+        if range_res is None and remaining() > 0.2:
+            tb = min(SYMBOLIC_TIMEOUT, remaining())
+            debugger(f"Strategy B: min/max (budget={tb:.1f}s)", Fore.BLUE)
+            result, timed_out = run_with_timeout("min_max", (f, x, domain), tb)
+            if timed_out:
+                any_timed_out = True
+                debugger("Strategy B TIMED OUT", Fore.YELLOW)
+            elif result is not None:
+                mn, mx = result
+                mn_ok = mn is not None and (mn.is_number or mn in [oo, -oo])
+                mx_ok = mx is not None and (mx.is_number or mx in [oo, -oo])
+                if mn_ok and mx_ok:
+                    if mn == -oo and mx == oo:
+                        range_res = Interval(-oo, oo)
+                    elif mn == -oo:
+                        range_res = Interval(-oo, mx)
+                    elif mx == oo:
+                        range_res = Interval(mn, oo)
+                    else:
+                        range_res = Interval(mn, mx)
+                    method = "Exact (min/max)"
+                    debugger(f"Strategy B SUCCESS: [{mn}, {mx}]", Fore.GREEN)
+
+        # Strategy C: limit analysis
+        if range_res is None and remaining() > 0.2:
+            tc = min(SYMBOLIC_TIMEOUT, remaining())
+            debugger(f"Strategy C: limit analysis (budget={tc:.1f}s)", Fore.BLUE)
+            result, timed_out = run_with_timeout("limit", (f, x, domain), tc)
+            if timed_out:
+                any_timed_out = True
+                debugger("Strategy C TIMED OUT", Fore.YELLOW)
+            elif result is not None:
+                has_neg_inf, has_pos_inf, left_lim, right_lim, sing_limits = result
+                behavior_info = result
+                if has_neg_inf and has_pos_inf:
+                    if _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc):
                         debugger(
-                            f"Strategy A1: composition decomposition (budget={ta1:.1f}s)",
-                            Fore.BLUE,
-                        )
-                        result, timed_out = run_with_timeout(
-                            "composited_range", (f, x, domain), ta1
-                        )
-                        if timed_out:
-                            any_timed_out = True
-                            debugger("Strategy A1 TIMED OUT", Fore.YELLOW)
-                        elif result is not None and is_valid_range(result):
-                            range_res = result
-                            method = "Exact (function_range, composited)"
-                            debugger(f"Strategy A1 SUCCESS: {result}", Fore.GREEN)
-
-            # Strategy A: function_range (full domain)
-            ta = min(SYMBOLIC_TIMEOUT, remaining())
-            if range_res is None and ta > 0.1:
-                debugger(f"Strategy A: function_range (budget={ta:.1f}s)", Fore.BLUE)
-                result, timed_out = run_with_timeout("range", (f, x, domain), ta)
-                if timed_out:
-                    any_timed_out = True
-                    debugger("Strategy A TIMED OUT", Fore.YELLOW)
-                elif result is not None and is_valid_range(result):
-                    range_res = result
-                    method = "Exact (function_range)"
-                    debugger(f"Strategy A SUCCESS: {result}", Fore.GREEN)
-
-            # Strategy B: symbolic min/max
-            if range_res is None and remaining() > 0.2:
-                tb = min(SYMBOLIC_TIMEOUT, remaining())
-                debugger(f"Strategy B: min/max (budget={tb:.1f}s)", Fore.BLUE)
-                result, timed_out = run_with_timeout("min_max", (f, x, domain), tb)
-                if timed_out:
-                    any_timed_out = True
-                    debugger("Strategy B TIMED OUT", Fore.YELLOW)
-                elif result is not None:
-                    mn, mx = result
-                    mn_ok = mn is not None and (mn.is_number or mn in [oo, -oo])
-                    mx_ok = mx is not None and (mx.is_number or mx in [oo, -oo])
-                    if mn_ok and mx_ok:
-                        if mn == -oo and mx == oo:
-                            range_res = Interval(-oo, oo)
-                        elif mn == -oo:
-                            range_res = Interval(-oo, mx)
-                        elif mx == oo:
-                            range_res = Interval(mn, oo)
-                        else:
-                            range_res = Interval(mn, mx)
-                        method = "Exact (min/max)"
-                        debugger(f"Strategy B SUCCESS: [{mn}, {mx}]", Fore.GREEN)
-
-            # Strategy C: limit analysis
-            if range_res is None and remaining() > 0.2:
-                tc = min(SYMBOLIC_TIMEOUT, remaining())
-                debugger(f"Strategy C: limit analysis (budget={tc:.1f}s)", Fore.BLUE)
-                result, timed_out = run_with_timeout("limit", (f, x, domain), tc)
-                if timed_out:
-                    any_timed_out = True
-                    debugger("Strategy C TIMED OUT", Fore.YELLOW)
-                elif result is not None:
-                    has_neg_inf, has_pos_inf, left_lim, right_lim, sing_limits = result
-                    behavior_info = result
-                    if has_neg_inf and has_pos_inf:
-                        if _has_reciprocal_trig(f, x) or f.has(sec) or f.has(csc):
-                            debugger(
-                                "Strategy C: doubly unbounded but gapped — deferring to numerical",
-                                Fore.CYAN,
-                            )
-                        else:
-                            range_res = Interval(-oo, oo)
-                            method = "Exact (limit analysis)"
-                            debugger(
-                                "Strategy C: unbounded in both directions", Fore.GREEN
-                            )
-                    elif has_neg_inf or has_pos_inf:
-                        debugger(
-                            f"Strategy C: one-sided unbounded — deferring to numerical",
+                            "Strategy C: doubly unbounded but gapped — deferring to numerical",
                             Fore.CYAN,
                         )
+                    else:
+                        range_res = Interval(-oo, oo)
+                        method = "Exact (limit analysis)"
+                        debugger("Strategy C: unbounded in both directions", Fore.GREEN)
+                elif has_neg_inf or has_pos_inf:
+                    debugger(
+                        f"Strategy C: one-sided unbounded — deferring to numerical",
+                        Fore.CYAN,
+                    )
 
     # Strategy D: numerical fallback
     if range_res is None:
-            debugger(
-                "Strategy D: numerical fallback"
-                + (" (after timeout)" if any_timed_out else ""),
-                Fore.CYAN,
-            )
-            range_res_str, method = smart_numerical_range(
-                f, x, domain, behavior_info=behavior_info
-            )
+        debugger(
+            "Strategy D: numerical fallback"
+            + (" (after timeout)" if any_timed_out else ""),
+            Fore.CYAN,
+        )
+        range_res_str, method = smart_numerical_range(
+            f, x, domain, behavior_info=behavior_info
+        )
 
-            if RUST_AVAILABLE:
-                method += " [Rust]"
-            if isinstance(range_res_str, str) and "Error" not in range_res_str:
-                try:
-                    range_res = eval(range_res_str)
-                except Exception:
-                    range_res = range_res_str
-            else:
+        if RUST_AVAILABLE:
+            method += " [Rust]"
+        if isinstance(range_res_str, str) and "Error" not in range_res_str:
+            try:
+                range_res = eval(range_res_str)
+            except Exception:
                 range_res = range_res_str
+        else:
+            range_res = range_res_str
 
     # --- ENDPOINT OPEN/CLOSED REFINEMENT ---
     if range_res is not None and isinstance(range_res, (Interval, Union)):
@@ -2355,7 +2354,5 @@ def solve(func_str):
     return {
         "range": format_math_set(round_sympy_expr(range_res, 3)),
         "domain": format_math_set(domain),
-        "method": method
+        "method": method,
     }
-
-
