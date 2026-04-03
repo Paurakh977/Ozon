@@ -98,9 +98,9 @@ function preNormalise(s: string): string {
     s = s
         .replace(/\\left\s*\(/g,  '(').replace(/\\right\s*\)/g,')')
         .replace(/\\left\s*\[/g,  '[').replace(/\\right\s*\]/g,']')
-        .replace(/\\left\s*\|/g,  '|').replace(/\\right\s*\|/g,'|')
+        .replace(/\\left\s*\|/g,  'abs(').replace(/\\right\s*\|/g,')')
         .replace(/\\left\s*\\{/g, '(').replace(/\\right\s*\\}/g,')')
-        .replace(/\\left\s*\\vert/g,'|').replace(/\\right\s*\\vert/g,'|')
+        .replace(/\\left\s*\\vert/g,'abs(').replace(/\\right\s*\\vert/g,')')
         .replace(/\\left\s*\\Vert/g,'‖').replace(/\\right\s*\\Vert/g,'‖')
         .replace(/\\left\s*\./g,'').replace(/\\right\s*\./g,'')
         .replace(/\\left\b\s*/g,'').replace(/\\right\b\s*/g,'');
@@ -116,7 +116,7 @@ function fixUnmatchedDelimiters(s: string): string {
         const lm = s.slice(i).match(/^\\left\s*([(\[|{<])/);
         if (lm) { stack.push(lm[1]); out += s.slice(i, i+lm[0].length); i += lm[0].length; continue; }
         const rd = s.slice(i).match(/^\\right\s*\./);
-        if (rd) { const op = stack.pop(); if (op && closeFor[op]) out += closeFor[op]; i += rd[0].length; continue; }
+        if (rd) { const op = stack.pop(); if (op && closeFor[op]) out += '\\right' + closeFor[op]; i += rd[0].length; continue; }
         const rr = s.slice(i).match(/^\\right\s*([)\]|}<>])/);
         if (rr) { stack.pop(); out += s.slice(i, i+rr[0].length); i += rr[0].length; continue; }
         out += s[i++];
