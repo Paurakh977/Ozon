@@ -239,6 +239,25 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             clean = clean.replace(regex, "$1\\$2");
         });
 
+        // 1. Fix Unicode pi to \pi
+        clean = clean.replace(/π/g, "\\pi");
+        
+        // 2. Fix curly braces around left/right pipes inside absolute values (e.g. \left|{a}\right| -> \left|a\right|)
+        // Handles up to 1 level of nested curly braces (like exponents)
+        clean = clean.replace(/\\left\|\{([^{}]+|\{[^{}]*\})*\}\\right\|/g, (match) => {
+            const inner = match.substring(7, match.length - 8);
+            return `\\left|${inner}\\right|`;
+        });
+
+        // 3. Fix curly braces immediately following function expressions like \ln{(a^4)} -> \ln(a^4)
+        // Handles up to 1 level of nested curly braces (like exponents)
+        const mathFuncs = "ln|log|exp|sin|cos|tan|csc|sec|cot|arcsin|arccos|arctan|sinh|cosh|tanh|coth|sech|csch";
+        clean = clean.replace(new RegExp(`\\\\(${mathFuncs})\\s*\\{([^{}]+|\\\\{[^{}]*\\\\})*\\}`, 'g'), (match, funcName) => {
+            const startIdx = match.indexOf('{');
+            const inner = match.substring(startIdx + 1, match.length - 1);
+            return `\\${funcName} ${inner}`;
+        });
+
         setDebugInfo(clean);
 
         // --- Helper: Robust Bounds Parser ---
