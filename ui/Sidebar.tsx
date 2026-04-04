@@ -114,9 +114,14 @@ const isDefiniteIntegral = (latex: string): boolean => {
     return hasInt && hasLower && hasUpper;
 };
 
-const formatAnalysisValue = (val: any): string => {
-    if (val === null || val === undefined || val === 'None' || val === '[]' || val === '{}' || val === '') return '-';
+const formatAnalysisValue = (val: any, isInterval: boolean = false): string => {
+    if (val === null || val === undefined || val === 'None' || (!isInterval && val === '[]') || val === '{}' || val === '') return '-';
     let s = String(val);
+    
+    if (isInterval) {
+        return s;
+    }
+    
     // Remove outer brackets for arrays of tuples like [(0, 0)] -> (0, 0)
     s = s.replace(/^\[(.*)\]$/, '$1');
     if (s === '') return '-';
@@ -259,7 +264,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     className="flex items-center justify-center w-10 h-10 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 transition-all shadow-sm shrink-0"
                                     title="Back to expressions"
                                 >
-                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinelinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+                                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
                                 </button>
                                 <div className="flex-1 min-w-0 bg-muted/40 rounded-lg px-4 py-2.5 flex items-center overflow-x-auto custom-scrollbar border border-border/50">
                                     {/* @ts-ignore */}
@@ -290,11 +295,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                             <>
                                                 <div className="space-y-1.5">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Domain</div>
-                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.domain)}</div>
+                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.domain, true)}</div>
                                                 </div>
                                                 <div className="space-y-1.5">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Range</div>
-                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.range)}</div>
+                                                    <div className="font-mono text-base">{formatAnalysisValue(data.domain_range.range, true)}</div>
                                                 </div>
                                             </>
                                         )}
@@ -363,19 +368,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 
                                                 <div className="space-y-2">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold mb-1">Monotonicity</div>
-                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing) !== '-' && (
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing, true) !== '-' && (
                                                         <div className="flex items-center gap-5">
-                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.increasing)}</div>
+                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.increasing, true)}</div>
                                                             <div className="font-medium text-[13px]">Increasing</div>
                                                         </div>
                                                     )}
-                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing) !== '-' && (
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing, true) !== '-' && (
                                                         <div className="flex items-center gap-5 mt-2">
-                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing)}</div>
+                                                            <div className="font-mono text-base min-w-[100px]">{formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing, true)}</div>
                                                             <div className="font-medium text-[13px]">Decreasing</div>
                                                         </div>
                                                     )}
-                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing) === '-' && formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing) === '-' && (
+                                                    {formatAnalysisValue(data.function_analysis.Monotonicity?.increasing, true) === '-' && formatAnalysisValue(data.function_analysis.Monotonicity?.decreasing, true) === '-' && (
                                                         <div className="font-sans text-[13px] opacity-70">Constant or undefined.</div>
                                                     )}
                                                 </div>
@@ -451,7 +456,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                                     <span>Power Series</span>
                                                                     <span className={seqData.power_series_result[0] ? 'text-green-500 font-bold' : 'text-amber-500 font-bold'}>{seqData.power_series_result[0] ? 'Converges' : 'Diverges'}</span>
                                                                 </div>
-                                                                <div className="font-mono text-base">{formatAnalysisValue(seqData.power_series_result[1])}</div>
+                                                                <div className="font-mono text-base">{formatAnalysisValue(seqData.power_series_result[1], true)}</div>
                                                             </div>
                                                         )}
                                                     </div>
