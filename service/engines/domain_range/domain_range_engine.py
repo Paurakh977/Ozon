@@ -2309,8 +2309,17 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                     close_vals.sort(key=lambda t: t[0])
                     closest_dist, closest_val, closest_x = close_vals[0]
 
+                    # If we actually reach the limit value (within numerical precision),
+                    # then it's NOT an asymptote - it's an attained value! Skip it.
+                    if closest_dist < 1e-10:
+                        debugger(
+                            f"Limit value {lim_val:.6f} at {lim_name} IS attained (not an asymptote)",
+                            Fore.GREEN,
+                        )
+                        continue
+
                     # If we get very close but not exactly equal, it's likely an asymptote
-                    if closest_dist > 1e-10 and closest_dist < 0.1:
+                    if closest_dist < 0.1:
                         # Try to verify: can we find ANY x where f(x) = lim_val?
                         try:
 
@@ -2529,6 +2538,10 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                     ):
                         parts = []
                         for i, (lo, hi) in enumerate(pieces):
+                            # Skip degenerate intervals (point gaps where lo == hi)
+                            if abs(lo - hi) < 1e-10:
+                                continue
+
                             lo_s = "-oo" if (np.isinf(lo) and lo < 0) else fmt(lo)
                             hi_s = "oo" if (np.isinf(hi) and hi > 0) else fmt(hi)
 
@@ -2556,9 +2569,13 @@ def smart_numerical_range(f, x, domain_sympy, behavior_info=None):
                             f"Returning gap-based range: pieces={pieces}, parts={parts}",
                             Fore.MAGENTA,
                         )
-                        return "Union(" + ", ".join(
-                            parts
-                        ) + ")", "Hybrid Analysis (gap detected)"
+                        # Only return if we have valid parts
+                        if len(parts) > 0:
+                            if len(parts) == 1:
+                                return parts[0], "Hybrid Analysis (gap detected)"
+                            return "Union(" + ", ".join(
+                                parts
+                            ) + ")", "Hybrid Analysis (gap detected)"
 
         # Handle horizontal asymptote gaps when main gap detection didn't find/return anything
         if horizontal_asymptote_gaps:
