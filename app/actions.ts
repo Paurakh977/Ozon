@@ -38,7 +38,7 @@ export async function analyzeFunction(expression: string) {
     rpcClient.AnalyzeFunction({ expression }, (error: any, response: any) => {
       if (error) {
         console.error("gRPC Error:", error);
-        resolve({ has_error: true, error_message: error.message });
+        resolve({ has_error: true, error_message: error.message, is_server_error: true });
       } else {
         // Parse the JSON strings returned from the gRPC server
         resolve({

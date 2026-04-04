@@ -4,6 +4,10 @@ import { MathExpression, VisibilityMode } from "../components/calculator/types";
 import { analyzeFunction } from "../app/actions";
 import { latexToHuman, extractCoreFunctionForAnalysis } from "../utils/latexToHuman";
 
+// In-memory browser cache for function analysis. Persists until page reload.
+// Stores Promises to handle concurrent requests for the exact same expression.
+const analysisCache = new Map<string, Promise<any>>();
+
 // Custom inline shortcuts for calculus operations
 const CUSTOM_INLINE_SHORTCUTS = {
     // INTEGRAL SHORTCUTS
@@ -114,18 +118,96 @@ const isDefiniteIntegral = (latex: string): boolean => {
     return hasInt && hasLower && hasUpper;
 };
 
-const formatAnalysisValue = (val: any, isInterval: boolean = false): string => {
-    if (val === null || val === undefined || val === 'None' || (!isInterval && val === '[]') || val === '{}' || val === '') return '-';
+const formatAnalysisValue = (val: any, isInterval: boolean = false): React.ReactNode => {
+    if (val === null || val === undefined || val === 'None' || (!isInterval && val === '[]') || val === '{}' || val === '' || val === 'EmptySet' || val === '∅') return '-';
     let s = String(val);
     
-    if (isInterval) {
-        return s;
+    if (!isInterval) {
+        // Remove outer brackets for arrays of tuples like [(0, 0)] -> (0, 0)
+        s = s.replace(/^\[(.*)\]$/, '$1');
     }
     
-    // Remove outer brackets for arrays of tuples like [(0, 0)] -> (0, 0)
-    s = s.replace(/^\[(.*)\]$/, '$1');
     if (s === '') return '-';
-    return s;
+    
+    // Polish the math string representation
+    s = s
+        .replace(/\*\*/g, '^')
+        .replace(/-oo/g, '-∞')
+        .replace(/\boo\b/g, '∞')
+        .replace(/\bpi\b/g, 'π')
+        .replace(/ U /g, ' ∪ ')
+        .replace(/\bU_\{/g, '⋃_{')
+        .replace(/ \\ /g, ' ∖ ')
+        .replace(/ ∩ /g, ' ∩ ')
+        .replace(/\bR\b/g, 'ℝ')
+        .replace(/\bZ\b/g, 'ℤ')
+        .replace(/\bE\b/g, 'e')
+        .replace(/\bin\b/g, ' ∈ ')
+        .replace(/\bEmptySet\b/g, '∅')
+        .replace(/sqrt\(([^)]+)\)/g, '√($1)')
+        .replace(/\bexp\(/g, 'e^(')
+        .replace(/\bfactorial\(([^)]+)\)/g, '($1)!')
+        .replace(/\*/g, '·'); // replace remaining asterisks with a cleaner middle dot
+
+    // Parse the string and wrap exponents and subscripts in <sup> and <sub>
+    const parseMathString = (str: string, keyPrefix: string = ''): React.ReactNode => {
+        const parts = [];
+        let i = 0;
+        while (i < str.length) {
+            if (str[i] === '^' || str[i] === '_') {
+                const isSup = str[i] === '^';
+                i++;
+                if (i < str.length && str[i] === '(') {
+                    let j = i + 1;
+                    let depth = 1;
+                    while (j < str.length && depth > 0) {
+                        if (str[j] === '(') depth++;
+                        if (str[j] === ')') depth--;
+                        j++;
+                    }
+                    const content = parseMathString(str.substring(i + 1, j - 1), `${keyPrefix}-${i}`);
+                    parts.push(isSup ? <sup key={`${keyPrefix}-${i}`}>{content}</sup> : <sub key={`${keyPrefix}-${i}`}>{content}</sub>);
+                    i = j;
+                } else if (i < str.length && str[i] === '{') {
+                    let j = i + 1;
+                    let depth = 1;
+                    while (j < str.length && depth > 0) {
+                        if (str[j] === '{') depth++;
+                        if (str[j] === '}') depth--;
+                        j++;
+                    }
+                    const content = parseMathString(str.substring(i + 1, j - 1), `${keyPrefix}-${i}`);
+                    parts.push(isSup ? <sup key={`${keyPrefix}-${i}`}>{content}</sup> : <sub key={`${keyPrefix}-${i}`}>{content}</sub>);
+                    i = j;
+                } else {
+                    let j = i;
+                    // match single character or continuous alphanumeric sequence
+                    while (j < str.length && /[a-zA-Z0-9\.]/.test(str[j])) j++;
+                    if (j > i) {
+                        const content = parseMathString(str.substring(i, j), `${keyPrefix}-${i}`);
+                        parts.push(isSup ? <sup key={`${keyPrefix}-${i}`}>{content}</sup> : <sub key={`${keyPrefix}-${i}`}>{content}</sub>);
+                        i = j;
+                    } else {
+                        // just a standalone ^ or _
+                        parts.push(isSup ? '^' : '_');
+                    }
+                }
+            } else {
+                let nextChar = str.substring(i).search(/[\^_]/);
+                if (nextChar === -1) {
+                    parts.push(<React.Fragment key={`txt-${keyPrefix}-${i}`}>{str.substring(i)}</React.Fragment>);
+                    break;
+                } else {
+                    nextChar += i;
+                    parts.push(<React.Fragment key={`txt-${keyPrefix}-${i}`}>{str.substring(i, nextChar)}</React.Fragment>);
+                    i = nextChar;
+                }
+            }
+        }
+        return <>{parts}</>;
+    };
+
+    return parseMathString(s);
 };
 
 const getVisibilityIcon = (mode: VisibilityMode, visible: boolean) => {
@@ -162,13 +244,34 @@ export const Sidebar: React.FC<SidebarProps> = ({
         const humanExpr = extractCoreFunctionForAnalysis(latex);
         if (!humanExpr) return;
 
+        const cacheKey = humanExpr.trim();
+
         setAnalyzingIds(prev => new Set(prev).add(id));
 
         try {
-            const result = await analyzeFunction(humanExpr);
+            let resultPromise = analysisCache.get(cacheKey);
+            
+            if (!resultPromise) {
+                // Initiate the request and cache the promise to handle concurrent calls
+                resultPromise = analyzeFunction(humanExpr) as Promise<any>;
+                analysisCache.set(cacheKey, resultPromise);
+            }
+            
+            const result = await resultPromise;
+            
+            // Do not cache server connection/gRPC errors so users can retry
+            if (result && result.is_server_error) {
+                analysisCache.delete(cacheKey);
+            }
+            
             setAnalysisData(prev => ({ ...prev, [id]: result }));
         } catch (error) {
-            console.error("Analysis failed", error);
+            console.error("Analysis failed:", error);
+            analysisCache.delete(cacheKey);
+            setAnalysisData(prev => ({ 
+                ...prev, 
+                [id]: { has_error: true, error_message: "An unexpected error occurred." } 
+            }));
         } finally {
             setAnalyzingIds(prev => {
                 const next = new Set(prev);
@@ -310,13 +413,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 <div className="space-y-1.5">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">X-Intercept</div>
                                                     <div className="font-mono text-base">
-                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.x) !== '-' ? `x = ${formatAnalysisValue(data.function_analysis.Intercepts?.x)}` : <span className="font-sans text-[13px] opacity-70">The function does not have any x-intercepts.</span>}
+                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.x) !== '-' ? <React.Fragment>x = {formatAnalysisValue(data.function_analysis.Intercepts?.x)}</React.Fragment> : <span className="font-sans text-[13px] opacity-70">The function does not have any x-intercepts.</span>}
                                                     </div>
                                                 </div>
                                                 <div className="space-y-1.5">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Y-Intercept</div>
                                                     <div className="font-mono text-base">
-                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.y) !== '-' ? `y = ${formatAnalysisValue(data.function_analysis.Intercepts?.y)}` : <span className="font-sans text-[13px] opacity-70">The function does not have any y-intercepts.</span>}
+                                                        {formatAnalysisValue(data.function_analysis.Intercepts?.y) !== '-' ? <React.Fragment>y = {formatAnalysisValue(data.function_analysis.Intercepts?.y)}</React.Fragment> : <span className="font-sans text-[13px] opacity-70">The function does not have any y-intercepts.</span>}
                                                     </div>
                                                 </div>
 
@@ -362,7 +465,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                                 <div className="space-y-1.5">
                                                     <div className="text-muted-foreground text-xs uppercase tracking-wider font-semibold">Parity</div>
                                                     <div className="font-sans text-[13px]">
-                                                        {formatAnalysisValue(data.function_analysis.Parity) !== '-' ? `The function is ${formatAnalysisValue(data.function_analysis.Parity).toLowerCase()}.` : 'Neither even nor odd.'}
+                                                        {data.function_analysis.Parity ? `The function is ${String(data.function_analysis.Parity).toLowerCase()}.` : 'Neither even nor odd.'}
                                                     </div>
                                                 </div>
                                                 
