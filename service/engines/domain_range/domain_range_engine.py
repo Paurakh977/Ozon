@@ -2798,6 +2798,8 @@ def format_math_set(obj):
         return "Integers"
     if obj == EmptySet:
         return "EmptySet"
+    if obj is None:
+        return "None"
 
     def fmt_val(val):
         if val == S.Infinity:
@@ -2812,6 +2814,15 @@ def format_math_set(obj):
                     return "0"
             return s
         return str(val)
+
+    if isinstance(obj, (list, tuple)):
+        items = [format_math_set(x) for x in obj]
+        if isinstance(obj, tuple):
+            return "(" + ", ".join(items) + ")"
+        return "[" + ", ".join(items) + "]"
+
+    if isinstance(obj, dict):
+        return {k: format_math_set(v) for k, v in obj.items()}
 
     if isinstance(obj, FiniteSet):
         items = sorted([fmt_val(arg) for arg in obj.args])
@@ -2845,6 +2856,10 @@ def format_math_set(obj):
             base_str = "R"
         return f"{base_str} \\ {exc_str}"
 
+    if type(obj).__name__ == "Intersection":
+        parts = [format_math_set(arg) for arg in obj.args]
+        return " ∩ ".join(parts)
+
     if isinstance(obj, Union):
         # ── Attempt compact periodic representation ──────────────────────
         periodic_str = _format_periodic_union(obj, fmt_val, fmt_interval)
@@ -2862,14 +2877,45 @@ def format_math_set(obj):
                 parts.append(format_math_set(arg))
         return " U ".join(parts)
 
-    return str(obj)
+    if type(obj).__name__ == "ConditionSet":
+        try:
+            from sympy import Eq
+            expr = obj.condition.lhs - obj.condition.rhs if isinstance(obj.condition, Eq) else obj.condition
+            base_str = format_math_set(obj.base_set)
+            return f"{{x in {base_str} | {fmt_val(expr)} = 0}}"
+        except Exception:
+            return str(obj)
+
+    # Convert generic objects to string to capture unevaluated forms like exp(), factorial()
+    try:
+        val_str = str(obj)
+        if "(" in val_str and ")" in val_str:
+            return val_str
+    except Exception:
+        pass
+
+    return fmt_val(obj)
 
 
 def round_sympy_expr(expr, digits=3):
+    if isinstance(expr, float):
+        return round(expr, digits)
+
+    if isinstance(expr, (list, tuple)):
+        return type(expr)(round_sympy_expr(item, digits) for item in expr)
+
+    if isinstance(expr, dict):
+        return {k: round_sympy_expr(v, digits) for k, v in expr.items()}
+
     if isinstance(expr, Float):
         return Float(round(float(expr), digits), digits)
 
-    elif isinstance(expr, Interval):
+    if hasattr(expr, "atoms") and hasattr(expr, "xreplace"):
+        floats = expr.atoms(Float)
+        if floats:
+            expr = expr.xreplace({f: Float(round(float(f), digits), digits) for f in floats})
+
+    if isinstance(expr, Interval):
         return Interval(
             round_sympy_expr(expr.start, digits),
             round_sympy_expr(expr.end, digits),
@@ -2877,11 +2923,22 @@ def round_sympy_expr(expr, digits=3):
             expr.right_open,
         )
 
-    elif isinstance(expr, Union):
+    if isinstance(expr, Union):
         return Union(*[round_sympy_expr(arg, digits) for arg in expr.args])
 
-    elif isinstance(expr, FiniteSet):
+    if type(expr).__name__ == "Intersection":
+        from sympy import Intersection
+        return Intersection(*[round_sympy_expr(arg, digits) for arg in expr.args])
+
+    if isinstance(expr, FiniteSet):
         return FiniteSet(*[round_sympy_expr(arg, digits) for arg in expr.args])
+
+    if isinstance(expr, Complement):
+        return Complement(
+            round_sympy_expr(expr.args[0], digits),
+            round_sympy_expr(expr.args[1], digits),
+            evaluate=False
+        )
 
     return expr
 

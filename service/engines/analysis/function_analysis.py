@@ -1510,7 +1510,7 @@ class FunctionAnalysisEngine:
                                 name="Monotonicity")
 
         results = {
-            "Function": original_expr,  # always display original
+            "Function": str(original_expr),
             "Domain": domain,
             "Intercepts": intercepts,
             "Extrema": extrema,
@@ -1520,6 +1520,43 @@ class FunctionAnalysisEngine:
             "Periodicity": period,
             "Monotonicity": monotonicity,
         }
-        return results
+
+        from engines.domain_range.domain_range_engine import format_math_set, round_sympy_expr
+
+        formatted_intercepts = {
+            "x": format_math_set(round_sympy_expr(intercepts.get("x", []))),
+            "y": format_math_set(round_sympy_expr(intercepts.get("y")))
+        }
+
+        formatted_extrema = {
+            "minima": format_math_set(round_sympy_expr(extrema.get("minima", []))),
+            "maxima": format_math_set(round_sympy_expr(extrema.get("maxima", [])))
+        }
+
+        formatted_inflections = format_math_set(round_sympy_expr(inflections))
+
+        formatted_asymptotes = {
+            "vertical": format_math_set(round_sympy_expr(asymptotes.get("vertical", []))),
+            "horizontal": format_math_set(round_sympy_expr(asymptotes.get("horizontal", []))),
+            "oblique": format_math_set(round_sympy_expr(asymptotes.get("oblique", [])))
+        }
+
+        formatted_monotonicity = {
+            "increasing": format_math_set(round_sympy_expr(monotonicity.get("increasing", []))),
+            "decreasing": format_math_set(round_sympy_expr(monotonicity.get("decreasing", [])))
+        }
+
+        formatted_results = {
+            "Function": str(original_expr),
+            "Domain": format_math_set(round_sympy_expr(domain)),
+            "Intercepts": formatted_intercepts,
+            "Extrema": formatted_extrema,
+            "Inflection Points": formatted_inflections,
+            "Asymptotes": formatted_asymptotes,
+            "Parity": parity,
+            "Periodicity": format_math_set(round_sympy_expr(period)) if period is not None else "None",
+            "Monotonicity": formatted_monotonicity,
+        }
+        return formatted_results
 
     
