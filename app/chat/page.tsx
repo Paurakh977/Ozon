@@ -349,7 +349,6 @@ export default function ChatPage() {
 
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  // FIX 1: useRef<T>(null) → TypeScript infers RefObject<T>, matching the prop type exactly
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Track message count to distinguish new messages from chunk updates
@@ -358,15 +357,53 @@ export default function ChatPage() {
   // false = user scrolled up to read → hands off, don't interrupt
   const pinnedRef = useRef(true);
 
-  useEffect(() => {
+  // ── Reconnection state ──────────────────────────────────────────────────────
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intentionalCloseRef = useRef(false);
+
+  // ── WebSocket connection with auto-reconnect ────────────────────────────────
+  const connect = useCallback(() => {
+    // Clean up any existing connection
+    if (ws.current) {
+      intentionalCloseRef.current = true;
+      ws.current.close();
+    }
+
+    setStatus('connecting');
     const socket = new WebSocket('ws://127.0.0.1:8000/ws');
     ws.current = socket;
-    socket.onopen = () => setStatus('connected');
-    socket.onclose = () => { setStatus('disconnected'); setIsBusy(false); };
-    socket.onerror = () => setStatus('disconnected');
+    intentionalCloseRef.current = false;
+
+    socket.onopen = () => {
+      setStatus('connected');
+      reconnectAttemptRef.current = 0; // reset backoff on successful connect
+    };
+
+    socket.onclose = (ev) => {
+      setStatus('disconnected');
+      setIsBusy(false);
+      ws.current = null;
+
+      // Auto-reconnect with exponential backoff (unless we intentionally closed)
+      if (!intentionalCloseRef.current) {
+        const attempt = reconnectAttemptRef.current;
+        const delay = Math.min(1000 * Math.pow(2, attempt), 30000); // max 30s
+        reconnectAttemptRef.current = attempt + 1;
+        console.log(`[ws] Connection closed (code ${ev.code}). Reconnecting in ${delay}ms (attempt ${attempt + 1})...`);
+        reconnectTimerRef.current = setTimeout(() => {
+          connect();
+        }, delay);
+      }
+    };
+
+    socket.onerror = (err) => {
+      console.error('[ws] WebSocket error:', err);
+      // onclose will fire after this and handle reconnection
+    };
+
     socket.onmessage = (event) => {
-      // FIX 2: Guard JSON.parse so a non-JSON frame (ping, error string, etc.)
-      // doesn't throw and silently kill the entire message handler.
+      // Guard JSON.parse so a non-JSON frame doesn't kill the handler
       let data: { type: string; text?: string };
       try {
         data = JSON.parse(event.data);
@@ -375,26 +412,89 @@ export default function ChatPage() {
         return;
       }
 
-      if (data.type === 'chunk') {
+      // ── Handle server ping (keep-alive) ──
+      if (data.type === 'ping') {
+        try {
+          socket.send('__pong__');
+        } catch { /* connection might be closing */ }
+        return;
+      }
+
+      // ── Thinking: server acknowledged our message, agent is processing ──
+      // Create an empty bubble with streaming dots if one doesn't exist yet.
+      if (data.type === 'thinking') {
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'agent') return [...prev.slice(0, -1), { ...last, content: data.text ?? '', isStreaming: true }];
-          return [...prev, { role: 'agent', content: data.text ?? '', isStreaming: true }];
+          // Only add if we don't already have a streaming agent bubble
+          if (last?.role === 'agent' && last.isStreaming) return prev;
+          return [...prev, { role: 'agent', content: '', isStreaming: true }];
         });
-      } else if (data.type === 'done') {
+        return;
+      }
+
+      // ── Streaming chunk: REPLACE content with full accumulated text ──
+      // The server accumulates text and sends the FULL response so far
+      // on every event. Frontend replaces bubble content each time →
+      // text grows progressively = smooth streaming.
+      if (data.type === 'chunk') {
+        const text = data.text ?? '';
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          if (last?.role === 'agent' && last.isStreaming) {
+            // Replace content with latest full text
+            return [
+              ...prev.slice(0, -1),
+              { ...last, content: text, isStreaming: true },
+            ];
+          }
+          // First chunk (no thinking bubble was created) — create new agent message
+          return [...prev, { role: 'agent', content: text, isStreaming: true }];
+        });
+      }
+      // ── End of turn ──
+      else if (data.type === 'done') {
         setIsBusy(false);
         setMessages((prev) => {
           const last = prev[prev.length - 1];
-          if (last?.role === 'agent') return [...prev.slice(0, -1), { ...last, isStreaming: false }];
+          if (last?.role === 'agent') {
+            // If the thinking bubble never received any text, remove it
+            if (!last.content) return prev.slice(0, -1);
+            return [...prev.slice(0, -1), { ...last, isStreaming: false }];
+          }
           return prev;
         });
-      } else if (data.type === 'error') {
+      }
+      // ── Error from server ──
+      else if (data.type === 'error') {
         setIsBusy(false);
-        setMessages((prev) => [...prev, { role: 'agent', content: `**Error:** ${data.text}` }]);
+        setMessages((prev) => {
+          const last = prev[prev.length - 1];
+          // If we were streaming and hit an error, finalize and add error
+          if (last?.role === 'agent' && last.isStreaming) {
+            const finalized = last.content
+              ? [{ ...last, isStreaming: false }]
+              : [];  // remove empty thinking bubble
+            return [
+              ...prev.slice(0, -1),
+              ...finalized,
+              { role: 'agent', content: `**Error:** ${data.text}` },
+            ];
+          }
+          return [...prev, { role: 'agent', content: `**Error:** ${data.text}` }];
+        });
       }
     };
-    return () => { socket.close(); };
   }, []);
+
+  // ── Bootstrap connection on mount, clean up on unmount ──────────────────────
+  useEffect(() => {
+    connect();
+    return () => {
+      intentionalCloseRef.current = true;
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      if (ws.current) ws.current.close();
+    };
+  }, [connect]);
 
   // ── Scroll-pin listener ─────────────────────────────────────────────────────
   // Runs once. Listens to the scroll container and updates pinnedRef whenever
@@ -443,7 +543,13 @@ export default function ChatPage() {
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
+    // Add user message + empty agent "thinking" bubble immediately
+    // so the user sees streaming dots the instant they press send.
+    setMessages((prev) => [
+      ...prev,
+      { role: 'user', content: text },
+      { role: 'agent', content: '', isStreaming: true },
+    ]);
     setInput('');
     setIsBusy(true);
     ws.current.send(text);
@@ -485,7 +591,9 @@ export default function ChatPage() {
         )}>
           <span className={cn('w-1.5 h-1.5 rounded-full', statusColor,
             status === 'connecting' && 'animate-pulse')} />
-          {status}
+          {status === 'connecting' && reconnectAttemptRef.current > 0
+            ? `reconnecting (${reconnectAttemptRef.current})`
+            : status}
         </div>
       </motion.div>
 
