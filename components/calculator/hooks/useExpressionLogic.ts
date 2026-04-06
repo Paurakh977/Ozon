@@ -901,10 +901,10 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         }
     };
 
-    const addExpr = (initialLatex: string = "") => {
+    const addExpr = (initialLatex: string = "", customColor?: string) => {
         const id = Math.random().toString(36).substr(2, 9);
         const lastExpr = expressions[expressions.length - 1];
-        const newColor = getNextColor(lastExpr?.color);
+        const newColor = customColor || getNextColor(lastExpr?.color);
         setExpressions(prev => [...prev, { 
             id, 
             latex: initialLatex, 
@@ -1054,7 +1054,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     };
 
     const removeExpr = (id: string) => {
-        setExpressions(expressions.filter(e => e.id !== id));
+        setExpressions(prev => prev.filter(e => e.id !== id));
         if (calculatorInstance.current) {
             const safeId = `E${id.replace(/-/g, "")}`;
             if (helpersRef.current[safeId]) {

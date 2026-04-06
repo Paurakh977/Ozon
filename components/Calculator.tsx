@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState } from "react";
@@ -9,6 +8,7 @@ import { Header } from "../ui/Header";
 import { Sidebar } from "../ui/Sidebar";
 import { GraphArea } from "../ui/GraphArea";
 import { GraphLegend } from "../ui/GraphLegend";
+import { ChatModal } from "./ChatModal";
 
 export function Calculator() {
     const { theme, setTheme, resolvedTheme } = useTheme();
@@ -35,7 +35,7 @@ export function Calculator() {
     if (!libLoaded) return <div className="h-screen w-full flex items-center justify-center font-mono">Loading Engine...</div>;
 
     return (
-        <div className="flex flex-col h-screen w-full bg-background overflow-hidden">
+        <div className="flex flex-col h-screen w-full bg-background overflow-hidden relative">
             <Header
                 sidebarOpen={sidebarOpen}
                 setSidebarOpen={setSidebarOpen}
@@ -70,6 +70,20 @@ export function Calculator() {
                     />
                 </GraphArea>
             </div>
+
+            {/* Hide Desmos Watermark (Robust CSS Injection & Cover) */}
+            <style>{`
+                .dcg-container .dcg-powered-by,
+                .dcg-container .dcg-watermark {
+                    display: none !important;
+                    opacity: 0 !important;
+                    pointer-events: none !important;
+                    visibility: hidden !important;
+                }
+            `}</style>
+
+            {/* Chat Modal Layer */}
+            <ChatModal actions={{ addExpr, updateSliderBounds, removeExpr }} expressions={expressions} />
         </div>
     );
-}
+}
