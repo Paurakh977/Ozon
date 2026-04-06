@@ -25,9 +25,10 @@ from fastapi.responses import RedirectResponse
 from google.adk.agents.run_config import RunConfig, StreamingMode
 from google.adk.runners import InMemoryRunner
 from google.genai import types
+import json
 
 from model import root_agent
-
+from tools.sidebar_tools import action_queue_var, frontend_state_var
 logger = logging.getLogger("server")
 
 # Runner created once at startup — shared across all connections, no re-init per request
@@ -129,13 +130,24 @@ async def websocket_endpoint(websocket: WebSocket):
             if raw.strip() == "__pong__":
                 continue
 
-            prompt = raw
+            # Try to parse the message as JSON containing text and expressions state
+            client_expressions = []
+            try:
+                data = json.loads(raw)
+                prompt = data.get("text", "")
+                client_expressions = data.get("expressions", [])
+            except (json.JSONDecodeError, TypeError):
+                prompt = raw
+
             logger.info("[%s] User message: %s", user_id, prompt[:120])
 
             content = types.Content(
                 role="user",
                 parts=[types.Part.from_text(text=prompt)],
             )
+
+            # Store frontend state in context var
+            state_token = frontend_state_var.set(client_expressions)
 
             # ── Immediately notify frontend that we're processing ─────────
             # This lets the UI show a "thinking" indicator right away,
@@ -148,6 +160,9 @@ async def websocket_endpoint(websocket: WebSocket):
             t_start = time.monotonic()
             first_text_event = True
 
+            action_queue = []
+            token = action_queue_var.set(action_queue)
+
             try:
                 async for event in runner.run_async(
                     user_id=user_id,
@@ -155,6 +170,12 @@ async def websocket_endpoint(websocket: WebSocket):
                     new_message=content,
                     run_config=RunConfig(streaming_mode=StreamingMode.SSE),
                 ):
+                    # Check for tool actions
+                    if action_queue:
+                        while action_queue:
+                            action = action_queue.pop(0)
+                            await websocket.send_json({"type": "action", **action})
+
                     if not event.content:
                         continue
 
@@ -220,6 +241,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     )
                 except Exception:
                     pass
+            finally:
+                action_queue_var.reset(token)
+                frontend_state_var.reset(state_token)
 
             # Signal end-of-turn so the UI can re-enable input
             await websocket.send_json({"type": "done"})
