@@ -12,15 +12,15 @@
 // KNOWN FUNCTION NAMES — longest first (greedy match order)
 // ─────────────────────────────────────────────────────────────
 const KNOWN_FUNCS: string[] = [
-    'arcsinh','arccosh','arctanh','arccoth','arcsech','arccsch',
-    'arcsin','arccos','arctan','arccot','arcsec','arccsc',
-    'sinh','cosh','tanh','coth','sech','csch',
-    'sin','cos','tan','cot','sec','csc',
-    'ln','log','exp','abs',
-    'gcd','lcm','min','max',
-    'floor','ceil','sgn','sign',
-    'det','dim','ker','deg','arg','mod',
-    'Re','Im',
+    'arcsinh', 'arccosh', 'arctanh', 'arccoth', 'arcsech', 'arccsch',
+    'arcsin', 'arccos', 'arctan', 'arccot', 'arcsec', 'arccsc',
+    'sinh', 'cosh', 'tanh', 'coth', 'sech', 'csch',
+    'sin', 'cos', 'tan', 'cot', 'sec', 'csc',
+    'ln', 'log', 'exp', 'abs',
+    'gcd', 'lcm', 'min', 'max',
+    'floor', 'ceil', 'sgn', 'sign',
+    'det', 'dim', 'ker', 'deg', 'arg', 'mod',
+    'Re', 'Im',
 ];
 
 // Graph variables — x and y are NOT treated as constants needing *
@@ -38,20 +38,20 @@ function preNormalise(s: string): string {
 
         // operatorname / mathrm → \name (WITH backslash so parser treats as \cmd)
         .replace(/\\operatorname\{\\mathrm\{([^}]+)\}\}/g, (_, n) => `\\${n}`)
-        .replace(/\\operatorname\{\\([a-zA-Z]+)\}/g,       (_, n) => `\\${n}`)
-        .replace(/\\operatorname\{([^}]+)\}/g,              (_, n) => `\\${n}`)
+        .replace(/\\operatorname\{\\([a-zA-Z]+)\}/g, (_, n) => `\\${n}`)
+        .replace(/\\operatorname\{([^}]+)\}/g, (_, n) => `\\${n}`)
 
         // differential variants
-        .replace(/\\mathrm\{dx\}/g,          'dx')
+        .replace(/\\mathrm\{dx\}/g, 'dx')
         .replace(/\\mathrm\{d\}([a-zA-Z])/g, 'd$1')
         .replace(/\\mathrm\{d([a-zA-Z])\}/g, 'd$1')
-        .replace(/\\mathrm\{d\}/g,           'd')
-        .replace(/\\text\{d\}([a-zA-Z])/g,   'd$1')
-        .replace(/\\text\{dx\}/g,            'dx')
-        .replace(/\\differentialD/g,          'd')
+        .replace(/\\mathrm\{d\}/g, 'd')
+        .replace(/\\text\{d\}([a-zA-Z])/g, 'd$1')
+        .replace(/\\text\{dx\}/g, 'dx')
+        .replace(/\\differentialD/g, 'd')
         .replace(/\\mathrm\{([^}]+)\}/g, '$1')
-        .replace(/\\text\{([^}]+)\}/g,   '$1')
-        .replace(/\\mbox\{([^}]+)\}/g,   '$1')
+        .replace(/\\text\{([^}]+)\}/g, '$1')
+        .replace(/\\mbox\{([^}]+)\}/g, '$1')
 
         // fraction aliases
         .replace(/\\dfrac/g, '\\frac')
@@ -59,66 +59,66 @@ function preNormalise(s: string): string {
         .replace(/\\cfrac/g, '\\frac')
 
         // spacing / layout
-        .replace(/\\[,;:!]/g,           '')
-        .replace(/\\quad\b/g,            ' ')
-        .replace(/\\qquad\b/g,           ' ')
-        .replace(/\\limits\b/g,          '')
-        .replace(/\\displaystyle\b/g,    '')
-        .replace(/\\textstyle\b/g,       '')
-        .replace(/\\scriptstyle\b/g,     '')
+        .replace(/\\[,;:!]/g, '')
+        .replace(/\\quad\b/g, ' ')
+        .replace(/\\qquad\b/g, ' ')
+        .replace(/\\limits\b/g, '')
+        .replace(/\\displaystyle\b/g, '')
+        .replace(/\\textstyle\b/g, '')
+        .replace(/\\scriptstyle\b/g, '')
         .replace(/\\boldsymbol\{([^}]+)\}/g, '$1')
 
         // named bracket commands
-        .replace(/\\left\s*\\lbrack/g,  '[').replace(/\\right\s*\\rbrack/g, ']')
+        .replace(/\\left\s*\\lbrack/g, '[').replace(/\\right\s*\\rbrack/g, ']')
         .replace(/\\lbrack/g, '[').replace(/\\rbrack/g, ']')
-        .replace(/\\left\s*\\lbrace/g,  '(').replace(/\\right\s*\\rbrace/g, ')')
+        .replace(/\\left\s*\\lbrace/g, '(').replace(/\\right\s*\\rbrace/g, ')')
         .replace(/\\lbrace/g, '{').replace(/\\rbrace/g, '}')
-        .replace(/\\left\s*\\langle/g,  '<').replace(/\\right\s*\\rangle/g, '>')
+        .replace(/\\left\s*\\langle/g, '<').replace(/\\right\s*\\rangle/g, '>')
         .replace(/\\langle/g, '<').replace(/\\rangle/g, '>')
-        .replace(/\\left\s*\\lfloor/g,  'floor(').replace(/\\right\s*\\rfloor/g, ')')
+        .replace(/\\left\s*\\lfloor/g, 'floor(').replace(/\\right\s*\\rfloor/g, ')')
         .replace(/\\lfloor/g, 'floor(').replace(/\\rfloor/g, ')')
-        .replace(/\\left\s*\\lceil/g,   'ceil(').replace(/\\right\s*\\rceil/g, ')')
+        .replace(/\\left\s*\\lceil/g, 'ceil(').replace(/\\right\s*\\rceil/g, ')')
         .replace(/\\lceil/g, 'ceil(').replace(/\\rceil/g, ')')
 
         // absolute value / norm
-        .replace(/\\lvert/g,'|').replace(/\\rvert/g,'|')
-        .replace(/\\lVert/g,'‖').replace(/\\rVert/g,'‖')
-        .replace(/\\vert\b/g,'|').replace(/\\Vert\b/g,'‖')
+        .replace(/\\lvert/g, '|').replace(/\\rvert/g, '|')
+        .replace(/\\lVert/g, '‖').replace(/\\rVert/g, '‖')
+        .replace(/\\vert\b/g, '|').replace(/\\Vert\b/g, '‖')
 
         // size modifiers
-        .replace(/\\[Bb]igg?[lr]?\s*\(/g,'(').replace(/\\[Bb]igg?[lr]?\s*\)/g,')')
-        .replace(/\\[Bb]igg?[lr]?\s*\[/g,'[').replace(/\\[Bb]igg?[lr]?\s*\]/g,']')
-        .replace(/\\[Bb]igg?[lr]?\s*\|/g,'|')
-        .replace(/\\[Bb]igm\s*\|/g,'|').replace(/\\[Bb]igm\s*\\vert/g,'|');
+        .replace(/\\[Bb]igg?[lr]?\s*\(/g, '(').replace(/\\[Bb]igg?[lr]?\s*\)/g, ')')
+        .replace(/\\[Bb]igg?[lr]?\s*\[/g, '[').replace(/\\[Bb]igg?[lr]?\s*\]/g, ']')
+        .replace(/\\[Bb]igg?[lr]?\s*\|/g, '|')
+        .replace(/\\[Bb]igm\s*\|/g, '|').replace(/\\[Bb]igm\s*\\vert/g, '|');
 
     // Fix \right. (MathLive invisible close delimiter)
     s = fixUnmatchedDelimiters(s);
 
     // Strip remaining \left / \right
     s = s
-        .replace(/\\left\s*\(/g,  '(').replace(/\\right\s*\)/g,')')
-        .replace(/\\left\s*\[/g,  '[').replace(/\\right\s*\]/g,']')
-        .replace(/\\left\s*\|/g,  'abs(').replace(/\\right\s*\|/g,')')
-        .replace(/\\left\s*\\{/g, '(').replace(/\\right\s*\\}/g,')')
-        .replace(/\\left\s*\\vert/g,'abs(').replace(/\\right\s*\\vert/g,')')
-        .replace(/\\left\s*\\Vert/g,'‖').replace(/\\right\s*\\Vert/g,'‖')
-        .replace(/\\left\s*\./g,'').replace(/\\right\s*\./g,'')
-        .replace(/\\left\b\s*/g,'').replace(/\\right\b\s*/g,'');
+        .replace(/\\left\s*\(/g, '(').replace(/\\right\s*\)/g, ')')
+        .replace(/\\left\s*\[/g, '[').replace(/\\right\s*\]/g, ']')
+        .replace(/\\left\s*\|/g, 'abs(').replace(/\\right\s*\|/g, ')')
+        .replace(/\\left\s*\\{/g, '(').replace(/\\right\s*\\}/g, ')')
+        .replace(/\\left\s*\\vert/g, 'abs(').replace(/\\right\s*\\vert/g, ')')
+        .replace(/\\left\s*\\Vert/g, '‖').replace(/\\right\s*\\Vert/g, '‖')
+        .replace(/\\left\s*\./g, '').replace(/\\right\s*\./g, '')
+        .replace(/\\left\b\s*/g, '').replace(/\\right\b\s*/g, '');
 
     return s;
 }
 
 function fixUnmatchedDelimiters(s: string): string {
-    const closeFor: Record<string, string> = { '(':')', '[':']', '|':'|', '{':'}', '<':'>' };
+    const closeFor: Record<string, string> = { '(': ')', '[': ']', '|': '|', '{': '}', '<': '>' };
     const stack: string[] = [];
     let out = '', i = 0;
     while (i < s.length) {
         const lm = s.slice(i).match(/^\\left\s*([(\[|{<])/);
-        if (lm) { stack.push(lm[1]); out += s.slice(i, i+lm[0].length); i += lm[0].length; continue; }
+        if (lm) { stack.push(lm[1]); out += s.slice(i, i + lm[0].length); i += lm[0].length; continue; }
         const rd = s.slice(i).match(/^\\right\s*\./);
         if (rd) { const op = stack.pop(); if (op && closeFor[op]) out += '\\right' + closeFor[op]; i += rd[0].length; continue; }
         const rr = s.slice(i).match(/^\\right\s*([)\]|}<>])/);
-        if (rr) { stack.pop(); out += s.slice(i, i+rr[0].length); i += rr[0].length; continue; }
+        if (rr) { stack.pop(); out += s.slice(i, i + rr[0].length); i += rr[0].length; continue; }
         out += s[i++];
     }
     return out;
@@ -128,14 +128,14 @@ function fixUnmatchedDelimiters(s: string): string {
 // PARSER HELPERS
 // ─────────────────────────────────────────────────────────────
 function extractGroup(str: string, pos: number): { content: string; end: number } {
-    const open  = str[pos];
-    const close = open==='{' ? '}' : open==='(' ? ')' : open==='[' ? ']' : '}';
-    let depth=1, i=pos+1;
+    const open = str[pos];
+    const close = open === '{' ? '}' : open === '(' ? ')' : open === '[' ? ']' : '}';
+    let depth = 1, i = pos + 1;
     while (i < str.length && depth > 0) {
-        if (str[i]===open) depth++; else if (str[i]===close) depth--;
-        i++;
+        if (str[i] === open) depth++; else if (str[i] === close) depth--;
+        i++;``
     }
-    return { content: str.substring(pos+1, i-1), end: i };
+    return { content: str.substring(pos + 1, i - 1), end: i };
 }
 
 function skipSpace(str: string, pos: number): number {
@@ -145,83 +145,83 @@ function skipSpace(str: string, pos: number): number {
 
 function readToken(str: string, pos: number): { token: string; end: number } {
     pos = skipSpace(str, pos);
-    if (pos >= str.length) return { token:'', end:pos };
-    if (str[pos]==='\\') {
-        let i=pos+1;
-        if (i>=str.length)            return { token:'\\', end:i };
-        if (!/[a-zA-Z]/.test(str[i])) return { token:str.substring(pos,pos+2), end:pos+2 };
-        while (i<str.length && /[a-zA-Z]/.test(str[i])) i++;
-        return { token:str.substring(pos,i), end:i };
+    if (pos >= str.length) return { token: '', end: pos };
+    if (str[pos] === '\\') {
+        let i = pos + 1;
+        if (i >= str.length) return { token: '\\', end: i };
+        if (!/[a-zA-Z]/.test(str[i])) return { token: str.substring(pos, pos + 2), end: pos + 2 };
+        while (i < str.length && /[a-zA-Z]/.test(str[i])) i++;
+        return { token: str.substring(pos, i), end: i };
     }
-    return { token:str[pos], end:pos+1 };
+    return { token: str[pos], end: pos + 1 };
 }
 
 function readFracArg(str: string, pos: number): { content: string; end: number } {
     pos = skipSpace(str, pos);
-    if (pos >= str.length) return { content:'', end:pos };
-    if (str[pos]==='{') { const g=extractGroup(str,pos); return { content:g.content, end:g.end }; }
-    if (str[pos]==='\\') { const t=readToken(str,pos); return { content:t.token, end:t.end }; }
-    return { content:str[pos], end:pos+1 };
+    if (pos >= str.length) return { content: '', end: pos };
+    if (str[pos] === '{') { const g = extractGroup(str, pos); return { content: g.content, end: g.end }; }
+    if (str[pos] === '\\') { const t = readToken(str, pos); return { content: t.token, end: t.end }; }
+    return { content: str[pos], end: pos + 1 };
 }
 
 function readArg(str: string, pos: number): { content: string; end: number } {
     pos = skipSpace(str, pos);
-    if (pos >= str.length) return { content:'', end:pos };
-    if (str[pos]==='{') { const g=extractGroup(str,pos); return { content:g.content, end:g.end }; }
-    const t=readToken(str,pos);
-    return { content:t.token, end:t.end };
+    if (pos >= str.length) return { content: '', end: pos };
+    if (str[pos] === '{') { const g = extractGroup(str, pos); return { content: g.content, end: g.end }; }
+    const t = readToken(str, pos);
+    return { content: t.token, end: t.end };
 }
 
 // ─────────────────────────────────────────────────────────────
 // LOOKUP TABLES
 // ─────────────────────────────────────────────────────────────
-const GREEK: Record<string,string> = {
-    '\\alpha':'α','\\beta':'β','\\gamma':'γ','\\delta':'δ',
-    '\\epsilon':'ε','\\varepsilon':'ε','\\zeta':'ζ','\\eta':'η',
-    '\\theta':'θ','\\vartheta':'θ','\\iota':'ι','\\kappa':'κ',
-    '\\lambda':'λ','\\mu':'μ','\\nu':'ν','\\xi':'ξ',
-    '\\pi':'π','\\varpi':'π','\\rho':'ρ','\\varrho':'ρ',
-    '\\sigma':'σ','\\varsigma':'σ','\\tau':'τ','\\upsilon':'υ',
-    '\\phi':'φ','\\varphi':'φ','\\chi':'χ','\\psi':'ψ','\\omega':'ω',
-    '\\Gamma':'Γ','\\Delta':'Δ','\\Theta':'Θ','\\Lambda':'Λ',
-    '\\Xi':'Ξ','\\Pi':'Π','\\Sigma':'Σ','\\Upsilon':'Υ',
-    '\\Phi':'Φ','\\Psi':'Ψ','\\Omega':'Ω',
+const GREEK: Record<string, string> = {
+    '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ',
+    '\\epsilon': 'ε', '\\varepsilon': 'ε', '\\zeta': 'ζ', '\\eta': 'η',
+    '\\theta': 'θ', '\\vartheta': 'θ', '\\iota': 'ι', '\\kappa': 'κ',
+    '\\lambda': 'λ', '\\mu': 'μ', '\\nu': 'ν', '\\xi': 'ξ',
+    '\\pi': 'π', '\\varpi': 'π', '\\rho': 'ρ', '\\varrho': 'ρ',
+    '\\sigma': 'σ', '\\varsigma': 'σ', '\\tau': 'τ', '\\upsilon': 'υ',
+    '\\phi': 'φ', '\\varphi': 'φ', '\\chi': 'χ', '\\psi': 'ψ', '\\omega': 'ω',
+    '\\Gamma': 'Γ', '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ',
+    '\\Xi': 'Ξ', '\\Pi': 'Π', '\\Sigma': 'Σ', '\\Upsilon': 'Υ',
+    '\\Phi': 'Φ', '\\Psi': 'Ψ', '\\Omega': 'Ω',
 };
 
 // Greek symbol chars — used in needsMul to recognise them as value-producing
-const GREEK_CHARS = new Set(['α','β','γ','δ','ε','ζ','η','θ','ι','κ','λ','μ','ν','ξ','π','ρ','σ','τ','υ','φ','χ','ψ','ω','Γ','Δ','Θ','Λ','Ξ','Π','Σ','Υ','Φ','Ψ','Ω']);
+const GREEK_CHARS = new Set(['α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ', 'ν', 'ξ', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω', 'Γ', 'Δ', 'Θ', 'Λ', 'Ξ', 'Π', 'Σ', 'Υ', 'Φ', 'Ψ', 'Ω']);
 
-const SYMBOLS: Record<string,string> = {
-    '\\infty':'inf','\\partial':'∂','\\nabla':'∇',
-    '\\cdot':'*','\\times':'*','\\div':'/',
-    '\\pm':'±','\\mp':'∓',
-    '\\leq':'≤','\\le':'≤','\\geq':'≥','\\ge':'≥',
-    '\\neq':'≠','\\ne':'≠','\\approx':'≈','\\sim':'~',
-    '\\equiv':'≡','\\propto':'∝',
-    '\\to':'→','\\rightarrow':'→','\\leftarrow':'←',
-    '\\Rightarrow':'⇒','\\Leftarrow':'⇐','\\Leftrightarrow':'⇔',
-    '\\in':'∈','\\notin':'∉','\\subset':'⊂','\\supset':'⊃',
-    '\\cup':'∪','\\cap':'∩','\\emptyset':'∅','\\varnothing':'∅',
-    '\\forall':'∀','\\exists':'∃',
-    '\\land':'&&','\\lor':'||','\\lnot':'!',
-    '\\ldots':'...','\\cdots':'...','\\vdots':'...','\\ddots':'...',
-    '\\{':'{','\\}':'}','\\|':'‖',
+const SYMBOLS: Record<string, string> = {
+    '\\infty': 'inf', '\\partial': '∂', '\\nabla': '∇',
+    '\\cdot': '*', '\\times': '*', '\\div': '/',
+    '\\pm': '±', '\\mp': '∓',
+    '\\leq': '≤', '\\le': '≤', '\\geq': '≥', '\\ge': '≥',
+    '\\neq': '≠', '\\ne': '≠', '\\approx': '≈', '\\sim': '~',
+    '\\equiv': '≡', '\\propto': '∝',
+    '\\to': '→', '\\rightarrow': '→', '\\leftarrow': '←',
+    '\\Rightarrow': '⇒', '\\Leftarrow': '⇐', '\\Leftrightarrow': '⇔',
+    '\\in': '∈', '\\notin': '∉', '\\subset': '⊂', '\\supset': '⊃',
+    '\\cup': '∪', '\\cap': '∩', '\\emptyset': '∅', '\\varnothing': '∅',
+    '\\forall': '∀', '\\exists': '∃',
+    '\\land': '&&', '\\lor': '||', '\\lnot': '!',
+    '\\ldots': '...', '\\cdots': '...', '\\vdots': '...', '\\ddots': '...',
+    '\\{': '{', '\\}': '}', '\\|': '‖',
 };
 
-const FUNC_MAP: Record<string,string> = {
-    '\\sin':'sin','\\cos':'cos','\\tan':'tan','\\cot':'cot','\\sec':'sec','\\csc':'csc',
-    '\\sinh':'sinh','\\cosh':'cosh','\\tanh':'tanh','\\coth':'coth','\\sech':'sech','\\csch':'csch',
-    '\\arcsin':'arcsin','\\arccos':'arccos','\\arctan':'arctan',
-    '\\arccot':'arccot','\\arcsec':'arcsec','\\arccsc':'arccsc',
-    '\\arcsinh':'arcsinh','\\arccosh':'arccosh','\\arctanh':'arctanh',
-    '\\arccoth':'arccoth','\\arcsech':'arcsech','\\arccsch':'arccsch',
-    '\\ln':'ln','\\log':'log','\\exp':'exp',
-    '\\abs':'abs','\\gcd':'gcd','\\lcm':'lcm',
-    '\\min':'min','\\max':'max',
-    '\\floor':'floor','\\ceil':'ceil',
-    '\\sgn':'sgn','\\sign':'sign',
-    '\\Re':'Re','\\Im':'Im',
-    '\\det':'det','\\dim':'dim','\\ker':'ker','\\deg':'deg','\\arg':'arg','\\mod':'mod',
+const FUNC_MAP: Record<string, string> = {
+    '\\sin': 'sin', '\\cos': 'cos', '\\tan': 'tan', '\\cot': 'cot', '\\sec': 'sec', '\\csc': 'csc',
+    '\\sinh': 'sinh', '\\cosh': 'cosh', '\\tanh': 'tanh', '\\coth': 'coth', '\\sech': 'sech', '\\csch': 'csch',
+    '\\arcsin': 'arcsin', '\\arccos': 'arccos', '\\arctan': 'arctan',
+    '\\arccot': 'arccot', '\\arcsec': 'arcsec', '\\arccsc': 'arccsc',
+    '\\arcsinh': 'arcsinh', '\\arccosh': 'arccosh', '\\arctanh': 'arctanh',
+    '\\arccoth': 'arccoth', '\\arcsech': 'arcsech', '\\arccsch': 'arccsch',
+    '\\ln': 'ln', '\\log': 'log', '\\exp': 'exp',
+    '\\abs': 'abs', '\\gcd': 'gcd', '\\lcm': 'lcm',
+    '\\min': 'min', '\\max': 'max',
+    '\\floor': 'floor', '\\ceil': 'ceil',
+    '\\sgn': 'sgn', '\\sign': 'sign',
+    '\\Re': 'Re', '\\Im': 'Im',
+    '\\det': 'det', '\\dim': 'dim', '\\ker': 'ker', '\\deg': 'deg', '\\arg': 'arg', '\\mod': 'mod',
 
 };
 
@@ -229,29 +229,29 @@ const FUNC_MAP: Record<string,string> = {
 // DEPTH-AWARE OPERATOR DETECTION
 // ─────────────────────────────────────────────────────────────
 function hasBareAdditive(s: string): boolean {
-    let d=0;
-    for (let i=0; i<s.length; i++) {
-        const c=s[i];
-        if (c==='('||c==='[') { d++; continue; }
-        if (c===')'||c===']') { d--; continue; }
-        if (d===0 && i>0 && (c==='+'||c==='-')) return true;
+    let d = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (c === '(' || c === '[') { d++; continue; }
+        if (c === ')' || c === ']') { d--; continue; }
+        if (d === 0 && i > 0 && (c === '+' || c === '-')) return true;
     }
     return false;
 }
 
 function hasBareOperator(s: string): boolean {
-    let d=0;
-    for (let i=0; i<s.length; i++) {
-        const c=s[i];
-        if (c==='('||c==='[') { d++; continue; }
-        if (c===')'||c===']') { d--; continue; }
-        if (d===0 && i>0 && (c==='+'||c==='-'||c==='*'||c==='/')) return true;
+    let d = 0;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (c === '(' || c === '[') { d++; continue; }
+        if (c === ')' || c === ']') { d--; continue; }
+        if (d === 0 && i > 0 && (c === '+' || c === '-' || c === '*' || c === '/')) return true;
     }
     return false;
 }
 
 function wrapIfAdditive(s: string): string { return hasBareAdditive(s) ? `(${s})` : s; }
-function wrapIfCompound(s: string):  string { return hasBareOperator(s)  ? `(${s})` : s; }
+function wrapIfCompound(s: string): string { return hasBareOperator(s) ? `(${s})` : s; }
 function wrapFrac(num: string, den: string): string {
     return `(${wrapIfAdditive(num)}/${wrapIfCompound(den)})`;
 }
@@ -344,91 +344,95 @@ function convertLatex(latex: string): string {
         result += token;
     };
 
-    let i=0;
+    let i = 0;
     while (i < s.length) {
         i = skipSpace(s, i);
         if (i >= s.length) break;
         const ch = s[i];
 
         // ── {group} ───────────────────────────────────────────────
-        if (ch==='{') {
-            const g=extractGroup(s,i); i=g.end;
-            const trimmed=g.content.trim();
-            if (!trimmed || trimmed==='?') continue;
-            const inner=convertLatex(trimmed);
+        if (ch === '{') {
+            const g = extractGroup(s, i); i = g.end;
+            const trimmed = g.content.trim();
+            if (!trimmed || trimmed === '?') continue;
+            const inner = convertLatex(trimmed);
             if (inner) emit(wrapIfAdditive(inner));
             continue;
         }
 
         // ── (group) ───────────────────────────────────────────────
-        if (ch==='(') {
-            const g=extractGroup(s,i); i=g.end;
+        if (ch === '(') {
+            const g = extractGroup(s, i); i = g.end;
             emit(`(${convertLatex(g.content)})`);
             continue;
         }
 
         // ── [group] ───────────────────────────────────────────────
-        if (ch==='[') {
-            const g=extractGroup(s,i); i=g.end;
+        if (ch === '[') {
+            const g = extractGroup(s, i); i = g.end;
             emit(`[${convertLatex(g.content)}]`);
             continue;
         }
 
         // ── |expr| → abs(expr) ──────────────────────────────────
-        if (ch==="|") {
-            // Find matching pipeline bracket heuristically using the depth aware converter logic
-            // Since we can't reliably pair just any | without depth context, we will build a stack logic:
-            let depth = 1;
+        if (ch === "|") {
+            let pipeDepth = 1;
+            let parenDepth = 0;
             let j = i + 1;
-            while(j < s.length) {
-                if (s[j] === '|') {
-                    let prev = j > 0 ? s[j-1] : '';
+            while (j < s.length) {
+                if (s[j] === '(' || s[j] === '[') parenDepth++;
+                else if (s[j] === ')' || s[j] === ']') parenDepth--;
+                else if (s[j] === '|') {
+                    let prev = j > 0 ? s[j - 1] : '';
                     let isOpen = false;
                     if (/[-+*/=({\[<>,_^]/.test(prev)) isOpen = true;
                     else if (/[0-9a-zA-Z)\]}]/.test(prev)) isOpen = false;
-                    else if (j+1 < s.length && /[0-9a-zA-Z(\[]/.test(s[j+1])) isOpen = true;
+                    else if (j + 1 < s.length && /[0-9a-zA-Z(\[]/.test(s[j + 1])) isOpen = true;
                     else isOpen = false;
 
-                    if (isOpen) depth++;
-                    else depth--;
+                    if (isOpen) pipeDepth++;
+                    else pipeDepth--;
 
-                    if (depth === 0) break;
+                    if (pipeDepth === 0) break;
                 }
                 j++;
             }
-            
-            if (depth === 0 && j < s.length) { 
-                emit(`abs(${convertLatex(s.substring(i+1,j))})`); 
-                i=j+1; 
-            }
-            else { 
-                emit("|"); 
-                i++; 
+
+            if (pipeDepth === 0 && j < s.length) {
+                emit(`abs(${convertLatex(s.substring(i + 1, j))})`);
+                i = j + 1;
+            } else if (pipeDepth > 0 && parenDepth < 0) {
+                const absContent = s.substring(i + 1, j - 1);
+                emit(`abs(${convertLatex(absContent)})`);
+                i = j;
+            } else {
+                emit("|");
+                i++;
             }
             continue;
         }
 
         // ── \command ──────────────────────────────────────────────
-        if (ch==='\\') {
-            const tok=readToken(s,i); const cmd=tok.token; i=tok.end;
+        if (ch === '\\') {
+            const tok = readToken(s, i); const cmd = tok.token; i = tok.end;
 
-            if (GREEK[cmd])   { emit(GREEK[cmd]);   continue; }
+            if (GREEK[cmd]) { emit(GREEK[cmd]); continue; }
             if (SYMBOLS[cmd]) { emit(SYMBOLS[cmd]); continue; }
 
             // ── \frac ─────────────────────────────────────────────
-            if (cmd==='\\frac') {
-                const nA=readFracArg(s,i); i=nA.end;
-                const dA=readFracArg(s,i); i=dA.end;
-                const numRaw=nA.content.trim();
-                const denRaw=dA.content.trim();
-                if (!numRaw || numRaw==='?') continue;
-                if (!denRaw || denRaw==='?') {
-                    const nH=convertLatex(numRaw);
+            if (cmd === '\\frac') {
+                const nA = readFracArg(s, i); i = nA.end;
+                const dA = readFracArg(s, i); i = dA.end;
+                const numRaw = nA.content.trim();
+                const denRaw = dA.content.trim();
+                if (!numRaw || numRaw === '?') continue;
+                if (!denRaw || denRaw === '?') {
+                    const nH = convertLatex(numRaw);
                     if (nH) emit(wrapIfAdditive(nH));
                     continue;
                 }
-                const nH=convertLatex(numRaw);
-                const dH=convertLatex(denRaw);
+                const nH = convertLatex(numRaw);
+                const dH = convertLatex(denRaw);
                 if (!nH) continue;
                 emit(wrapFrac(nH, dH));
                 continue;
@@ -437,139 +441,139 @@ function convertLatex(latex: string): string {
             // ── \sqrt — ALWAYS power form for consistency ──────────
             // \sqrt{x}    → (x)^(1/2)
             // \sqrt[3]{x} → (x)^(1/3)
-            if (cmd==="\\sqrt") {
-                i=skipSpace(s,i);
+            if (cmd === "\\sqrt") {
+                i = skipSpace(s, i);
                 let rootN = "2";
-                if (i<s.length && s[i]==="[") {
-                    const nr=extractGroup(s,i); i=nr.end;
-                    rootN=convertLatex(nr.content);
+                if (i < s.length && s[i] === "[") {
+                    const nr = extractGroup(s, i); i = nr.end;
+                    rootN = convertLatex(nr.content);
                 }
-                const bA=readFracArg(s,i); i=bA.end;
-                const body=convertLatex(bA.content);
-                const rootWrapped=hasBareOperator(rootN)?`(${rootN})`:rootN;
+                const bA = readFracArg(s, i); i = bA.end;
+                const body = convertLatex(bA.content);
+                const rootWrapped = hasBareOperator(rootN) ? `(${rootN})` : rootN;
                 emit(`(${body})^(1/${rootWrapped})`);
                 continue;
             }
 
             // ── \int \iint \iiint \oint ───────────────────────────
-            if (cmd==='\\int'||cmd==='\\iint'||cmd==='\\iiint'||cmd==='\\oint') {
-                const prefix=cmd==='\\oint'?'contour_integral':cmd==='\\iint'?'double_integral':cmd==='\\iiint'?'triple_integral':'integral';
-                let lower='',upper='';
-                for (let a=0;a<2;a++) {
-                    i=skipSpace(s,i); if(i>=s.length) break;
-                    if(s[i]==='_'){i++;const b=readArg(s,i);lower=convertLatex(b.content);i=b.end;}
-                    else if(s[i]==='^'){i++;const b=readArg(s,i);upper=convertLatex(b.content);i=b.end;}
+            if (cmd === '\\int' || cmd === '\\iint' || cmd === '\\iiint' || cmd === '\\oint') {
+                const prefix = cmd === '\\oint' ? 'contour_integral' : cmd === '\\iint' ? 'double_integral' : cmd === '\\iiint' ? 'triple_integral' : 'integral';
+                let lower = '', upper = '';
+                for (let a = 0; a < 2; a++) {
+                    i = skipSpace(s, i); if (i >= s.length) break;
+                    if (s[i] === '_') { i++; const b = readArg(s, i); lower = convertLatex(b.content); i = b.end; }
+                    else if (s[i] === '^') { i++; const b = readArg(s, i); upper = convertLatex(b.content); i = b.end; }
                     else break;
                 }
-                const rest=s.substring(i).trim();
-                const dm=rest.match(/^([\s\S]*?)\s*d([a-zA-Zα-ωθφ])\s*$/);
+                const rest = s.substring(i).trim();
+                const dm = rest.match(/^([\s\S]*?)\s*d([a-zA-Zα-ωθφ])\s*$/);
                 if (dm) {
-                    emit(lower&&upper
-                        ?`${prefix} from ${lower} to ${upper} of ${convertLatex(dm[1].trim())} d${dm[2]}`
-                        :`${prefix} of ${convertLatex(dm[1].trim())} d${dm[2]}`);
-                    i=s.length;
+                    emit(lower && upper
+                        ? `${prefix} from ${lower} to ${upper} of ${convertLatex(dm[1].trim())} d${dm[2]}`
+                        : `${prefix} of ${convertLatex(dm[1].trim())} d${dm[2]}`);
+                    i = s.length;
                 } else {
-                    emit(lower&&upper?`${prefix} from ${lower} to ${upper} of `:`${prefix} of `);
+                    emit(lower && upper ? `${prefix} from ${lower} to ${upper} of ` : `${prefix} of `);
                 }
                 continue;
             }
 
             // ── \sum ──────────────────────────────────────────────
-            if (cmd==='\\sum') {
-                let lower='',upper='';
-                for(let a=0;a<2;a++){i=skipSpace(s,i);if(i>=s.length)break;if(s[i]==='_'){i++;const b=readArg(s,i);lower=convertLatex(b.content);i=b.end;}else if(s[i]==='^'){i++;const b=readArg(s,i);upper=convertLatex(b.content);i=b.end;}else break;}
-                emit(lower&&upper?`sum(${lower} to ${upper}, ${convertLatex(s.substring(i).trim())})`:`sum(${convertLatex(s.substring(i).trim())})`);
-                i=s.length; continue;
+            if (cmd === '\\sum') {
+                let lower = '', upper = '';
+                for (let a = 0; a < 2; a++) { i = skipSpace(s, i); if (i >= s.length) break; if (s[i] === '_') { i++; const b = readArg(s, i); lower = convertLatex(b.content); i = b.end; } else if (s[i] === '^') { i++; const b = readArg(s, i); upper = convertLatex(b.content); i = b.end; } else break; }
+                emit(lower && upper ? `sum(${lower} to ${upper}, ${convertLatex(s.substring(i).trim())})` : `sum(${convertLatex(s.substring(i).trim())})`);
+                i = s.length; continue;
             }
 
             // ── \prod ─────────────────────────────────────────────
-            if (cmd==='\\prod') {
-                let lower='',upper='';
-                for(let a=0;a<2;a++){i=skipSpace(s,i);if(i>=s.length)break;if(s[i]==='_'){i++;const b=readArg(s,i);lower=convertLatex(b.content);i=b.end;}else if(s[i]==='^'){i++;const b=readArg(s,i);upper=convertLatex(b.content);i=b.end;}else break;}
-                emit(lower&&upper?`product(${lower} to ${upper}, ${convertLatex(s.substring(i).trim())})`:`product(${convertLatex(s.substring(i).trim())})`);
-                i=s.length; continue;
+            if (cmd === '\\prod') {
+                let lower = '', upper = '';
+                for (let a = 0; a < 2; a++) { i = skipSpace(s, i); if (i >= s.length) break; if (s[i] === '_') { i++; const b = readArg(s, i); lower = convertLatex(b.content); i = b.end; } else if (s[i] === '^') { i++; const b = readArg(s, i); upper = convertLatex(b.content); i = b.end; } else break; }
+                emit(lower && upper ? `product(${lower} to ${upper}, ${convertLatex(s.substring(i).trim())})` : `product(${convertLatex(s.substring(i).trim())})`);
+                i = s.length; continue;
             }
 
             // ── \lim ──────────────────────────────────────────────
-            if (cmd==='\\lim') {
-                i=skipSpace(s,i);
-                let lp='';
-                if(i<s.length&&s[i]==='_'){i++;const b=readArg(s,i);lp=convertLatex(b.content);i=b.end;}
-                emit(lp?`lim(${lp}, ${convertLatex(s.substring(i).trim())})`:`lim(${convertLatex(s.substring(i).trim())})`);
-                i=s.length; continue;
+            if (cmd === '\\lim') {
+                i = skipSpace(s, i);
+                let lp = '';
+                if (i < s.length && s[i] === '_') { i++; const b = readArg(s, i); lp = convertLatex(b.content); i = b.end; }
+                emit(lp ? `lim(${lp}, ${convertLatex(s.substring(i).trim())})` : `lim(${convertLatex(s.substring(i).trim())})`);
+                i = s.length; continue;
             }
 
             // ── Function names ─────────────────────────────────────
             if (FUNC_MAP[cmd]) {
-                const fname=FUNC_MAP[cmd];
-                i=skipSpace(s,i);
-                let power='';
-                if(i<s.length&&s[i]==='^'){i++;const pA=readArg(s,i);power=convertLatex(pA.content);i=pA.end;i=skipSpace(s,i);}
-                let sub='';
-                if(i<s.length&&s[i]==='_'){i++;const sA=readArg(s,i);sub=convertLatex(sA.content);i=sA.end;i=skipSpace(s,i);}
-                let argStr='';
-                if(i<s.length&&(s[i]==='{'||s[i]==='('||s[i]==='[')){const g=extractGroup(s,i);argStr=convertLatex(g.content);i=g.end;}
-                else if(i<s.length&&/[a-zA-Zα-ωθφ0-9]/.test(s[i])){argStr=s[i];i++;}
-                const fn=sub?`${fname}_${sub}`:fname;
-                emit(power?`${fn}(${argStr})^${power}`:`${fn}(${argStr})`);
+                const fname = FUNC_MAP[cmd];
+                i = skipSpace(s, i);
+                let power = '';
+                if (i < s.length && s[i] === '^') { i++; const pA = readArg(s, i); power = convertLatex(pA.content); i = pA.end; i = skipSpace(s, i); }
+                let sub = '';
+                if (i < s.length && s[i] === '_') { i++; const sA = readArg(s, i); sub = convertLatex(sA.content); i = sA.end; i = skipSpace(s, i); }
+                let argStr = '';
+                if (i < s.length && (s[i] === '{' || s[i] === '(' || s[i] === '[')) { const g = extractGroup(s, i); argStr = convertLatex(g.content); i = g.end; }
+                else if (i < s.length && /[a-zA-Zα-ωθφ0-9]/.test(s[i])) { argStr = s[i]; i++; }
+                const fn = sub ? `${fname}_${sub}` : fname;
+                emit(power ? `${fn}(${argStr})^${power}` : `${fn}(${argStr})`);
                 continue;
             }
 
             // ── \binom ────────────────────────────────────────────
-            if(cmd==='\\binom'||cmd==='\\dbinom'||cmd==='\\tbinom'){
-                const nA=readArg(s,i);i=nA.end;const kA=readArg(s,i);i=kA.end;
+            if (cmd === '\\binom' || cmd === '\\dbinom' || cmd === '\\tbinom') {
+                const nA = readArg(s, i); i = nA.end; const kA = readArg(s, i); i = kA.end;
                 emit(`C(${convertLatex(nA.content)}, ${convertLatex(kA.content)})`);
                 continue;
             }
 
             // ── Decorators ────────────────────────────────────────
-            if(['\\vec','\\hat','\\widehat'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(`${convertLatex(b.content)}^`);continue;}
-            if(['\\bar','\\overline'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(`${convertLatex(b.content)}̄`);continue;}
-            if(['\\tilde','\\widetilde'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(`${convertLatex(b.content)}~`);continue;}
-            if(['\\underline','\\underbrace','\\overbrace'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
-            if(['\\overset','\\underset'].includes(cmd)){const _t=readArg(s,i);i=_t.end;const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
-            if(['\\mathbf','\\mathit','\\mathsf','\\mathtt','\\mathbb','\\mathcal','\\mathscr','\\mathfrak'].includes(cmd)){const b=readArg(s,i);i=b.end;emit(convertLatex(b.content));continue;}
-            if(['\\displaystyle','\\textstyle','\\scriptstyle','\\scriptscriptstyle',
-                '\\normalsize','\\small','\\large','\\Large','\\LARGE','\\huge','\\Huge','\\tiny',
-                '\\left','\\right','\\nonumber','\\label','\\tag','\\not'].includes(cmd)) continue;
+            if (['\\vec', '\\hat', '\\widehat'].includes(cmd)) { const b = readArg(s, i); i = b.end; emit(`${convertLatex(b.content)}^`); continue; }
+            if (['\\bar', '\\overline'].includes(cmd)) { const b = readArg(s, i); i = b.end; emit(`${convertLatex(b.content)}̄`); continue; }
+            if (['\\tilde', '\\widetilde'].includes(cmd)) { const b = readArg(s, i); i = b.end; emit(`${convertLatex(b.content)}~`); continue; }
+            if (['\\underline', '\\underbrace', '\\overbrace'].includes(cmd)) { const b = readArg(s, i); i = b.end; emit(convertLatex(b.content)); continue; }
+            if (['\\overset', '\\underset'].includes(cmd)) { const _t = readArg(s, i); i = _t.end; const b = readArg(s, i); i = b.end; emit(convertLatex(b.content)); continue; }
+            if (['\\mathbf', '\\mathit', '\\mathsf', '\\mathtt', '\\mathbb', '\\mathcal', '\\mathscr', '\\mathfrak'].includes(cmd)) { const b = readArg(s, i); i = b.end; emit(convertLatex(b.content)); continue; }
+            if (['\\displaystyle', '\\textstyle', '\\scriptstyle', '\\scriptscriptstyle',
+                '\\normalsize', '\\small', '\\large', '\\Large', '\\LARGE', '\\huge', '\\Huge', '\\tiny',
+                '\\left', '\\right', '\\nonumber', '\\label', '\\tag', '\\not'].includes(cmd)) continue;
 
-            emit(cmd.replace(/^\\/,''));
+            emit(cmd.replace(/^\\/, ''));
             continue;
         }
 
         // ── ^{exponent} ───────────────────────────────────────────
-        if (ch==='^') {
+        if (ch === '^') {
             i++;
-            const arg=readArg(s,i); i=arg.end;
-            const exp=convertLatex(arg.content);
+            const arg = readArg(s, i); i = arg.end;
+            const exp = convertLatex(arg.content);
             result += hasBareOperator(exp) ? `^(${exp})` : `^${exp}`;
             continue;
         }
 
         // ── _{subscript} ──────────────────────────────────────────
-        if (ch==='_') {
+        if (ch === '_') {
             i++;
-            const arg=readArg(s,i); i=arg.end;
+            const arg = readArg(s, i); i = arg.end;
             result += `_${convertLatex(arg.content)}`;
             continue;
         }
 
         // ── Plain text: greedy match known function names first ───
         {
-            let matched=false;
+            let matched = false;
             for (const fn of KNOWN_FUNCS) {
                 if (s.startsWith(fn, i)) {
-                    const after=i+fn.length;
-                    const nextCh=after<s.length ? s[after] : '';
+                    const after = i + fn.length;
+                    const nextCh = after < s.length ? s[after] : '';
                     if (/[a-zA-Z]/.test(nextCh)) continue;
-                    i=after; i=skipSpace(s,i);
-                    let power='';
-                    if(i<s.length&&s[i]==='^'){i++;const pA=readArg(s,i);power=convertLatex(pA.content);i=pA.end;i=skipSpace(s,i);}
-                    let argStr='';
-                    if(i<s.length&&(s[i]==='('||s[i]==='{'||s[i]==='[')){const g=extractGroup(s,i);argStr=convertLatex(g.content);i=g.end;}
-                    else if(i<s.length&&/[a-zA-Zα-ωθφ0-9]/.test(s[i])){argStr=s[i];i++;}
-                    emit(power?`${fn}(${argStr})^${power}`:`${fn}(${argStr})`);
-                    matched=true; break;
+                    i = after; i = skipSpace(s, i);
+                    let power = '';
+                    if (i < s.length && s[i] === '^') { i++; const pA = readArg(s, i); power = convertLatex(pA.content); i = pA.end; i = skipSpace(s, i); }
+                    let argStr = '';
+                    if (i < s.length && (s[i] === '(' || s[i] === '{' || s[i] === '[')) { const g = extractGroup(s, i); argStr = convertLatex(g.content); i = g.end; }
+                    else if (i < s.length && /[a-zA-Zα-ωθφ0-9]/.test(s[i])) { argStr = s[i]; i++; }
+                    emit(power ? `${fn}(${argStr})^${power}` : `${fn}(${argStr})`);
+                    matched = true; break;
                 }
             }
             if (matched) continue;
@@ -581,9 +585,9 @@ function convertLatex(latex: string): string {
     }
 
     return result
-        .replace(/\s{2,}/g,' ')
-        .replace(/\(\s+/g,'(').replace(/\s+\)/g,')')
-        .replace(/\[\s+/g,'[').replace(/\s+\]/g,']')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/\(\s+/g, '(').replace(/\s+\)/g, ')')
+        .replace(/\[\s+/g, '[').replace(/\s+\]/g, ']')
         .trim();
 }
 
@@ -591,20 +595,20 @@ function convertLatex(latex: string): string {
 // SPECIAL-FORM DETECTORS
 // ─────────────────────────────────────────────────────────────
 function handleDerivativeNotation(latex: string): string | null {
-    const p=preNormalise(latex).trim();
-    const re=/^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d\s*(\\?[a-zA-Z]+)(\^\{?([0-9]+)\}?)?\s*\}\s*([\s\S]+)$/;
-    const m=p.match(re); if(!m) return null;
-    const order=m[2]?parseInt(m[2]):1;
-    const variable=m[3].replace(/^\\/,'');
-    const content=convertLatex(m[6]||'');
-    return order===1?`d/d${variable} [${content}]`:`d^${order}/d${variable}^${order} [${content}]`;
+    const p = preNormalise(latex).trim();
+    const re = /^\\frac\s*\{\s*d(\^\{?([0-9]+)\}?)?\s*\}\s*\{\s*d\s*(\\?[a-zA-Z]+)(\^\{?([0-9]+)\}?)?\s*\}\s*([\s\S]+)$/;
+    const m = p.match(re); if (!m) return null;
+    const order = m[2] ? parseInt(m[2]) : 1;
+    const variable = m[3].replace(/^\\/, '');
+    const content = convertLatex(m[6] || '');
+    return order === 1 ? `d/d${variable} [${content}]` : `d^${order}/d${variable}^${order} [${content}]`;
 }
 
 function handlePartialDerivative(latex: string): string | null {
-    const p=preNormalise(latex).trim();
-    const re=/^\\frac\s*\{\s*\\partial\s*([^}]*)\}\s*\{\s*\\partial\s*([^}]*)\}/;
-    const m=p.match(re); if(!m) return null;
-    return `∂${convertLatex(m[1].trim())||'f'}/∂${convertLatex(m[2].trim())}`;
+    const p = preNormalise(latex).trim();
+    const re = /^\\frac\s*\{\s*\\partial\s*([^}]*)\}\s*\{\s*\\partial\s*([^}]*)\}/;
+    const m = p.match(re); if (!m) return null;
+    return `∂${convertLatex(m[1].trim()) || 'f'}/∂${convertLatex(m[2].trim())}`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -612,15 +616,15 @@ function handlePartialDerivative(latex: string): string | null {
 // ─────────────────────────────────────────────────────────────
 function postClean(s: string): string {
     return s
-        .replace(/([a-zA-Z0-9])right\b/g,'$1').replace(/([a-zA-Z0-9])left\b/g,'$1')
-        .replace(/\bright\b/g,'').replace(/\bleft\b/g,'')
-        .replace(/\/\s*\)/g,')').replace(/\/\s*\]/g,']')
-        .replace(/\*{2,}/g,'*')
+        .replace(/([a-zA-Z0-9])right\b/g, '$1').replace(/([a-zA-Z0-9])left\b/g, '$1')
+        .replace(/\bright\b/g, '').replace(/\bleft\b/g, '')
+        .replace(/\/\s*\)/g, ')').replace(/\/\s*\]/g, ']')
+        .replace(/\*{2,}/g, '*')
         // MathLive artifact: -1*func or +1*func → -func / +func
-        .replace(/([-+*/(\[,])\s*1\s*\*(?=[a-zA-Z(])/g,'$1')
-        .replace(/^1\*(?=[a-zA-Z(])/,'')
-        .replace(/\$\$/g,'').replace(/\$/g,'')
-        .replace(/\s{2,}/g,' ')
+        .replace(/([-+*/(\[,])\s*1\s*\*(?=[a-zA-Z(])/g, '$1')
+        .replace(/^1\*(?=[a-zA-Z(])/, '')
+        .replace(/\$\$/g, '').replace(/\$/g, '')
+        .replace(/\s{2,}/g, ' ')
         .trim();
 }
 
@@ -633,10 +637,10 @@ function postClean(s: string): string {
  */
 export function latexToHuman(latex: string): string {
     if (!latex || typeof latex !== 'string' || !latex.trim()) return '';
-    const trimmed=latex.trim();
-    const deriv=handleDerivativeNotation(trimmed);
+    const trimmed = latex.trim();
+    const deriv = handleDerivativeNotation(trimmed);
     if (deriv) return postClean(deriv);
-    const partial=handlePartialDerivative(trimmed);
+    const partial = handlePartialDerivative(trimmed);
     if (partial) return postClean(partial);
     return postClean(convertLatex(trimmed));
 }
@@ -647,7 +651,7 @@ export function latexToHuman(latex: string): string {
 export function extractCoreFunctionForAnalysis(latex: string): string {
     if (!latex || typeof latex !== 'string' || !latex.trim()) return '';
     let s = latex.trim();
-    
+
     // 1. Strip assignments (e.g. y = ..., f(x) = ...)
     const eqMatch = s.match(/^[a-zA-Z_0-9]+(?:\([^)]+\))?\s*=\s*([\s\S]+)$/);
     if (eqMatch) {
@@ -674,17 +678,17 @@ export function extractCoreFunctionForAnalysis(latex: string): string {
     if (/^\\(i+nt|oint)/.test(s)) {
         let i = 0;
         while (i < s.length && /[a-zA-Z\\]/.test(s[i])) i++;
-        for(let a=0;a<2;a++){
-            i=skipSpace(s,i); 
-            if(i>=s.length) break;
-            if(s[i]==='_'||s[i]==='^'){
+        for (let a = 0; a < 2; a++) {
+            i = skipSpace(s, i);
+            if (i >= s.length) break;
+            if (s[i] === '_' || s[i] === '^') {
                 i++;
-                if(s[i]==='{') {
-                    const g=extractGroup(s,i); 
-                    i=g.end;
-                } else if(s[i]==='\\') {
-                    const t=readToken(s,i);
-                    i=t.end;
+                if (s[i] === '{') {
+                    const g = extractGroup(s, i);
+                    i = g.end;
+                } else if (s[i] === '\\') {
+                    const t = readToken(s, i);
+                    i = t.end;
                 } else {
                     i++;
                 }
@@ -713,7 +717,7 @@ export function extractCoreFunctionForAnalysis(latex: string): string {
  *   logHumanInput(id, rawLatex);
  */
 export function logHumanInput(id: string, rawLatex: string): void {
-    const human=latexToHuman(rawLatex);
+    const human = latexToHuman(rawLatex);
     console.log(`[HUMAN INPUT] id=${id} → ${human}`);
     console.log(`[RAW  LATEX ] id=${id} → ${rawLatex}`);
 }

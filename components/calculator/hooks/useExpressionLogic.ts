@@ -65,11 +65,36 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // 3. Minimal Cleaning
         // We only normalize things that Desmos strictly hates.
         let clean = rawLatex
+            // Strip $$ or $ math delimiters that AI sometimes wraps expressions in
+            .replace(/^\$\$?\s*/g, "").replace(/\s*\$\$?$/g, "")
+            // CRITICAL: Convert LaTeX curly braces to Desmos-compatible left/right braces FIRST
+            // MathLive converts { } to \lbrace \rbrace for visual braces (piecewise/domain)
+            // Desmos needs \left\{ and \right\} for visual braces to render properly
+            // This must be the FIRST replacement to catch raw input
+            .replace(/\\+left\s*\\+lbrace/g, '\\left\\{')
+            .replace(/\\+right\s*\\+rbrace/g, '\\right\\}')
+            .replace(/\\+left\s*\\+\{/g, '\\left\\{')
+            .replace(/\\+right\s*\\+\}/g, '\\right\\}')
+            .replace(/\\+lbrace/g, '\\left\\{')
+            .replace(/\\+rbrace/g, '\\right\\}')
+            // NOTE: Do not globally replace \{ because it might conflict if it's already \left\{
+            .replace(/(?<!\\left)\\+\{/g, '\\left\\{')
+            .replace(/(?<!\\right)\\+\}/g, '\\right\\}')
             .replace(/\\bigm/g, "") // Fix for \bigm| issue
             .replace(/\\!/g, "")
             .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")
             .replace(/\\limits/g, "")
             .replace(/\\differentialD/g, "d")
+            // Normalize big delimiter variants (\bigl, \bigr, \Bigl, \Bigr, \Biggl, \Biggr)
+            // Desmos ONLY supports () for grouping — [ ] and { } do NOT work as grouping delimiters!
+            // So ALL bracket types (round, square, curly) must become plain ( )
+            // EXCEPT: We must NOT convert \{ and \} here because they may be domain restrictions
+            // The domain restriction handler will deal with them later
+            .replace(/\\[Bb]igg?[lr]\s*\(/g, "(")
+            .replace(/\\[Bb]igg?[lr]\s*\)/g, ")")
+            .replace(/\\[Bb]igg?[lr]\s*\[/g, "(")
+            .replace(/\\[Bb]igg?[lr]\s*\]/g, ")")
+            .replace(/\\[Bb]igg?[lr]\s*\|/g, "|")
             // Handle various dx patterns from different input methods
             .replace(/\\mathrm\{dx\}/g, "dx")  // \mathrm{dx} -> dx (sidebar insertion)
             .replace(/\\mathrm\{d\}([a-zA-Z])/g, "d$1") // \mathrm{d}x -> dx
@@ -150,10 +175,78 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // We normalize \left( and \right) to plain parentheses
         // This ensures expressions like f(x)+g(x) work correctly
         // Built-in functions like \sin(x) work fine with plain parentheses too
-        // NOTE: Only convert round parentheses, preserve \left[, \left|, \left\{ etc
+        // Convert all \left/\right bracket variants that Desmos can't use for grouping.
+        // Desmos ONLY supports () — so \left[ \right] and \left\{ \right\} must also become ( )
+        // We do NOT convert \left| here — those are absolute values, handled below.
         clean = clean
             .replace(/\\left\(/g, '(')
-            .replace(/\\right\)/g, ')');
+            .replace(/\\right\)/g, ')')
+            .replace(/\\left\[/g, '(')
+            .replace(/\\right\]/g, ')');
+
+        // ==========================================
+        // UNIVERSAL FIX: ANY FUNCTION FOLLOWED BY \left DELIMITER
+        // ==========================================
+        // Desmos cannot parse \func\left|...\right|, \func\left[...\right]
+        // directly — it needs \func(\left|...\right|) with explicit outer parens.
+        // This applies to ANY function: \ln, \sin, \cos, \sqrt, \sec, \exp, f, g, h, etc.
+        //
+        // NOTE: We DO NOT handle \left\{ ... \right\} here because that would break
+        // domain restrictions and piecewise functions. Domain restrictions use {...}
+        // at the end of expressions, and piecewise functions use {...} with colons.
+        // These need to be preserved as-is for Desmos.
+        //
+        // Pattern matched: \word\s*\left DELIM ... \right DELIM
+        // → \word(\left DELIM ... \right DELIM)
+        const wrapFuncDelimiter = (s: string): string => {
+            // Pairs: [openToken, closeToken, openLen, closeLen]
+            // NOTE: We only handle | pipes here, NOT curly braces
+            // Curly braces are reserved for domain restrictions and piecewise
+            const pairs: [string, string, number, number][] = [
+                ['\\left|',  '\\right|',  6, 7],
+            ];
+
+            let result = s;
+
+            for (const [openTok, closeTok, openLen, closeLen] of pairs) {
+                // Match: any \word (or single letter) optionally followed by spaces, then openTok
+                // The \word can be: \ln, \sin, \cos, \sec, \sqrt, \operatorname{...}, etc.
+                // We also match a plain letter (user-defined function like f, g, h)
+                const pattern = new RegExp(
+                    '(\\\\[a-zA-Z]+(?:\\{[^}]*\\})?|(?<![a-zA-Z])[a-zA-Z])\\s*' +
+                    openTok.replace(/[\\|]/g, '\\$&'),
+                    'g'
+                );
+
+                let match: RegExpExecArray | null;
+                while ((match = pattern.exec(result)) !== null) {
+                    const matchStart = match.index;
+                    const delimStart = matchStart + match[0].length - openLen;
+
+                    // Find the matching close token, tracking nested open tokens
+                    let depth = 1;
+                    let i = delimStart + openLen;
+                    while (i < result.length && depth > 0) {
+                        if (result.substring(i).startsWith(openTok))  { depth++; i += openLen; }
+                        else if (result.substring(i).startsWith(closeTok)) { depth--; if (depth === 0) break; i += closeLen; }
+                        else { i++; }
+                    }
+
+                    if (depth === 0) {
+                        const closeEnd = i + closeLen;
+                        const innerBlock = result.substring(delimStart, closeEnd);
+                        const funcPart   = result.substring(matchStart, delimStart);
+                        const before     = result.substring(0, matchStart);
+                        const after      = result.substring(closeEnd);
+                        result = before + funcPart + '(' + innerBlock + ')' + after;
+                        // Resume search after the newly inserted '(' to avoid infinite loops
+                        pattern.lastIndex = before.length + funcPart.length + 1;
+                    }
+                }
+            }
+            return result;
+        };
+        clean = wrapFuncDelimiter(clean);
 
         // ==========================================
         // HANDLE MALFORMED \mathrm{} BLOCKS
@@ -185,18 +278,39 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         clean = clean.replace(/\\rvert\s*/g, "\\right|");
         clean = clean.replace(/\\vert\s*/g, "|");
 
-        // Evaluate ambiguous pipes |x| or nested pipes |x-|x|| heuristically using depth and context.
+        // Evaluate ambiguous pipes |x| or nested pipes |x-|x|| heuristically.
+        // Also tracks parenDepth so that a ) closing a paren that was open when | started
+        // will auto-insert \right| first. Fixes: \ln(|\cos(x)) → \ln(\left|\cos(x)\right|)
         const convertSimplePipes = (str: string): string => {
             let result = str;
             result = result.replace(/\\left\|/g, "LEFT_PIPE_TOKEN");
             result = result.replace(/\\right\|/g, "RIGHT_PIPE_TOKEN");
-            
+
             let finalStr = "";
-            let depth = 0;
-            
+            let pipeDepth = 0;
+            let parenDepth = 0;
+            // Stack: records parenDepth at which each | was opened
+            const pipeOpenedAt: number[] = [];
+
             for (let i = 0; i < result.length; i++) {
                 const char = result[i];
-                if (char === '|') {
+
+                if (char === '(') {
+                    parenDepth++;
+                    finalStr += char;
+                } else if (char === ')') {
+                    // Before reducing parenDepth, close any pipes that opened at a DEEPER level
+                    // (i.e., inside the parentheses being closed)
+                    // DON'T close pipes opened at the SAME level - those need explicit | closing
+                    while (pipeOpenedAt.length > 0 &&
+                           pipeOpenedAt[pipeOpenedAt.length - 1] > parenDepth) {
+                        finalStr += "\\right|";
+                        pipeOpenedAt.pop();
+                        pipeDepth = Math.max(0, pipeDepth - 1);
+                    }
+                    parenDepth = Math.max(0, parenDepth - 1);
+                    finalStr += char;
+                } else if (char === '|') {
                     let prev = '';
                     for (let k = i - 1; k >= 0; k--) {
                         if (result[k] !== ' ') { prev = result[k]; break; }
@@ -205,38 +319,41 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                     for (let k = i + 1; k < result.length; k++) {
                         if (result[k] !== ' ') { next = result[k]; break; }
                     }
-                    
+
                     let isOpen = false;
-                    if (depth === 0) {
+                    if (pipeDepth === 0) {
                         isOpen = true;
                     } else {
-                        if (/[-+*/=({\[<>,_^]/.test(prev)) {
+                        if (/[-+*/=({<>,_^]/.test(prev)) {
                             isOpen = true;
                         } else if (/[0-9a-zA-Z)\]}]/.test(prev)) {
                             isOpen = false;
                         } else {
-                            if (/[0-9a-zA-Z(\[]/.test(next)) {
-                                isOpen = true; 
-                            } else {
-                                isOpen = false; 
-                            }
+                            isOpen = /[0-9a-zA-Z(]/.test(next);
                         }
                     }
-                    
+
                     if (isOpen) {
                         finalStr += "\\left|";
-                        depth++;
+                        pipeOpenedAt.push(parenDepth);
+                        pipeDepth++;
                     } else {
                         finalStr += "\\right|";
-                        depth = Math.max(0, depth - 1);
+                        if (pipeOpenedAt.length > 0) pipeOpenedAt.pop();
+                        pipeDepth = Math.max(0, pipeDepth - 1);
                     }
                 } else {
                     finalStr += char;
                 }
             }
-            
+
             finalStr = finalStr.replace(/LEFT_PIPE_TOKEN/g, "\\left|");
             finalStr = finalStr.replace(/RIGHT_PIPE_TOKEN/g, "\\right|");
+            // Auto-close any remaining unclosed pipes at end of string
+            while (pipeDepth > 0) {
+                finalStr += "\\right|";
+                pipeDepth--;
+            }
             return finalStr;
         };
         clean = convertSimplePipes(clean);
@@ -274,6 +391,67 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             const inner = match.substring(startIdx + 1, match.length - 1);
             return `\\${funcName} ${inner}`;
         });
+
+        // ==========================================
+        // DOMAIN/RANGE RESTRICTIONS - MUST PRESERVE CURLY BRACES
+        // ==========================================
+        // Domain restrictions like sin(x){-π < x < π} need to be preserved as-is
+        // Check if the expression ends with a domain restriction pattern and preserve it
+        // Pattern: expression followed by {condition} at the end
+        
+        // The curly braces were already converted at the start (lines 73-76)
+        // Now check if this is a domain restriction and normalize the content inside
+        
+        // Now check if this is a domain restriction and handle it properly
+        // Domain restriction patterns: function/domain or variable/domain at end
+        // Examples: sin(x)\left\{-π < x < π\right\}, x^2\left\{0 < y < 4\right\}
+        const hasDomainRestriction = /(\\.+|\w+)\\left\\{.*\\right\\}$/.test(clean);
+        
+        if (hasDomainRestriction) {
+            // Check if the content inside the braces is a condition (has comparison operators)
+            // Use a non-greedy match or match from the last \left\{ to ensure we don't grab too much
+            const domainMatch = clean.match(/\\left\\{((?:(?!\\left\\{).)*)\\right\\}$/);
+            if (domainMatch) {
+                let innerContent = domainMatch[1];
+                
+                // Normalize common LaTeX to what Desmos understands
+                // This must happen BEFORE checking for comparison operators
+                let normalizedContent = innerContent
+                    .replace(/\\le/g, '<=')
+                    .replace(/\\ge/g, '>=')
+                    .replace(/\\leq/g, '<=')
+                    .replace(/\\geq/g, '>=')
+                    .replace(/\\lt/g, '<')
+                    .replace(/\\gt/g, '>')
+                    .replace(/\\neq/g, '!=')
+                    .replace(/\\ne/g, '!=')
+                    .replace(/≠/g, '!=')
+                    .replace(/≤/g, '<=')
+                    .replace(/≥/g, '>=')
+                    .replace(/π/g, '\\pi')
+                    .replace(/θ/g, '\\theta');
+                
+                // Check if it looks like a domain condition (has <, >, ≤, ≥, =, !=)
+                // Check the NORMALIZED content, not the original
+                if (/[<>=!]/.test(normalizedContent)) {
+                    // This IS a domain restriction - rebuild with normalized content
+                    // Replace the exact match with normalized content and \left\{ \right\}
+                    clean = clean.replace(domainMatch[0], '\\left\\{' + normalizedContent + '\\right\\}');
+                }
+            }
+        }
+
+        // ==========================================
+        // PIECEWISE FUNCTIONS - HANDLE CURLY BRACES PROPERLY
+        // ==========================================
+        // Piecewise functions: {condition: value, default} - need to preserve braces
+        // Check if this is a piecewise expression (has : inside braces)
+        // Now it uses \left\{ and \right\}
+        const isPiecewise = /\\left\\{.*:.*,.*\\right\\}/.test(clean) || /\\left\\{.*<.*:.*,.*/.test(clean) || /\\left\\{.*>.*:.*,.*/.test(clean);
+        
+        if (isPiecewise) {
+            // Piecewise is already handled properly because it has \left\{ and \right\}
+        }
 
         setDebugInfo(clean);
 
