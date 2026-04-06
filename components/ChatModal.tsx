@@ -70,6 +70,8 @@ type Message = {
 };
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
+import { MathExpression } from "./calculator/types";
+
 // --- Framer Motion Variants ---
 const springTrans: Transition = { type: 'spring', stiffness: 340, damping: 28 };
 
@@ -353,12 +355,31 @@ const ScrollToBottomButton = React.memo(({ scrollRef, onClick }: { scrollRef: Re
   );
 });
 
-export function ChatModal() {
+export function ChatModal({ 
+  actions, 
+  expressions 
+}: { 
+  actions?: { 
+    addExpr: (initialLatex?: string, color?: string) => void;
+    updateSliderBounds: (id: string, min: string, max: string, step?: string) => void;
+    removeExpr: (id: string) => void;
+  };
+  expressions?: MathExpression[];
+}) {
   const [isOpen, setIsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
 
   const [dimensions, setDimensions] = useState({ width: 380, height: 550 });
   const isResizingRef = useRef<'width' | 'height' | 'both' | null>(null);
+
+  // Maintain refs for actions and expressions to avoid stale closures in websocket
+  const actionsRef = useRef(actions);
+  const expressionsRef = useRef(expressions);
+
+  useEffect(() => {
+    actionsRef.current = actions;
+    expressionsRef.current = expressions;
+  }, [actions, expressions]);
 
   const startResize = useCallback((e: React.MouseEvent, type: 'width' | 'height' | 'both') => {
     e.preventDefault();
@@ -465,7 +486,7 @@ export function ChatModal() {
     };
 
     socket.onmessage = (event) => {
-      let data: { type: string; text?: string };
+      let data: Record<string, any>;
       try {
         data = JSON.parse(event.data);
       } catch {
@@ -474,6 +495,33 @@ export function ChatModal() {
 
       if (data.type === 'ping') {
         try { socket.send('__pong__'); } catch { }
+        return;
+      }
+
+      if (data.type === 'action') {
+        console.log("🛠️ Received agent action:", data);
+        const currentActions = actionsRef.current;
+        const currentExpressions = expressionsRef.current;
+        
+        if (data.action === 'addExpr' && currentActions?.addExpr) {
+          currentActions.addExpr(data.latex, data.color);
+        } else if (data.action === 'removeExpr' && currentActions?.removeExpr && currentExpressions) {
+          const targetExpr = currentExpressions.find((e: any) => {
+            if (typeof e.latex !== 'string') return false;
+            return e.id === data.latex || e.latex.includes(data.latex);
+          });
+          if (targetExpr) {
+            currentActions.removeExpr(targetExpr.id);
+          }
+        } else if (data.action === 'updateSliderBounds' && currentActions?.updateSliderBounds && currentExpressions) {
+          const targetExpr = currentExpressions.find((e: any) => {
+            const match = typeof e.latex === 'string' ? e.latex.match(/^([a-zA-Z](?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/) : null;
+            return match && match[1] === (data as any).variable;
+          });
+          if (targetExpr) {
+            currentActions.updateSliderBounds(targetExpr.id, (data as any).min, (data as any).max, (data as any).step);
+          }
+        }
         return;
       }
 
@@ -526,6 +574,8 @@ export function ChatModal() {
         });
       }
     };
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Connect only when modal is open to save resources, or just connect once.
@@ -594,7 +644,10 @@ export function ChatModal() {
     ]);
     setInput('');
     setIsBusy(true);
-    ws.current.send(text);
+    ws.current.send(JSON.stringify({
+      text: text,
+      expressions: expressions?.map(e => ({ id: e.id, latex: e.latex, color: e.color, visible: e.visible })) || []
+    }));
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
   }, [input, isBusy]);
 

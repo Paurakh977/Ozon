@@ -83,7 +83,7 @@ export function Calculator() {
             `}</style>
 
             {/* Chat Modal Layer */}
-            <ChatModal />
+            <ChatModal actions={{ addExpr, updateSliderBounds, removeExpr }} expressions={expressions} />
         </div>
     );
 }
