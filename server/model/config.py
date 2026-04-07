@@ -14,6 +14,6 @@ model = LiteLlm(
     stream=True,
     extra_body={
         # "diffusing": True ,
-        "reasoning_effort": "instant",
+        "reasoning_effort": "high",
     },
 )
