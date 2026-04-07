@@ -1,5 +1,5 @@
 
-import React from "react";
+import React, { useState, useRef } from "react";
 import { Calculator as CalcIcon, PanelLeftClose } from "lucide-react";
 import { MathExpression } from "../components/calculator/types";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../utils/symbolic-math";
@@ -212,6 +212,54 @@ const getDefinitionsMap = (excludeLatex: string, expressions: MathExpression[]) 
 
 export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpen, setLegendOpen, resolvedTheme }) => {
     const isDark = resolvedTheme === 'dark';
+
+    const [position, setPosition] = useState({ x: 0, y: 0 });
+    const dragData = useRef({
+        startX: 0, 
+        startY: 0, 
+        isDragging: false, 
+        hasMoved: false // We use this to tell the difference between a "click" and a "drag"
+    });
+
+
+    const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+        // Prevent default text selection behavior
+        e.preventDefault(); 
+        // Capture the pointer so if you drag outside the box, it keeps tracking
+        e.currentTarget.setPointerCapture(e.pointerId);
+        
+        dragData.current.isDragging = true;
+        dragData.current.hasMoved = false;
+        
+        // Calculate the difference between the mouse click and the current transformed position
+        dragData.current.startX = e.clientX - position.x;
+        dragData.current.startY = e.clientY - position.y;
+    };
+
+    const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+        if (!dragData.current.isDragging) return;
+        
+        dragData.current.hasMoved = true;
+        
+        // Update the position state to move the box
+        setPosition({
+            x: e.clientX - dragData.current.startX,
+            y: e.clientY - dragData.current.startY
+        });
+    };
+
+    const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+        dragData.current.isDragging = false;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+    };
+
+    const handleHeaderClick = () => {
+        // Only toggle the legend if the user didn't drag it
+        if (!dragData.current.hasMoved) {
+            setLegendOpen(!legendOpen);
+        }
+    };
+
 
     const getLegendData = (rawLatex: string) => {
         // Use uniform cleaning
@@ -499,10 +547,14 @@ export const GraphLegend: React.FC<GraphLegendProps> = ({ expressions, legendOpe
     };
 
     return (
-        <div className={`absolute top-4 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] min-w-[220px] max-w-[calc(100vw-2rem)] sm:max-w-[400px] md:max-w-[600px] lg:max-w-[300px] w-auto' : 'w-auto h-auto'}`}>
+        <div className={`absolute top-40 right-4 bg-card/90 backdrop-blur-sm rounded-lg shadow-md border text-xs z-10 select-none transition-all duration-200 overflow-hidden flex flex-col ${legendOpen ? 'max-h-[60vh] min-w-[220px] max-w-[calc(100vw-2rem)] sm:max-w-[400px] md:max-w-[600px] lg:max-w-[300px] w-auto' : 'w-auto h-auto'}`}  style={{ transform: `translate(${position.x}px, ${position.y}px)` }} >
             <div
-                className="flex items-center justify-between p-3 cursor-pointer hover:bg-muted/50 border-b border-border/50"
-                onClick={() => setLegendOpen(!legendOpen)}
+                className="flex items-center justify-between p-3 hover:bg-muted/50 border-b border-border/50 touch-none cursor-grab active:cursor-grabbing"
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerCancel={handlePointerUp}
+                onClick={handleHeaderClick}
             >
                 <div className="flex items-center gap-2">
                     {/* @ts-ignore */}
