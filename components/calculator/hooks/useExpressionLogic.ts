@@ -80,6 +80,11 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             // NOTE: Do not globally replace \{ because it might conflict if it's already \left\{
             .replace(/(?<!\\left)\\+\{/g, '\\left\\{')
             .replace(/(?<!\\right)\\+\}/g, '\\right\\}')
+            // Clean up MathLive's extra grouping braces around piecewise
+            // Case 1: {\left\{ ... }\right\}
+            .replace(/\{\s*\\left\\\{([^]*?)\}\s*\\right\\\}/g, '\\left\\{$1\\right\\}')
+            // Case 2: {\left\{ ... \right\}}
+            .replace(/\{\s*\\left\\\{([^]*?)\\right\\\}\s*\}/g, '\\left\\{$1\\right\\}')
             .replace(/\\bigm/g, "") // Fix for \bigm| issue
             .replace(/\\!/g, "")
             .replace(/\\,/g, " ").replace(/\\:/g, " ").replace(/\\;/g, " ")

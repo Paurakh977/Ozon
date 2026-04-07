@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useTheme } from "next-themes";
 import { useGraphEngine } from "./calculator/hooks/useGraphEngine";
 import { useExpressionLogic } from "./calculator/hooks/useExpressionLogic";
@@ -86,4 +86,4 @@ export function Calculator() {
             <ChatModal actions={{ addExpr, updateSliderBounds, removeExpr }} expressions={expressions} />
         </div>
     );
-}
+}
