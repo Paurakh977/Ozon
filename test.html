@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deepgram Real-Time Voice-to-Text</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; max-width: 800px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { color: #111; }
+    #transcript { margin-top: 1.5rem; padding: 1.5rem; border: 1px solid #ddd; min-height: 250px; border-radius: 8px; background: #f9f9f9; white-space: pre-wrap; font-size: 1.25rem; line-height: 1.5; box-shadow: inset 0 2px 4px rgba(0,0,0,0.05); }
+    .interim { color: #888; font-style: italic; }
+    .final { color: #000; }
+    .controls { margin-bottom: 1rem; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    input[type="password"] { width: 300px; padding: 0.6rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding: 0.6rem 1.2rem; cursor: pointer; border: none; border-radius: 4px; font-weight: bold; transition: opacity 0.2s; }
+    button:hover { opacity: 0.9; }
+    #start { background: #4CAF50; color: white; }
+    #stop { background: #f44336; color: white; }
+    button:disabled { background: #ccc; cursor: not-allowed; opacity: 0.6; }
+    #status { font-weight: bold; color: #555; margin-left: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Super Fast Voice-to-Text 🎙️</h1>
+  <p>Streaming real-time using Deepgram's <strong>Nova-3</strong> model.</p>
+  
+  <div class="controls">
+    <input type="password" id="apiKey" placeholder="Paste Deepgram API Key here" />
+    <button id="start">Start Recording</button>
+    <button id="stop" disabled>Stop</button>
+    <span id="status">Disconnected</span>
+  </div>
+
+  <div id="transcript"></div>
+
+  <script>
+    let mediaRecorder;
+    let socket;
+    let finalTranscript = ''; // Stores the permanent sentences
+
+    const startBtn = document.getElementById('start');
+    const stopBtn = document.getElementById('stop');
+    const apiKeyInput = document.getElementById('apiKey');
+    const statusText = document.getElementById('status');
+    const transcriptDiv = document.getElementById('transcript');
+
+    startBtn.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        alert('Please enter your Deepgram API key.');
+        return;
+      }
+
+      try {
+        // 1. Ask user for Microphone permission
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        
+        // 2. Build the Deepgram WebSocket URL with your exact parameters
+        const params = new URLSearchParams({
+          model: 'nova-3',
+          language: 'en',
+          smart_format: 'true',
+          interim_results: 'true',
+          endpointing: '10',
+          numerals: 'true'
+        });
+        const wsUrl = `wss://api.deepgram.com/v1/listen?${params.toString()}`;
+
+        // 3. Connect to Deepgram
+        // Browsers don't allow custom headers, so we pass the API key using the 'token' sub-protocol!
+        socket = new WebSocket(wsUrl, ['token', apiKey]);
+
+        socket.onopen = () => {
+          statusText.innerText = 'Listening...';
+          statusText.style.color = '#4CAF50';
+          startBtn.disabled = true;
+          stopBtn.disabled = false;
+          apiKeyInput.disabled = true;
+
+          // 4. Capture Audio in tiny chunks for ultra-low latency
+          mediaRecorder = new MediaRecorder(stream);
+          
+          mediaRecorder.addEventListener('dataavailable', (event) => {
+            if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+              socket.send(event.data);
+            }
+          });
+
+          // Slice audio every 250 milliseconds and push to Deepgram socket
+          mediaRecorder.start(250);
+        };
+
+        socket.onmessage = (message) => {
+          const data = JSON.parse(message.data);
+          
+          // Drill down into the JSON to find the text
+          const transcript = data.channel?.alternatives[0]?.transcript;
+          if (transcript) {
+            if (data.is_final) {
+              // It's a completed sentence! Append it to our final text block.
+              finalTranscript += transcript + ' ';
+              transcriptDiv.innerHTML = `<span class="final">${finalTranscript}</span>`;
+            } else {
+              // It's an interim (in-progress) prediction. Show it in grey italics.
+              transcriptDiv.innerHTML = `<span class="final">${finalTranscript}</span> <span class="interim">${transcript}</span>`;
+            }
+          }
+        };
+
+        socket.onclose = () => {
+          statusText.innerText = 'Disconnected';
+          statusText.style.color = '#555';
+          resetUI();
+        };
+
+        socket.onerror = (error) => {
+          console.error('WebSocket Error:', error);
+          statusText.innerText = 'Error! Check browser console.';
+          statusText.style.color = '#f44336';
+          resetUI();
+        };
+
+      } catch (err) {
+        console.error('Microphone Error:', err);
+        alert('Could not access microphone. Ensure you have granted permission and are running on localhost or HTTPS.');
+      }
+    });
+
+    stopBtn.addEventListener('click', () => {
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        // Sending an empty byte array tells Deepgram we are done speaking
+        socket.send(new Uint8Array(0));
+      }
+      resetUI();
+    });
+
+    function resetUI() {
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      apiKeyInput.disabled = false;
+    }
+  </script>
+</body>
+</html>
