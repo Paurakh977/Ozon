@@ -309,6 +309,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             mathFieldRefs.current.set(id, el);
             const mf = el as any;
             
+            // Enable smart fence explicitly via property
+            mf.smartFence = true;
+            
             if (mf.inlineShortcuts !== undefined) {
                 mf.inlineShortcuts = {
                     ...(mf.inlineShortcuts || {}),
@@ -326,8 +329,30 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     e.preventDefault();
                     e.stopImmediatePropagation();
                     addExpr();
+                } else if (e.key === ')') {
+                    const latex = typeof mf.getValue === 'function' 
+                        ? mf.getValue('latex-without-placeholders') 
+                        : (mf.value || '');
+
+                    // Count unmatched \left( — if there's one open, let MathLive close it naturally
+                    const leftCount  = (latex.match(/\\left\s*\(/g) || []).length;
+                    const rightCount = (latex.match(/\\right\s*\)/g) || []).length;
+
+                    if (leftCount > rightCount) {
+                        // There's an unclosed \left( — let smartFence handle it
+                        return;
+                    }
+
+                    // Brackets are balanced: wrap content from cursor back to group start
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    // Select backwards to the start of the current group (e.g. inside \sqrt{}, numerator, etc.)
+                    mf.executeCommand('extendToGroupStart');
+                    // Wrap whatever is selected in \left( \right)
+                    mf.executeCommand(['insert', '\\left(#@\\right)']);
                 }
             };
+            
             (el as any).__enterKeyListener = newListener;
             el.addEventListener('keydown', newListener);
             
@@ -700,7 +725,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     {/* @ts-ignore */}
                                     <math-field
                                         ref={(el: HTMLElement | null) => handleMathFieldRef(expr.id, el)}
-                                        smart-fence="off"
+                                        smart-fence="true"
                                         virtual-keyboard-mode="onfocus"
                                         onInput={(e: any) => handleInput(expr.id, e.target.value)}
                                         onFocus={(e: any) => {
