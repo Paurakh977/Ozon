@@ -1,811 +1,976 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useRef,
+  useCallback,
+  DragEvent,
+  ClipboardEvent,
+  ChangeEvent,
+} from "react";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-type ParseResult = {
-  text: string;
+// ─── Types (mirror API response) ─────────────────────────────────────────────
+interface ParsedPage {
+  index: number;
+  markdown: string;
+  hasEmbeddedImages: boolean;
+}
+
+interface ParseSuccess {
+  status: "success";
+  engine: string;
   fileName: string;
+  mimeType: string;
+  fileSize: number;
   pageCount: number;
-  pages: { pageNum: number; itemCount: number }[];
-};
+  truncated: boolean;
+  truncatedAt?: number;
+  pages: ParsedPage[];
+  fullMarkdown: string;
+  model?: string;
+  usageInfo?: Record<string, unknown>;
+}
 
-type InputMode = "file" | "url";
+interface ParseError {
+  status: "error";
+  fileName: string;
+  error: string;
+}
 
-// ─── Accepted file types (all formats LiteParse supports) ─────────────────────
-const ACCEPTED_TYPES = [
-  // PDF
+type ParseResult = ParseSuccess | ParseError;
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const MAX_IMAGES = 5;
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_PDF_PAGES = 5;
+
+const IMAGE_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/avif",
+  "image/gif",
+]);
+
+const ACCEPT_TYPES = [
   ".pdf",
-  // Word
-  ".doc", ".docx", ".docm", ".odt", ".rtf",
-  // PowerPoint
-  ".ppt", ".pptx", ".pptm", ".odp",
-  // Spreadsheets
-  ".xls", ".xlsx", ".xlsm", ".ods", ".csv", ".tsv",
-  // Images (including screenshots)
-  ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".webp", ".svg",
+  ".docx",
+  ".doc",
+  ".xlsx",
+  ".xls",
+  ".pptx",
+  ".ppt",
+  ".txt",
+  ".csv",
+  ".html",
+  ".odt",
+  ".ods",
+  ".odp",
+  ".rtf",
 ].join(",");
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
-function getFileIcon(name: string) {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (ext === "pdf") return "📄";
-  if (["doc", "docx", "odt", "rtf", "docm"].includes(ext)) return "📝";
-  if (["ppt", "pptx", "pptm", "odp"].includes(ext)) return "📊";
-  if (["xls", "xlsx", "xlsm", "ods", "csv", "tsv"].includes(ext)) return "📈";
-  if (["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp", "svg"].includes(ext)) return "🖼️";
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function engineLabel(engine: string) {
+  if (engine === "mistral-ocr") return { label: "Mistral OCR", color: "#f97316" };
+  if (engine === "liteparse") return { label: "LiteParse", color: "#6366f1" };
+  if (engine.includes("fallback")) return { label: "Fallback → LiteParse", color: "#eab308" };
+  return { label: engine, color: "#94a3b8" };
+}
+
+function fileIcon(mimeType: string) {
+  if (mimeType.startsWith("image/")) return "🖼️";
+  if (mimeType === "application/pdf") return "📄";
+  if (mimeType.includes("word") || mimeType.includes("odt") || mimeType.includes("rtf")) return "📝";
+  if (mimeType.includes("sheet") || mimeType.includes("excel") || mimeType.includes("ods") || mimeType.includes("csv")) return "📊";
+  if (mimeType.includes("presentation") || mimeType.includes("powerpoint") || mimeType.includes("odp")) return "📊";
   return "📎";
 }
 
-function formatBytes(bytes: number) {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`;
+/** Render markdown string to HTML (minimal, no external lib needed for this use-case) */
+function markdownToHtml(md: string): string {
+  // Preserve base64 images — don't escape them
+  return md
+    // Headings
+    .replace(/^### (.+)$/gm, "<h3>$1</h3>")
+    .replace(/^## (.+)$/gm, "<h2>$1</h2>")
+    .replace(/^# (.+)$/gm, "<h1>$1</h1>")
+    // Bold / italic
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*(.+?)\*/g, "<em>$1</em>")
+    // Inline code
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // Images (including base64 data URIs)
+    .replace(/!\[([^\]]*)\]\((data:[^)]+|https?:[^)]+|[^)]+)\)/g, '<img alt="$1" src="$2" style="max-width:100%;border-radius:6px;margin:8px 0;" />')
+    // Links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
+    // Horizontal rule
+    .replace(/^---$/gm, "<hr />")
+    // Unordered lists
+    .replace(/^\s*[-*]\s+(.+)$/gm, "<li>$1</li>")
+    // Ordered lists
+    .replace(/^\s*\d+\.\s+(.+)$/gm, "<li>$1</li>")
+    // Line breaks → paragraphs (wrap consecutive non-tag lines)
+    .replace(/\n{2,}/g, "</p><p>")
+    .replace(/\n/g, "<br />");
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function ImageThumb({
+  file,
+  onRemove,
+}: {
+  file: File;
+  onRemove: () => void;
+}) {
+  const url = URL.createObjectURL(file);
+  return (
+    <div style={styles.thumb}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={url}
+        alt={file.name}
+        onLoad={() => URL.revokeObjectURL(url)}
+        style={styles.thumbImg}
+      />
+      <button onClick={onRemove} style={styles.thumbRemove} title="Remove">
+        ×
+      </button>
+      <span style={styles.thumbName}>{formatBytes(file.size)}</span>
+    </div>
+  );
+}
+
+function AttachedFile({ file, onRemove }: { file: File; onRemove: () => void }) {
+  const mime = file.type || "";
+  return (
+    <div style={styles.attachedFile}>
+      <span style={styles.attachedIcon}>{fileIcon(mime)}</span>
+      <span style={styles.attachedName}>{file.name}</span>
+      <span style={styles.attachedSize}>{formatBytes(file.size)}</span>
+      <button onClick={onRemove} style={styles.attachedRemove} title="Remove">
+        ×
+      </button>
+    </div>
+  );
+}
+
+function ResultCard({ result }: { result: ParseResult }) {
+  const [activeTab, setActiveTab] = useState<"preview" | "raw">("preview");
+  const [expandedPages, setExpandedPages] = useState<Set<number>>(new Set([0]));
+
+  if (result.status === "error") {
+    return (
+      <div style={{ ...styles.card, borderLeft: "3px solid #ef4444" }}>
+        <div style={styles.cardHeader}>
+          <span>📎 {result.fileName}</span>
+          <span style={styles.errorBadge}>Error</span>
+        </div>
+        <p style={styles.errorText}>{result.error}</p>
+      </div>
+    );
+  }
+
+  const eng = engineLabel(result.engine);
+
+  const togglePage = (i: number) => {
+    setExpandedPages((prev) => {
+      const next = new Set(prev);
+      next.has(i) ? next.delete(i) : next.add(i);
+      return next;
+    });
+  };
+
+  return (
+    <div style={styles.card}>
+      {/* Card header */}
+      <div style={styles.cardHeader}>
+        <span style={styles.cardTitle}>
+          {fileIcon(result.mimeType)} {result.fileName}
+        </span>
+        <div style={styles.badgeRow}>
+          <span style={{ ...styles.badge, background: eng.color }}>{eng.label}</span>
+          <span style={styles.badge2}>{result.pageCount} page{result.pageCount !== 1 ? "s" : ""}</span>
+          <span style={styles.badge2}>{formatBytes(result.fileSize)}</span>
+          {result.model && <span style={styles.badge2}>{result.model}</span>}
+        </div>
+      </div>
+
+      {result.truncated && (
+        <div style={styles.warningBanner}>
+          ⚠️ Document has more than {MAX_PDF_PAGES} pages. Only the first {result.truncatedAt} pages were processed.
+        </div>
+      )}
+
+      {/* Usage info */}
+      {result.usageInfo && (
+        <div style={styles.usageInfo}>
+          {Object.entries(result.usageInfo).map(([k, v]) => (
+            <span key={k} style={styles.usageChip}>
+              {k}: {String(v)}
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Tabs */}
+      <div style={styles.tabRow}>
+        <button
+          style={activeTab === "preview" ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab("preview")}
+        >
+          Preview
+        </button>
+        <button
+          style={activeTab === "raw" ? styles.tabActive : styles.tab}
+          onClick={() => setActiveTab("raw")}
+        >
+          Raw Markdown
+        </button>
+      </div>
+
+      {/* Content */}
+      {activeTab === "preview" ? (
+        <div style={styles.pageList}>
+          {result.pages.map((page) => (
+            <div key={page.index} style={styles.pageItem}>
+              <button
+                style={styles.pageToggle}
+                onClick={() => togglePage(page.index)}
+              >
+                <span>Page {page.index + 1}</span>
+                <div style={styles.pageToggleRight}>
+                  {page.hasEmbeddedImages && <span style={styles.imgChip}>🖼 Images</span>}
+                  <span style={styles.chevron}>
+                    {expandedPages.has(page.index) ? "▲" : "▼"}
+                  </span>
+                </div>
+              </button>
+              {expandedPages.has(page.index) && (
+                <div
+                  style={styles.pageContent}
+                  dangerouslySetInnerHTML={{
+                    __html: `<p>${markdownToHtml(page.markdown)}</p>`,
+                  }}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div style={styles.rawContainer}>
+          <button
+            style={styles.copyBtn}
+            onClick={() => navigator.clipboard.writeText(result.fullMarkdown)}
+          >
+            Copy
+          </button>
+          <pre style={styles.rawText}>{result.fullMarkdown}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main page ────────────────────────────────────────────────────────────────
 export default function ParsePage() {
-  const [mode, setMode] = useState<InputMode>("file");
-  const [file, setFile] = useState<File | null>(null);
-  const [url, setUrl] = useState("");
-  const [dragging, setDragging] = useState(false);
+  const [message, setMessage] = useState("");
+  const [pastedImages, setPastedImages] = useState<File[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [results, setResults] = useState<ParseResult[] | null>(null);
   const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ParseResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // ── Drag & Drop ─────────────────────────────────────────────────────────────
-  const onDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(true);
-  }, []);
-  const onDragLeave = useCallback(() => setDragging(false), []);
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) { setFile(dropped); setResult(null); setError(null); }
-  }, []);
+  // ── Paste handler (images only) ────────────────────────────────────────────
+  const handlePaste = useCallback(
+    (e: ClipboardEvent<HTMLTextAreaElement>) => {
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imageItems = items.filter((item) => item.kind === "file" && IMAGE_TYPES.has(item.type));
+      if (imageItems.length === 0) return;
 
-  // ── Submit ───────────────────────────────────────────────────────────────────
-  const handleSubmit = async () => {
-    setError(null);
-    setResult(null);
-    setLoading(true);
+      e.preventDefault();
+      const newImages: File[] = [];
 
-    try {
-      let res: Response;
-
-      if (mode === "file") {
-        if (!file) { setError("Please select a file."); setLoading(false); return; }
-        const form = new FormData();
-        form.append("file", file);
-        res = await fetch("/api/parse", { method: "POST", body: form });
-      } else {
-        if (!url.trim()) { setError("Please enter a URL."); setLoading(false); return; }
-        res = await fetch("/api/parse", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ url: url.trim() }),
-        });
+      for (const item of imageItems) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        if (pastedImages.length + newImages.length >= MAX_IMAGES) {
+          setError(`Maximum ${MAX_IMAGES} images allowed.`);
+          break;
+        }
+        if (file.size > MAX_FILE_SIZE) {
+          setError(`"${file.name}" exceeds 5 MB limit.`);
+          continue;
+        }
+        newImages.push(file);
       }
 
+      if (newImages.length) {
+        setPastedImages((prev) => [...prev, ...newImages]);
+        setError(null);
+      }
+    },
+    [pastedImages]
+  );
+
+  // ── File attach handler ────────────────────────────────────────────────────
+  const handleFileAttach = useCallback(
+    (files: FileList | null) => {
+      if (!files) return;
+      const added: File[] = [];
+      for (const file of Array.from(files)) {
+        if (file.size > MAX_FILE_SIZE) {
+          setError(`"${file.name}" exceeds 5 MB limit.`);
+          continue;
+        }
+        // Images via attach also count toward image cap
+        if (IMAGE_TYPES.has(file.type)) {
+          if (pastedImages.length + added.filter((f) => IMAGE_TYPES.has(f.type)).length >= MAX_IMAGES) {
+            setError(`Maximum ${MAX_IMAGES} images allowed.`);
+            continue;
+          }
+        }
+        added.push(file);
+      }
+      if (added.length) {
+        setAttachedFiles((prev) => [...prev, ...added]);
+        setError(null);
+      }
+    },
+    [pastedImages]
+  );
+
+  // ── Drag-and-drop ──────────────────────────────────────────────────────────
+  const handleDrop = useCallback(
+    (e: DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setDragOver(false);
+      handleFileAttach(e.dataTransfer.files);
+    },
+    [handleFileAttach]
+  );
+
+  // ── Submit ─────────────────────────────────────────────────────────────────
+  const handleSubmit = useCallback(async () => {
+    const allFiles = [...pastedImages, ...attachedFiles];
+    if (allFiles.length === 0) {
+      setError("Please attach at least one file or paste an image.");
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setResults(null);
+
+    try {
+      const formData = new FormData();
+      for (const file of allFiles) {
+        formData.append("files", file);
+      }
+
+      const res = await fetch("/api/parse", { method: "POST", body: formData });
       const data = await res.json();
-      if (!res.ok) { setError(data.error ?? "Parsing failed."); }
-      else { setResult(data); }
-    } catch {
-      setError("Network error. Is the dev server running?");
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Server error");
+      }
+
+      setResults(data.results as ParseResult[]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
-  };
+  }, [pastedImages, attachedFiles]);
 
-  // ── Copy to clipboard ────────────────────────────────────────────────────────
-  const handleCopy = async () => {
-    if (!result?.text) return;
-    await navigator.clipboard.writeText(result.text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const totalFiles = pastedImages.length + attachedFiles.length;
+  const canSubmit = totalFiles > 0 && !loading;
 
-  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:ital,wght@0,300;0,400;0,500;1,300&display=swap');
-
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-        :root {
-          --bg: #0a0a0f;
-          --surface: #111118;
-          --surface2: #1a1a24;
-          --border: #2a2a3a;
-          --border-bright: #3d3d58;
-          --accent: #6c63ff;
-          --accent2: #ff6584;
-          --accent3: #43e8c8;
-          --text: #e8e8f0;
-          --muted: #6b6b85;
-          --success: #43e8a8;
-          --error: #ff4d6d;
-          --font-display: 'Syne', sans-serif;
-          --font-mono: 'DM Mono', monospace;
-          --radius: 12px;
-          --glow: 0 0 40px rgba(108,99,255,.15);
-        }
-
-        body {
-          background: var(--bg);
-          color: var(--text);
-          font-family: var(--font-display);
-          min-height: 100vh;
-        }
-
-        .page {
-          min-height: 100vh;
-          display: grid;
-          grid-template-rows: auto 1fr;
-          position: relative;
-          overflow: hidden;
-        }
-
-        /* bg noise */
-        .page::before {
-          content: '';
-          position: fixed;
-          inset: 0;
-          background-image:
-            radial-gradient(ellipse 60% 40% at 20% 10%, rgba(108,99,255,.08) 0%, transparent 60%),
-            radial-gradient(ellipse 40% 60% at 80% 90%, rgba(67,232,200,.05) 0%, transparent 60%);
-          pointer-events: none;
-          z-index: 0;
-        }
-
-        .header {
-          position: relative;
-          z-index: 1;
-          padding: 32px 40px 0;
-          display: flex;
-          align-items: center;
-          gap: 14px;
-        }
-
-        .logo-mark {
-          width: 36px;
-          height: 36px;
-          background: linear-gradient(135deg, var(--accent), var(--accent3));
-          border-radius: 10px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          font-size: 18px;
-          flex-shrink: 0;
-        }
-
-        .header h1 {
-          font-size: 1.5rem;
-          font-weight: 800;
-          letter-spacing: -0.02em;
-          background: linear-gradient(90deg, var(--text) 0%, var(--muted) 100%);
-          -webkit-background-clip: text;
-          -webkit-text-fill-color: transparent;
-        }
-
-        .header .badge {
-          margin-left: auto;
-          font-family: var(--font-mono);
-          font-size: 0.65rem;
-          padding: 4px 10px;
-          border: 1px solid var(--border);
-          border-radius: 100px;
-          color: var(--muted);
-          letter-spacing: .05em;
-        }
-
-        .main {
-          position: relative;
-          z-index: 1;
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          gap: 24px;
-          padding: 28px 40px 40px;
-          max-width: 1400px;
-          margin: 0 auto;
-          width: 100%;
-        }
-
-        @media (max-width: 900px) {
-          .main { grid-template-columns: 1fr; padding: 20px; }
-          .header { padding: 20px 20px 0; }
-        }
-
-        .panel {
-          background: var(--surface);
-          border: 1px solid var(--border);
-          border-radius: var(--radius);
-          overflow: hidden;
-        }
-
-        .panel-header {
-          padding: 18px 22px;
-          border-bottom: 1px solid var(--border);
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          font-size: .75rem;
-          font-weight: 600;
-          letter-spacing: .1em;
-          text-transform: uppercase;
-          color: var(--muted);
-        }
-
-        .panel-header .dot {
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: var(--accent);
-          flex-shrink: 0;
-        }
-
-        .panel-body { padding: 22px; }
-
-        /* Mode tabs */
-        .mode-tabs {
-          display: grid;
-          grid-template-columns: 1fr 1fr;
-          background: var(--surface2);
-          border-radius: 8px;
-          padding: 4px;
-          gap: 4px;
-          margin-bottom: 22px;
-        }
-
-        .mode-tab {
-          padding: 9px;
-          border: none;
-          border-radius: 6px;
-          font-family: var(--font-display);
-          font-size: .8rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all .2s;
-          background: transparent;
-          color: var(--muted);
-          letter-spacing: .03em;
-        }
-
-        .mode-tab.active {
-          background: var(--accent);
-          color: #fff;
-          box-shadow: 0 2px 12px rgba(108,99,255,.4);
-        }
-
-        /* Drop zone */
-        .dropzone {
-          border: 1.5px dashed var(--border-bright);
-          border-radius: var(--radius);
-          padding: 40px 24px;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 10px;
-          cursor: pointer;
-          transition: all .2s;
-          text-align: center;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .dropzone:hover, .dropzone.drag {
-          border-color: var(--accent);
-          background: rgba(108,99,255,.05);
-        }
-
-        .dropzone.drag {
-          transform: scale(1.01);
-          box-shadow: var(--glow);
-        }
-
-        .dropzone-icon {
-          font-size: 2.5rem;
-          line-height: 1;
-        }
-
-        .dropzone-title {
-          font-size: .95rem;
-          font-weight: 700;
-          color: var(--text);
-        }
-
-        .dropzone-sub {
-          font-size: .72rem;
-          color: var(--muted);
-          line-height: 1.5;
-        }
-
-        .dropzone-formats {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 6px;
-          justify-content: center;
-          margin-top: 4px;
-        }
-
-        .fmt-badge {
-          font-family: var(--font-mono);
-          font-size: .6rem;
-          padding: 3px 7px;
-          border: 1px solid var(--border);
-          border-radius: 4px;
-          color: var(--muted);
-          letter-spacing: .05em;
-        }
-
-        .selected-file {
-          margin-top: 14px;
-          background: var(--surface2);
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          padding: 12px 16px;
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-
-        .selected-file-icon { font-size: 1.5rem; flex-shrink: 0; }
-
-        .selected-file-info { flex: 1; min-width: 0; }
-
-        .selected-file-name {
-          font-size: .85rem;
-          font-weight: 600;
-          white-space: nowrap;
-          overflow: hidden;
-          text-overflow: ellipsis;
-        }
-
-        .selected-file-size {
-          font-family: var(--font-mono);
-          font-size: .68rem;
-          color: var(--muted);
-          margin-top: 2px;
-        }
-
-        .file-remove {
-          background: none;
-          border: none;
-          cursor: pointer;
-          color: var(--muted);
-          font-size: 1rem;
-          padding: 4px;
-          flex-shrink: 0;
-          transition: color .15s;
-        }
-        .file-remove:hover { color: var(--error); }
-
-        /* URL input */
-        .url-input-wrap {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .url-label {
-          font-size: .72rem;
-          font-weight: 600;
-          letter-spacing: .08em;
-          text-transform: uppercase;
-          color: var(--muted);
-        }
-
-        .url-input {
-          width: 100%;
-          background: var(--surface2);
-          border: 1.5px solid var(--border);
-          border-radius: 8px;
-          padding: 12px 14px;
-          font-family: var(--font-mono);
-          font-size: .8rem;
-          color: var(--text);
-          outline: none;
-          transition: border-color .2s;
-        }
-
-        .url-input::placeholder { color: var(--muted); }
-        .url-input:focus { border-color: var(--accent); }
-
-        .url-hint {
-          font-family: var(--font-mono);
-          font-size: .65rem;
-          color: var(--muted);
-          line-height: 1.5;
-        }
-
-        /* Parse button */
-        .parse-btn {
-          width: 100%;
-          margin-top: 20px;
-          padding: 14px;
-          background: linear-gradient(135deg, var(--accent) 0%, #8b83ff 100%);
-          border: none;
-          border-radius: 8px;
-          font-family: var(--font-display);
-          font-size: .9rem;
-          font-weight: 700;
-          color: #fff;
-          cursor: pointer;
-          letter-spacing: .03em;
-          transition: all .2s;
-          position: relative;
-          overflow: hidden;
-        }
-
-        .parse-btn:hover:not(:disabled) {
-          transform: translateY(-1px);
-          box-shadow: 0 4px 24px rgba(108,99,255,.45);
-        }
-
-        .parse-btn:disabled {
-          opacity: .5;
-          cursor: not-allowed;
-        }
-
-        .parse-btn.loading {
-          background: var(--surface2);
-          border: 1.5px solid var(--border);
-          color: var(--muted);
-        }
-
-        /* Spinner */
-        @keyframes spin { to { transform: rotate(360deg); } }
-        .spinner {
-          display: inline-block;
-          width: 14px;
-          height: 14px;
-          border: 2px solid rgba(255,255,255,.3);
-          border-top-color: #fff;
-          border-radius: 50%;
-          animation: spin .7s linear infinite;
-          margin-right: 8px;
-          vertical-align: middle;
-        }
-
-        /* Error */
-        .error-box {
-          margin-top: 14px;
-          background: rgba(255,77,109,.08);
-          border: 1px solid rgba(255,77,109,.25);
-          border-radius: 8px;
-          padding: 12px 14px;
-          font-family: var(--font-mono);
-          font-size: .75rem;
-          color: var(--error);
-          line-height: 1.5;
-        }
-
-        /* Result panel */
-        .result-meta {
-          display: flex;
-          gap: 12px;
-          flex-wrap: wrap;
-          margin-bottom: 16px;
-        }
-
-        .meta-chip {
-          background: var(--surface2);
-          border: 1px solid var(--border);
-          border-radius: 6px;
-          padding: 6px 12px;
-          font-family: var(--font-mono);
-          font-size: .68rem;
-          color: var(--muted);
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .meta-chip strong { color: var(--text); font-weight: 500; }
-
-        .result-actions {
-          display: flex;
-          gap: 8px;
-          margin-bottom: 14px;
-        }
-
-        .action-btn {
-          padding: 7px 14px;
-          border-radius: 6px;
-          font-family: var(--font-display);
-          font-size: .72rem;
-          font-weight: 600;
-          cursor: pointer;
-          transition: all .15s;
-          border: 1.5px solid var(--border);
-          background: transparent;
-          color: var(--muted);
-          letter-spacing: .04em;
-        }
-
-        .action-btn:hover { border-color: var(--accent); color: var(--accent); }
-        .action-btn.primary {
-          background: var(--accent);
-          border-color: var(--accent);
-          color: #fff;
-        }
-        .action-btn.primary:hover { background: #7c74ff; }
-        .action-btn.success { background: var(--success); border-color: var(--success); color: #000; }
-
-        /* Text output */
-        .text-output {
-          background: var(--surface2);
-          border: 1px solid var(--border);
-          border-radius: 8px;
-          padding: 18px;
-          font-family: var(--font-mono);
-          font-size: .78rem;
-          line-height: 1.8;
-          color: #c8c8d8;
-          white-space: pre-wrap;
-          word-break: break-word;
-          overflow-y: auto;
-          max-height: 65vh;
-          min-height: 200px;
-        }
-
-        /* Empty state */
-        .empty-state {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 12px;
-          height: 300px;
-          color: var(--muted);
-        }
-
-        .empty-icon {
-          font-size: 3rem;
-          opacity: .3;
-        }
-
-        .empty-text {
-          font-size: .8rem;
-          text-align: center;
-          line-height: 1.6;
-        }
-
-        /* Page list */
-        .pages-summary {
-          display: flex;
-          gap: 6px;
-          flex-wrap: wrap;
-          margin-bottom: 12px;
-        }
-
-        .page-chip {
-          background: rgba(108,99,255,.1);
-          border: 1px solid rgba(108,99,255,.25);
-          border-radius: 4px;
-          padding: 3px 8px;
-          font-family: var(--font-mono);
-          font-size: .6rem;
-          color: var(--accent);
-        }
-
-        /* Hidden file input */
-        input[type="file"] { display: none; }
-      `}</style>
-
-      <div className="page">
+    <div style={styles.page}>
+      <div style={styles.container}>
         {/* Header */}
-        <header className="header">
-          <div className="logo-mark">⚡</div>
-          <h1>LiteParse</h1>
-          <span className="badge">@llamaindex/liteparse</span>
-        </header>
+        <div style={styles.header}>
+          <h1 style={styles.title}>Document Parser</h1>
+          <p style={styles.subtitle}>
+            PDF & images via <strong>Mistral OCR</strong> · Docs, spreadsheets & slides via{" "}
+            <strong>LiteParse</strong>
+          </p>
+        </div>
 
-        {/* Main grid */}
-        <main className="main">
+        {/* Drop zone + input area */}
+        <div
+          style={{
+            ...styles.inputArea,
+            ...(dragOver ? styles.inputAreaDragOver : {}),
+          }}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleDrop}
+        >
+          {/* Pasted images row */}
+          {pastedImages.length > 0 && (
+            <div style={styles.thumbRow}>
+              {pastedImages.map((f, i) => (
+                <ImageThumb
+                  key={i}
+                  file={f}
+                  onRemove={() => setPastedImages((prev) => prev.filter((_, idx) => idx !== i))}
+                />
+              ))}
+            </div>
+          )}
 
-          {/* ── Left panel: Input ── */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="dot" />
-              Input Source
+          {/* Attached non-image files */}
+          {attachedFiles.length > 0 && (
+            <div style={styles.attachedList}>
+              {attachedFiles.map((f, i) => (
+                <AttachedFile
+                  key={i}
+                  file={f}
+                  onRemove={() => setAttachedFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Text area */}
+          <textarea
+            style={styles.textarea}
+            placeholder={
+              totalFiles === 0
+                ? "Paste images here with Ctrl+V, or attach files with the + button below…"
+                : "Add a note (optional) — press Process to extract text from your files"
+            }
+            value={message}
+            onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setMessage(e.target.value)}
+            onPaste={handlePaste}
+            rows={3}
+          />
+
+          {/* Bottom toolbar */}
+          <div style={styles.toolbar}>
+            <div style={styles.toolbarLeft}>
+              {/* Attach button */}
+              <button
+                style={styles.attachBtn}
+                onClick={() => fileInputRef.current?.click()}
+                title="Attach file (PDF, DOCX, XLSX, PPTX, etc.)"
+              >
+                +
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept={ACCEPT_TYPES}
+                style={{ display: "none" }}
+                onChange={(e: ChangeEvent<HTMLInputElement>) => handleFileAttach(e.target.files)}
+                onClick={(e) => { (e.target as HTMLInputElement).value = ""; }}
+              />
+
+              {/* Limits hint */}
+              <span style={styles.hint}>
+                Max 5 MB · PDF ≤ {MAX_PDF_PAGES} pages · Max {MAX_IMAGES} images
+              </span>
             </div>
 
-            <div className="panel-body">
-              {/* Mode toggle */}
-              <div className="mode-tabs">
-                <button
-                  className={`mode-tab ${mode === "file" ? "active" : ""}`}
-                  onClick={() => { setMode("file"); setError(null); setResult(null); }}
-                >
-                  📁 Upload File
-                </button>
-                <button
-                  className={`mode-tab ${mode === "url" ? "active" : ""}`}
-                  onClick={() => { setMode("url"); setError(null); setResult(null); }}
-                >
-                  🌐 Remote URL
-                </button>
-              </div>
-
-              {/* File upload */}
-              {mode === "file" && (
-                <>
-                  <div
-                    className={`dropzone ${dragging ? "drag" : ""}`}
-                    onDragOver={onDragOver}
-                    onDragLeave={onDragLeave}
-                    onDrop={onDrop}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <div className="dropzone-icon">📂</div>
-                    <div className="dropzone-title">Drop your file here</div>
-                    <div className="dropzone-sub">
-                      or click to browse — any format supported
-                    </div>
-                    <div className="dropzone-formats">
-                      {["PDF", "DOCX", "PPTX", "XLSX", "PNG", "JPG", "SVG", "ODP", "CSV", "RTF"].map((f) => (
-                        <span key={f} className="fmt-badge">{f}</span>
-                      ))}
-                    </div>
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept={ACCEPTED_TYPES}
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) { setFile(f); setResult(null); setError(null); }
-                      }}
-                    />
-                  </div>
-
-                  {file && (
-                    <div className="selected-file">
-                      <span className="selected-file-icon">{getFileIcon(file.name)}</span>
-                      <div className="selected-file-info">
-                        <div className="selected-file-name">{file.name}</div>
-                        <div className="selected-file-size">{formatBytes(file.size)}</div>
-                      </div>
-                      <button
-                        className="file-remove"
-                        onClick={() => { setFile(null); setResult(null); setError(null); }}
-                        title="Remove file"
-                      >✕</button>
-                    </div>
-                  )}
-                </>
+            {/* Process button */}
+            <button
+              style={{ ...styles.processBtn, opacity: canSubmit ? 1 : 0.45 }}
+              disabled={!canSubmit}
+              onClick={handleSubmit}
+            >
+              {loading ? (
+                <span style={styles.spinner}>⏳ Processing…</span>
+              ) : (
+                `Process ${totalFiles > 0 ? `(${totalFiles} file${totalFiles > 1 ? "s" : ""})` : ""}`
               )}
+            </button>
+          </div>
+        </div>
 
-              {/* URL input */}
-              {mode === "url" && (
-                <div className="url-input-wrap">
-                  <label className="url-label">Document URL</label>
-                  <input
-                    className="url-input"
-                    type="url"
-                    placeholder="https://example.com/document.pdf"
-                    value={url}
-                    onChange={(e) => { setUrl(e.target.value); setResult(null); setError(null); }}
-                  />
-                  <span className="url-hint">
-                    Supports direct links to PDFs, DOCX, PPTX, images, and more.<br />
-                    The server will fetch and parse the remote file in memory.
-                  </span>
-                </div>
-              )}
+        {/* Error banner */}
+        {error && (
+          <div style={styles.errorBanner}>
+            <span>⚠️ {error}</span>
+            <button style={styles.errorClose} onClick={() => setError(null)}>×</button>
+          </div>
+        )}
 
-              {/* Error */}
-              {error && <div className="error-box">⚠ {error}</div>}
-
-              {/* Parse button */}
+        {/* Results */}
+        {results && (
+          <div style={styles.results}>
+            <div style={styles.resultsHeader}>
+              <span style={styles.resultsTitle}>
+                Results · {results.length} file{results.length !== 1 ? "s" : ""}
+              </span>
               <button
-                className={`parse-btn ${loading ? "loading" : ""}`}
-                onClick={handleSubmit}
-                disabled={loading || (mode === "file" ? !file : !url.trim())}
+                style={styles.clearBtn}
+                onClick={() => {
+                  setResults(null);
+                  setPastedImages([]);
+                  setAttachedFiles([]);
+                  setMessage("");
+                }}
               >
-                {loading ? (
-                  <><span className="spinner" />Parsing…</>
-                ) : (
-                  "⚡ Parse Document"
-                )}
+                Clear all
               </button>
             </div>
+            {results.map((r, i) => (
+              <ResultCard key={i} result={r} />
+            ))}
           </div>
-
-          {/* ── Right panel: Output ── */}
-          <div className="panel">
-            <div className="panel-header">
-              <span className="dot" style={{ background: "var(--accent3)" }} />
-              Parsed Output
-              {result && (
-                <span style={{ marginLeft: "auto", fontFamily: "var(--font-mono)", fontSize: ".65rem", color: "var(--success)" }}>
-                  ✓ {result.fileName}
-                </span>
-              )}
-            </div>
-
-            <div className="panel-body">
-              {result ? (
-                <>
-                  {/* Meta chips */}
-                  <div className="result-meta">
-                    <div className="meta-chip">
-                      Pages: <strong>{result.pageCount}</strong>
-                    </div>
-                    <div className="meta-chip">
-                      Chars: <strong>{result.text.length.toLocaleString()}</strong>
-                    </div>
-                    <div className="meta-chip">
-                      Words: <strong>{result.text.split(/\s+/).filter(Boolean).length.toLocaleString()}</strong>
-                    </div>
-                  </div>
-
-                  {/* Page breakdown */}
-                  {result.pages.length > 1 && (
-                    <div className="pages-summary">
-                      {result.pages.map((p) => (
-                        <span key={p.pageNum} className="page-chip" title={`${p.itemCount} text items`}>
-                          p{p.pageNum}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  <div className="result-actions">
-                    <button
-                      className={`action-btn ${copied ? "success" : "primary"}`}
-                      onClick={handleCopy}
-                    >
-                      {copied ? "✓ Copied!" : "Copy Text"}
-                    </button>
-                    <button
-                      className="action-btn"
-                      onClick={() => {
-                        const blob = new Blob([result.text], { type: "text/plain" });
-                        const a = document.createElement("a");
-                        a.href = URL.createObjectURL(blob);
-                        a.download = `${result.fileName.replace(/\.[^.]+$/, "")}-parsed.txt`;
-                        a.click();
-                      }}
-                    >
-                      ↓ Save as .txt
-                    </button>
-                    <button
-                      className="action-btn"
-                      onClick={() => { setResult(null); setFile(null); setUrl(""); setError(null); }}
-                      style={{ marginLeft: "auto" }}
-                    >
-                      Clear
-                    </button>
-                  </div>
-
-                  {/* Text */}
-                  <div className="text-output">
-                    {result.text || "(No text extracted — the document may be empty or image-only without OCR data.)"}
-                  </div>
-                </>
-              ) : (
-                <div className="empty-state">
-                  <div className="empty-icon">📋</div>
-                  <div className="empty-text">
-                    Parsed text will appear here.<br />
-                    Upload a file or paste a URL, then hit Parse.
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-        </main>
+        )}
       </div>
-    </>
+    </div>
   );
 }
+
+// ─── Styles ───────────────────────────────────────────────────────────────────
+const styles: Record<string, React.CSSProperties> = {
+  page: {
+    minHeight: "100vh",
+    background: "#0f0f10",
+    color: "#e2e8f0",
+    fontFamily: "'Inter', system-ui, sans-serif",
+    padding: "24px 16px 80px",
+  },
+  container: {
+    maxWidth: 780,
+    margin: "0 auto",
+  },
+  header: {
+    textAlign: "center",
+    marginBottom: 32,
+  },
+  title: {
+    fontSize: 26,
+    fontWeight: 700,
+    color: "#f8fafc",
+    margin: "0 0 6px",
+    letterSpacing: "-0.5px",
+  },
+  subtitle: {
+    fontSize: 13,
+    color: "#64748b",
+    margin: 0,
+  },
+
+  // Input area
+  inputArea: {
+    background: "#18181b",
+    border: "1.5px solid #27272a",
+    borderRadius: 14,
+    padding: "14px 14px 10px",
+    transition: "border-color 0.15s",
+  },
+  inputAreaDragOver: {
+    borderColor: "#f97316",
+    background: "#1c1917",
+  },
+
+  // Thumbnail row (pasted images)
+  thumbRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: 10,
+  },
+  thumb: {
+    position: "relative",
+    width: 72,
+    height: 72,
+    borderRadius: 8,
+    overflow: "hidden",
+    border: "1px solid #3f3f46",
+    flexShrink: 0,
+  },
+  thumbImg: {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+  },
+  thumbRemove: {
+    position: "absolute",
+    top: 2,
+    right: 2,
+    background: "rgba(0,0,0,0.7)",
+    color: "#fff",
+    border: "none",
+    borderRadius: "50%",
+    width: 18,
+    height: 18,
+    fontSize: 13,
+    lineHeight: "18px",
+    textAlign: "center",
+    cursor: "pointer",
+    padding: 0,
+  },
+  thumbName: {
+    position: "absolute",
+    bottom: 0,
+    left: 0,
+    right: 0,
+    background: "rgba(0,0,0,0.6)",
+    fontSize: 9,
+    color: "#fff",
+    padding: "2px 4px",
+    textAlign: "center",
+  },
+
+  // Attached non-image files
+  attachedList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 6,
+    marginBottom: 10,
+  },
+  attachedFile: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    background: "#27272a",
+    borderRadius: 8,
+    padding: "6px 10px",
+    fontSize: 13,
+  },
+  attachedIcon: { fontSize: 16 },
+  attachedName: {
+    flex: 1,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    color: "#e2e8f0",
+  },
+  attachedSize: { color: "#52525b", fontSize: 12, flexShrink: 0 },
+  attachedRemove: {
+    background: "none",
+    border: "none",
+    color: "#71717a",
+    cursor: "pointer",
+    fontSize: 16,
+    lineHeight: 1,
+    padding: "0 2px",
+    flexShrink: 0,
+  },
+
+  // Textarea
+  textarea: {
+    width: "100%",
+    background: "transparent",
+    border: "none",
+    outline: "none",
+    color: "#e2e8f0",
+    fontSize: 14,
+    lineHeight: 1.6,
+    resize: "none",
+    fontFamily: "inherit",
+    boxSizing: "border-box",
+    padding: "2px 0",
+  },
+
+  // Toolbar
+  toolbar: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 10,
+    gap: 12,
+  },
+  toolbarLeft: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  attachBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: "50%",
+    border: "1.5px solid #3f3f46",
+    background: "#27272a",
+    color: "#a1a1aa",
+    fontSize: 20,
+    lineHeight: "30px",
+    textAlign: "center",
+    cursor: "pointer",
+    padding: 0,
+    flexShrink: 0,
+    transition: "border-color 0.15s, color 0.15s",
+  },
+  hint: {
+    fontSize: 11,
+    color: "#52525b",
+  },
+  processBtn: {
+    background: "#f97316",
+    color: "#fff",
+    border: "none",
+    borderRadius: 8,
+    padding: "8px 18px",
+    fontWeight: 600,
+    fontSize: 13,
+    cursor: "pointer",
+    transition: "opacity 0.15s",
+    whiteSpace: "nowrap",
+    flexShrink: 0,
+  },
+  spinner: { fontStyle: "normal" },
+
+  // Error banner
+  errorBanner: {
+    marginTop: 12,
+    background: "#451a1a",
+    border: "1px solid #7f1d1d",
+    borderRadius: 8,
+    padding: "10px 14px",
+    fontSize: 13,
+    color: "#fca5a5",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  errorClose: {
+    background: "none",
+    border: "none",
+    color: "#fca5a5",
+    cursor: "pointer",
+    fontSize: 18,
+    lineHeight: 1,
+    padding: 0,
+    flexShrink: 0,
+  },
+
+  // Results section
+  results: {
+    marginTop: 28,
+    display: "flex",
+    flexDirection: "column",
+    gap: 16,
+  },
+  resultsHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  resultsTitle: {
+    fontSize: 14,
+    fontWeight: 600,
+    color: "#94a3b8",
+    letterSpacing: "0.02em",
+    textTransform: "uppercase",
+  },
+  clearBtn: {
+    background: "none",
+    border: "1px solid #3f3f46",
+    borderRadius: 6,
+    color: "#71717a",
+    cursor: "pointer",
+    fontSize: 12,
+    padding: "4px 10px",
+  },
+
+  // Result card
+  card: {
+    background: "#18181b",
+    border: "1px solid #27272a",
+    borderRadius: 12,
+    overflow: "hidden",
+  },
+  cardHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: 8,
+    padding: "14px 16px",
+    borderBottom: "1px solid #27272a",
+  },
+  cardTitle: {
+    fontWeight: 600,
+    fontSize: 14,
+    color: "#f1f5f9",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    maxWidth: "60%",
+  },
+  badgeRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    flexWrap: "wrap",
+  },
+  badge: {
+    borderRadius: 20,
+    padding: "2px 9px",
+    fontSize: 11,
+    fontWeight: 600,
+    color: "#fff",
+  },
+  badge2: {
+    borderRadius: 20,
+    padding: "2px 9px",
+    fontSize: 11,
+    background: "#27272a",
+    color: "#94a3b8",
+  },
+  errorBadge: {
+    borderRadius: 20,
+    padding: "2px 9px",
+    fontSize: 11,
+    fontWeight: 600,
+    background: "#ef4444",
+    color: "#fff",
+  },
+  errorText: {
+    padding: "12px 16px",
+    fontSize: 13,
+    color: "#fca5a5",
+    margin: 0,
+  },
+  warningBanner: {
+    background: "#451a00",
+    borderBottom: "1px solid #92400e",
+    padding: "8px 16px",
+    fontSize: 12,
+    color: "#fcd34d",
+  },
+  usageInfo: {
+    display: "flex",
+    gap: 8,
+    flexWrap: "wrap",
+    padding: "8px 16px",
+    borderBottom: "1px solid #27272a",
+  },
+  usageChip: {
+    fontSize: 11,
+    background: "#1e293b",
+    color: "#64748b",
+    borderRadius: 20,
+    padding: "2px 8px",
+  },
+
+  // Tabs
+  tabRow: {
+    display: "flex",
+    borderBottom: "1px solid #27272a",
+    padding: "0 16px",
+  },
+  tab: {
+    background: "none",
+    border: "none",
+    borderBottom: "2px solid transparent",
+    color: "#52525b",
+    cursor: "pointer",
+    fontSize: 13,
+    padding: "10px 14px 9px",
+    fontFamily: "inherit",
+    transition: "color 0.1s",
+  },
+  tabActive: {
+    background: "none",
+    border: "none",
+    borderBottom: "2px solid #f97316",
+    color: "#f97316",
+    cursor: "pointer",
+    fontSize: 13,
+    padding: "10px 14px 9px",
+    fontFamily: "inherit",
+    fontWeight: 600,
+  },
+
+  // Page list
+  pageList: {
+    padding: "12px 16px",
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+  },
+  pageItem: {
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    overflow: "hidden",
+  },
+  pageToggle: {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    background: "#1e1e21",
+    border: "none",
+    color: "#94a3b8",
+    cursor: "pointer",
+    padding: "9px 14px",
+    fontSize: 13,
+    fontFamily: "inherit",
+    textAlign: "left",
+  },
+  pageToggleRight: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  },
+  imgChip: {
+    fontSize: 10,
+    background: "#172554",
+    color: "#60a5fa",
+    borderRadius: 20,
+    padding: "1px 7px",
+  },
+  chevron: {
+    fontSize: 10,
+    color: "#52525b",
+  },
+  pageContent: {
+    padding: "14px 16px",
+    fontSize: 14,
+    lineHeight: 1.7,
+    color: "#cbd5e1",
+    overflowX: "auto",
+  },
+
+  // Raw markdown
+  rawContainer: {
+    position: "relative",
+    margin: "12px 16px",
+  },
+  copyBtn: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    background: "#27272a",
+    border: "1px solid #3f3f46",
+    borderRadius: 6,
+    color: "#94a3b8",
+    cursor: "pointer",
+    fontSize: 12,
+    padding: "4px 10px",
+  },
+  rawText: {
+    background: "#09090b",
+    border: "1px solid #27272a",
+    borderRadius: 8,
+    color: "#94a3b8",
+    fontSize: 12,
+    lineHeight: 1.6,
+    maxHeight: 400,
+    overflow: "auto",
+    padding: "14px 16px",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    margin: 0,
+    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+  },
+};
