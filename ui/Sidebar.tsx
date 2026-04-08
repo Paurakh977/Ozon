@@ -311,6 +311,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             
             // Enable smart fence explicitly via property
             mf.smartFence = true;
+            mf.smartSuperscript = false;
             
             if (mf.inlineShortcuts !== undefined) {
                 mf.inlineShortcuts = {
@@ -726,6 +727,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                     <math-field
                                         ref={(el: HTMLElement | null) => handleMathFieldRef(expr.id, el)}
                                         smart-fence="true"
+                                        smart-superscript="false"
                                         virtual-keyboard-mode="onfocus"
                                         onInput={(e: any) => handleInput(expr.id, e.target.value)}
                                         onFocus={(e: any) => {
