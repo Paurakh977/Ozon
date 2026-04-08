@@ -247,7 +247,9 @@ const ChatInput = React.memo(({
   handleKeyDown,
   isBusy,
   status,
-  textareaRef
+  textareaRef,
+  isRecording,       // NEW
+  toggleRecording    // NEW
 }: {
   input: string;
   setInput: (v: string) => void;
@@ -256,6 +258,8 @@ const ChatInput = React.memo(({
   isBusy: boolean;
   status: ConnectionStatus;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  isRecording: boolean;      // NEW
+  toggleRecording: () => void; // NEW
 }) => {
   return (
     <div className="p-3 bg-zinc-50 dark:bg-zinc-900/80 border-t border-zinc-200/50 dark:border-zinc-800/50">
@@ -263,8 +267,7 @@ const ChatInput = React.memo(({
         'relative flex items-end gap-2 w-full rounded-xl p-1.5 transition-all duration-300',
         'bg-white dark:bg-zinc-800/50',
         'border border-zinc-200/80 dark:border-zinc-700/50',
-        'shadow-sm',
-        'focus-within:border-violet-300 dark:focus-within:border-violet-600/60',
+        'shadow-sm focus-within:border-violet-300 dark:focus-within:border-violet-600/60',
         'focus-within:shadow-[0_4px_16px_rgba(109,40,217,0.08)]',
       )}>
         <textarea
@@ -278,11 +281,36 @@ const ChatInput = React.memo(({
           className={cn(
             'flex-1 min-h-[36px] max-h-[120px] resize-none bg-transparent',
             'py-1.5 pl-3 pr-2 text-[14px] leading-relaxed',
-            'text-zinc-900 dark:text-zinc-100',
-            'placeholder:text-zinc-400 dark:placeholder:text-zinc-500',
+            'text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500',
             'focus:outline-none disabled:opacity-40',
           )}
         />
+
+        {/* 🎙️ NEW VOICE RECORDING BUTTON 🎙️ */}
+        <motion.button
+          onClick={toggleRecording}
+          disabled={status !== 'connected' || isBusy}
+          whileHover={{ scale: 1.05 }}
+          whileTap={{ scale: 0.93 }}
+          className={cn(
+            'flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200',
+            isRecording 
+              ? 'bg-red-500/15 text-red-500 dark:bg-red-500/20 shadow-sm animate-pulse' 
+              : 'bg-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+          )}
+          title={isRecording ? "Stop Dictation" : "Voice Typing"}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+            {isRecording ? (
+              <rect x="7" y="7" width="10" height="10" rx="1.5" />
+            ) : (
+              <>
+                <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-14 0 1 1 0 0 1 2 0 5 5 0 0 0 10 0Z" />
+                <path d="M12 21a1 1 0 0 1-1-1v-2a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1Z" />
+              </>
+            )}
+          </svg>
+        </motion.button>
 
         <motion.button
           onClick={handleSend}
@@ -296,24 +324,19 @@ const ChatInput = React.memo(({
               : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed',
           )}
         >
+          {/* Send Icon existing... */}
           <AnimatePresence mode="wait" initial={false}>
             {isBusy ? (
-              <motion.span key="spin"
-                initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
-                className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
+              <motion.span key="spin" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
             ) : (
-              <motion.svg key="send"
-                initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
-                xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+              <motion.svg key="send" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
                 <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
               </motion.svg>
             )}
           </AnimatePresence>
         </motion.button>
       </div>
-
-      <p className="mt-2 mb-0.5 text-center text-[9px] font-medium tracking-widest uppercase
-        text-zinc-400 dark:text-zinc-500 select-none">
+      <p className="mt-2 mb-0.5 text-center text-[9px] font-medium tracking-widest uppercase text-zinc-400 dark:text-zinc-500 select-none">
         {status === 'connected' ? 'Agent Online' : status === 'connecting' ? 'Connecting…' : 'Agent Offline'}
       </p>
     </div>
@@ -427,6 +450,98 @@ export function ChatModal({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+
+  // --- Voice State ---
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const deepgramSocketRef = useRef<WebSocket | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const finalTranscriptRef = useRef<string>('');
+  
+  // Keep an up-to-date ref of input so toggleRecording doesn't re-create endlessly
+  const currentInputRef = useRef(input);
+  useEffect(() => { currentInputRef.current = input; }, [input]);
+
+  const toggleRecording = useCallback(async () => {
+    // 1. Stop Recording logic
+    if (isRecording) {
+      if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
+      if (deepgramSocketRef.current && deepgramSocketRef.current.readyState === WebSocket.OPEN) {
+        deepgramSocketRef.current.send(new Uint8Array(0));
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+      setIsRecording(false);
+      return;
+    }
+
+    // 2. Start Recording logic
+    try {
+      const res = await fetch('/api/sst');
+      const data = await res.json();
+      if (!data.key) throw new Error("Could not retrieve Deepgram temporary key.");
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      
+      const params = new URLSearchParams({
+        model: 'nova-3',
+        language: 'en',
+        smart_format: 'true',
+        interim_results: 'true',
+        endpointing: '10',
+        numerals: 'true'
+      });
+
+      const socket = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`,['token', data.key]);
+      deepgramSocketRef.current = socket;
+
+      // Preserve any text already typed before we started speaking
+      finalTranscriptRef.current = currentInputRef.current ? currentInputRef.current + ' ' : '';
+
+      socket.onopen = () => {
+        setIsRecording(true);
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+
+        mediaRecorder.addEventListener('dataavailable', (event) => {
+          if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+            socket.send(event.data);
+          }
+        });
+        mediaRecorder.start(250);
+      };
+
+      socket.onmessage = (message) => {
+        const res = JSON.parse(message.data);
+        const transcript = res.channel?.alternatives[0]?.transcript;
+        if (transcript) {
+          if (res.is_final) {
+            finalTranscriptRef.current += transcript + ' ';
+            setInput(finalTranscriptRef.current.trim());
+          } else {
+            setInput((finalTranscriptRef.current + transcript).trim());
+          }
+        }
+      };
+
+      socket.onclose = () => {
+        setIsRecording(false);
+        stream.getTracks().forEach(t => t.stop());
+      };
+      
+      socket.onerror = () => {
+        setIsRecording(false);
+        stream.getTracks().forEach(t => t.stop());
+      };
+
+    } catch (err) {
+      console.error("Microphone or API Error:", err);
+      setIsRecording(false);
+    }
+  }, [isRecording]);
 
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -634,6 +749,11 @@ export function ChatModal({
     }
   }, [input, isOpen]);
 
+  const handleInputChange = useCallback((val: string) => {
+    setInput(val);
+    finalTranscriptRef.current = val;
+  }, []);
+
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
@@ -643,6 +763,7 @@ export function ChatModal({
       { role: 'agent', content: '', isStreaming: true },
     ]);
     setInput('');
+    finalTranscriptRef.current = ''; // Clear voice transcript when sending
     setIsBusy(true);
     ws.current.send(JSON.stringify({
       text: text,
@@ -797,7 +918,7 @@ export function ChatModal({
                         'Prove √2 is irrational'
                       ].map((s) => (
                         <button key={s}
-                          onClick={() => { setInput(s); textareaRef.current?.focus(); }}
+                          onClick={() => { handleInputChange(s); textareaRef.current?.focus(); }}
                           className="px-3 py-2 rounded-xl text-[12px] font-medium
                             bg-white dark:bg-zinc-800/60
                             border border-zinc-200/80 dark:border-zinc-700/60
@@ -826,12 +947,14 @@ export function ChatModal({
             {/* Input */}
             <ChatInput
               input={input}
-              setInput={setInput}
+              setInput={handleInputChange}
               handleSend={handleSend}
               handleKeyDown={handleKeyDown}
               isBusy={isBusy}
               status={status}
               textareaRef={textareaRef}
+              isRecording={isRecording}         
+              toggleRecording={toggleRecording} 
             />
           </motion.div>
         )}
