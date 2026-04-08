@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { MathExpression, VisibilityMode } from "../types";
 import { getNextColor } from "../../../utils/colors";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
-import { logHumanInput } from '../../../utils/latexToHuman';
+import { logHumanInput, normalizeAbsDelimiters } from '../../../utils/latexToHuman';
 
 // Helper to determine if parent curve should be visible based on mode
 const isParentVisible = (mode: VisibilityMode): boolean => mode === 'all' || mode === 'parent';
@@ -188,6 +188,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\right\)/g, ')')
             .replace(/\\left\[/g, '(')
             .replace(/\\right\]/g, ')');
+
+        clean = normalizeAbsDelimiters(clean, 'latex');
 
         // ==========================================
         // UNIVERSAL FIX: ANY FUNCTION FOLLOWED BY \left DELIMITER
@@ -959,9 +961,9 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         let isSliderDef = false;
         let sliderVar = "";
         if (isDefinition) {
-            // Match plain variable assignment: a = ... or a_{1} = ...
-            // Reject if it's a function f(x)= or if the var is x/y
-            const match = clean.match(/^([a-zA-Z](?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/);
+            // Match plain variable assignment: a = ... or \theta = ... or a_{1} = ...
+            // Reject if it's a function f(x)= or if the var is x/y/r/t
+            const match = clean.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/);
             if (match && !/^(x|y|r|t)$/.test(match[1])) {
                 isSliderDef = true;
                 sliderVar = match[1];
@@ -1070,10 +1072,20 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
     };
 
     const updateSliderBounds = (id: string, min: string, max: string, step: string = "") => {
-        const bounds = { min, max, step };
+        // Auto-fix pi, theta and unicode to literal macro commands so Desmos recognizes them
+        // We use lookbehind-like logic without \b before pi because "2pi" wouldn't match \bpi
+        const fix = (s: string) => s ? s.replace(/(^|[^a-zA-Z\\])pi(?![a-zA-Z])/gi, '$1\\pi').replace(/π/g, '\\pi')
+                                        .replace(/(^|[^a-zA-Z\\])theta(?![a-zA-Z])/gi, '$1\\theta').replace(/θ/g, '\\theta') : "";
+                                        
+        const bounds = { min: fix(min), max: fix(max), step: fix(step) };
         setExpressions(prev => prev.map(e => e.id === id ? { ...e, sliderBounds: bounds } : e));
         if (calculatorInstance.current) {
-             calculatorInstance.current.setExpression({ id, sliderBounds: bounds });
+             calculatorInstance.current.setExpression({ 
+                 id, 
+                 sliderBounds: bounds,
+                 polarDomain: { min: bounds.min, max: bounds.max },
+                 parametricDomain: { min: bounds.min, max: bounds.max }
+             });
         }
     };
     

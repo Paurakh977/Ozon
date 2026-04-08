@@ -1,4 +1,6 @@
 
+import { normalizeAbsDelimiters } from './latexToHuman';
+
 /**
  * Convert LaTeX to nerdamer-compatible format
  */
@@ -148,10 +150,11 @@ export const latexToNerdamer = (latex: string): string => {
         // Handle subscripts (remove them for now)
         .replace(/_\{[^{}]*\}/g, '')
         .replace(/_[a-zA-Z0-9]/g, '')
-        // Handle absolute value
-        .replace(/\|([^|]+)\|/g, 'abs($1)')
         // Handle pi
         .replace(/\\pi/g, 'pi');
+
+    // Handle absolute value
+    expr = normalizeAbsDelimiters(expr);
 
     // ==========================================
     // IMPLICIT MULTIPLICATION HANDLING (Part 1)
