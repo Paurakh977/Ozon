@@ -94,13 +94,14 @@ function preNormalise(s: string): string {
     // Fix \right. (MathLive invisible close delimiter)
     s = fixUnmatchedDelimiters(s);
 
+    // Normalize nested pipes | and mathlive's \left| \right|
+    s = normalizeAbsDelimiters(s);
+
     // Strip remaining \left / \right
     s = s
         .replace(/\\left\s*\(/g, '(').replace(/\\right\s*\)/g, ')')
         .replace(/\\left\s*\[/g, '[').replace(/\\right\s*\]/g, ']')
-        .replace(/\\left\s*\|/g, 'abs(').replace(/\\right\s*\|/g, ')')
         .replace(/\\left\s*\\{/g, '(').replace(/\\right\s*\\}/g, ')')
-        .replace(/\\left\s*\\vert/g, 'abs(').replace(/\\right\s*\\vert/g, ')')
         .replace(/\\left\s*\\Vert/g, '‖').replace(/\\right\s*\\Vert/g, '‖')
         .replace(/\\left\s*\./g, '').replace(/\\right\s*\./g, '')
         .replace(/\\left\b\s*/g, '').replace(/\\right\b\s*/g, '');
@@ -720,4 +721,61 @@ export function logHumanInput(id: string, rawLatex: string): void {
     const human = latexToHuman(rawLatex);
     console.log(`[HUMAN INPUT] id=${id} → ${human}`);
     console.log(`[RAW  LATEX ] id=${id} → ${rawLatex}`);
+}
+
+export function normalizeAbsDelimiters(latex: string, format: 'abs' | 'pipes' | 'latex' = 'abs'): string {
+    let s = latex.replace(/\\left\s*\|/g, '|').replace(/\\right\s*\|/g, '|');
+    s = s.replace(/\\lvert/g, '|').replace(/\\rvert/g, '|');
+    s = s.replace(/\\left\s*\\(?:lvert|vert)/ig, '|').replace(/\\right\s*\\(?:rvert|vert)/ig, '|');
+    s = s.replace(/\\vert/ig, '|');
+
+    let result = '';
+    let stack: number[] = [];
+    
+    for (let i = 0; i < s.length; i++) {
+        let char = s[i];
+        if (char === '|') {
+            let prevChar = i > 0 ? s[i-1] : '';
+            let nextChar = i < s.length - 1 ? s[i+1] : '';
+            
+            let prevIsOpOrSpaceOrOpen = /[-+*=/({\[<>,\s^|]/.test(prevChar) || prevChar === '';
+            let nextIsOpOrSpaceOrClose = /[-+*=/)\\]}>,\s^|]/.test(nextChar) || nextChar === '';
+            
+            let isOpen = false;
+            
+            if (stack.length > 0) {
+                if (prevChar && !/[-+*=({\[<>,^|\s]/.test(prevChar)) { 
+                    isOpen = false; 
+                } else if (prevIsOpOrSpaceOrOpen && !nextIsOpOrSpaceOrClose) {
+                    isOpen = true;
+                } else {
+                    isOpen = false;
+                }
+            } else {
+                isOpen = true;
+            }
+            
+            if (isOpen) {
+                stack.push(result.length);
+                result += format === 'abs' ? 'abs(' : (format === 'latex' ? '\\left|' : '|');
+            } else {
+                if (stack.length > 0) {
+                    stack.pop();
+                    result += format === 'abs' ? ')' : (format === 'latex' ? '\\right|' : '|');
+                } else {
+                    stack.push(result.length);
+                    result += format === 'abs' ? 'abs(' : (format === 'latex' ? '\\left|' : '|');
+                }
+            }
+        } else {
+            result += char;
+        }
+    }
+    
+    while (stack.length > 0) {
+        stack.pop();
+        result += format === 'abs' ? ')' : (format === 'latex' ? '\\right|' : '|');
+    }
+    
+    return result;
 }

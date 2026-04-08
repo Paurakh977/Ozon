@@ -3,7 +3,7 @@ import { useState, useRef, useEffect } from "react";
 import { MathExpression, VisibilityMode } from "../types";
 import { getNextColor } from "../../../utils/colors";
 import { computeSymbolicDerivative, computeSymbolicIntegral } from "../../../utils/symbolic-math";
-import { logHumanInput } from '../../../utils/latexToHuman';
+import { logHumanInput, normalizeAbsDelimiters } from '../../../utils/latexToHuman';
 
 // Helper to determine if parent curve should be visible based on mode
 const isParentVisible = (mode: VisibilityMode): boolean => mode === 'all' || mode === 'parent';
@@ -188,6 +188,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\right\)/g, ')')
             .replace(/\\left\[/g, '(')
             .replace(/\\right\]/g, ')');
+
+        clean = normalizeAbsDelimiters(clean, 'latex');
 
         // ==========================================
         // UNIVERSAL FIX: ANY FUNCTION FOLLOWED BY \left DELIMITER
