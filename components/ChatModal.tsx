@@ -7,6 +7,7 @@ import 'katex/dist/katex.min.css';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { motion, AnimatePresence, type Variants, type Transition } from 'framer-motion';
+import { MathExpression } from "./calculator/types";
 
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
@@ -63,14 +64,54 @@ function renderContent(text: string): string {
 }
 
 // --- Types ---
+type MessageAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  mimeType: string;
+  previewUrl?: string; // objectURL or dataURI
+};
+
 type Message = {
   role: 'user' | 'agent';
   content: string;
   isStreaming?: boolean;
+  attachments?: MessageAttachment[];
 };
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected';
 
-import { MathExpression } from "./calculator/types";
+export interface AttachedFile {
+  id: string;
+  file: File;
+  mimeType: string;
+  previewUrl?: string; // object URL for images
+  ocrState: 'pending' | 'processing' | 'done' | 'error';
+  ocrMarkdown?: string;
+  ocrError?: string;
+  engine?: string;
+  abortController: AbortController;
+}
+
+const MAX_IMAGES = 5;
+const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+const MAX_TOTAL_FILES = 10;
+const IMAGE_TYPES = new Set([
+  'image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/avif', 'image/gif'
+]);
+const ACCEPT_TYPES = [
+  '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.avif', '.gif',
+  '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt',
+  '.txt', '.csv', '.html', '.odt', '.ods', '.odp', '.rtf'
+].join(',');
+
+function getFileIcon(mime: string) {
+  if (mime === 'application/pdf') return '📄';
+  if (mime.includes('word') || mime.includes('odt') || mime.includes('rtf')) return '📝';
+  if (mime.includes('sheet') || mime.includes('excel') || mime.includes('ods') || mime.includes('csv')) return '📊';
+  if (mime.includes('presentation') || mime.includes('powerpoint') || mime.includes('odp')) return '📊';
+  return '📎';
+}
+
 
 // --- Framer Motion Variants ---
 const springTrans: Transition = { type: 'spring', stiffness: 340, damping: 28 };
@@ -185,6 +226,35 @@ const ChatMessage = React.memo(({ msg, i }: { msg: Message, i: number }) => {
               'shadow-[0_2px_8px_rgba(0,0,0,0.04)] dark:shadow-[0_2px_12px_rgba(0,0,0,0.2)]',
             ].join(' '),
         )}>
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 mb-3">
+              {msg.attachments.map(att => (
+                <div 
+                  key={att.id}
+                  className="flex items-center bg-black/20 dark:bg-white/10 rounded-lg p-1.5 cursor-pointer hover:bg-black/30 dark:hover:bg-white/20 transition-colors"
+                  onClick={() => {
+                    if (att.previewUrl) window.open(att.previewUrl, '_blank');
+                  }}
+                  title={att.name}
+                >
+                  {IMAGE_TYPES.has(att.mimeType) && att.previewUrl ? (
+                    <img src={att.previewUrl} alt={att.name} className="w-8 h-8 rounded object-cover mr-2" />
+                  ) : (
+                    <span className="text-xl ml-1 mr-2">{getFileIcon(att.mimeType)}</span>
+                  )}
+                  <div className="flex flex-col min-w-0 pr-2">
+                    <span className="text-[11px] font-medium truncate max-w-[120px] text-white/90 dark:text-black/90 leading-tight">
+                      {att.name}
+                    </span>
+                    <span className="text-[9px] text-white/50 dark:text-black/50 uppercase tracking-widest mt-0.5">
+                      {(att.size / 1024).toFixed(0)} KB
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
           <AgentContent content={msg.content} isUser={msg.role === 'user'} />
 
           <div className={cn(
@@ -251,8 +321,12 @@ const ChatInput = React.memo(({
   isBusy,
   status,
   textareaRef,
-  isRecording,       // NEW
-  toggleRecording    // NEW
+  isRecording,
+  toggleRecording,
+  attachments,
+  addFiles,
+  removeAttachment,
+  openPreview
 }: {
   input: string;
   setInput: (v: string) => void;
@@ -261,83 +335,193 @@ const ChatInput = React.memo(({
   isBusy: boolean;
   status: ConnectionStatus;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-  isRecording: boolean;      // NEW
-  toggleRecording: () => void; // NEW
+  isRecording: boolean;
+  toggleRecording: () => void;
+  attachments: AttachedFile[];
+  addFiles: (files: File[]) => void;
+  removeAttachment: (id: string) => void;
+  openPreview: (att: AttachedFile) => void;
 }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const isProcessingAnything = attachments.some(a => a.ocrState === 'pending' || a.ocrState === 'processing');
+
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = Array.from(e.clipboardData.items);
+    const files = items
+      .filter(item => item.kind === 'file' && IMAGE_TYPES.has(item.type))
+      .map(item => item.getAsFile())
+      .filter((f): f is File => f !== null);
+
+    if (files.length > 0) {
+      e.preventDefault();
+      addFiles(files);
+    }
+  }, [addFiles]);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files?.length) {
+      addFiles(Array.from(e.target.files));
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, [addFiles]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    if (e.dataTransfer.files?.length) {
+      addFiles(Array.from(e.dataTransfer.files));
+    }
+  }, [addFiles]);
+
   return (
-    <div className="p-3 bg-zinc-50 dark:bg-zinc-900/80 border-t border-zinc-200/50 dark:border-zinc-800/50">
+    <div 
+      className="p-3 bg-zinc-50 dark:bg-zinc-900/80 border-t border-zinc-200/50 dark:border-zinc-800/50"
+      onDragOver={e => e.preventDefault()}
+      onDrop={handleDrop}
+    >
       <div className={cn(
-        'relative flex items-end gap-2 w-full rounded-xl p-1.5 transition-all duration-300',
+        'relative flex flex-col gap-2 w-full rounded-xl p-2 transition-all duration-300',
         'bg-white dark:bg-zinc-800/50',
         'border border-zinc-200/80 dark:border-zinc-700/50',
         'shadow-sm focus-within:border-violet-300 dark:focus-within:border-violet-600/60',
-        'focus-within:shadow-[0_4px_16px_rgba(109,40,217,0.08)]',
       )}>
-        <textarea
-          ref={textareaRef}
-          rows={1}
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          disabled={status !== 'connected'}
-          placeholder="Ask a math question..."
-          className={cn(
-            'flex-1 min-h-[36px] max-h-[120px] resize-none bg-transparent',
-            'py-1.5 pl-3 pr-2 text-[14px] leading-relaxed',
-            'text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500',
-            'focus:outline-none disabled:opacity-40',
-          )}
-        />
+        {attachments.length > 0 && (
+          <div className="flex gap-2 w-full overflow-x-auto pb-1 custom-scrollbar items-center px-1">
+            {attachments.map(att => (
+              <div 
+                key={att.id} 
+                className={cn(
+                  "relative flex-shrink-0 rounded-lg overflow-hidden border cursor-pointer",
+                  att.ocrState === 'error' ? 'border-red-500' : 'border-zinc-300 dark:border-zinc-600'
+                )}
+                onClick={() => openPreview(att)}
+                title={att.file.name}
+              >
+                {att.mimeType.startsWith('image/') && att.previewUrl ? (
+                  <div className="w-14 h-14 relative">
+                    <img src={att.previewUrl} alt={att.file.name} className="w-full h-full object-cover opacity-90 hover:opacity-100 transition-opacity" />
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 bg-zinc-100 dark:bg-zinc-900 px-2 py-1 h-14 min-w-[120px] max-w-[180px]">
+                    <span className="text-xl flex-shrink-0">{getFileIcon(att.mimeType)}</span>
+                    <div className="flex flex-col min-w-0 overflow-hidden">
+                      <span className="text-xs truncate font-medium text-zinc-700 dark:text-zinc-300">{att.file.name}</span>
+                      <span className="text-[10px] text-zinc-500">{(att.file.size / 1024).toFixed(0)} KB</span>
+                    </div>
+                  </div>
+                )}
+                
+                {/* Status Overlay */}
+                <div className="absolute top-1 right-1 flex items-center justify-center p-0.5 rounded-full bg-black/50 backdrop-blur-sm">
+                  {att.ocrState === 'processing' && <span className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin block" />}
+                  {att.ocrState === 'done' && <span className="text-[10px] leading-none text-emerald-400 font-bold px-0.5">✓</span>}
+                  {att.ocrState === 'error' && <span className="text-[10px] leading-none text-red-400 font-bold px-0.5">!</span>}
+                </div>
 
-        {/* 🎙️ NEW VOICE RECORDING BUTTON 🎙️ */}
-        <motion.button
-          onClick={toggleRecording}
-          disabled={status !== 'connected' || isBusy}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.93 }}
-          className={cn(
-            'flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200',
-            isRecording 
-              ? 'bg-red-500/15 text-red-500 dark:bg-red-500/20 shadow-sm animate-pulse' 
-              : 'bg-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-          )}
-          title={isRecording ? "Stop Dictation" : "Voice Typing"}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-            {isRecording ? (
-              <rect x="7" y="7" width="10" height="10" rx="1.5" />
-            ) : (
-              <>
-                <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-14 0 1 1 0 0 1 2 0 5 5 0 0 0 10 0Z" />
-                <path d="M12 21a1 1 0 0 1-1-1v-2a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1Z" />
-              </>
-            )}
-          </svg>
-        </motion.button>
+                <button 
+                  onClick={(e) => { e.stopPropagation(); removeAttachment(att.id); }}
+                  className="absolute top-1 left-1 bg-black/60 hover:bg-black text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] transition-colors"
+                >
+                  ×
+                </button>
 
-        <motion.button
-          onClick={handleSend}
-          disabled={!input.trim() || isBusy || status !== 'connected'}
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.93 }}
-          className={cn(
-            'flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200',
-            input.trim() && !isBusy && status === 'connected'
-              ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm'
-              : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed',
-          )}
-        >
-          {/* Send Icon existing... */}
-          <AnimatePresence mode="wait" initial={false}>
-            {isBusy ? (
-              <motion.span key="spin" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
-            ) : (
-              <motion.svg key="send" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
-                <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
-              </motion.svg>
+                {att.mimeType === 'application/pdf' && (
+                  <span className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] text-center py-0.5 truncate px-1">
+                    First 5 pages
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-end gap-2 w-full px-1">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={status !== 'connected' || isBusy || attachments.length >= MAX_TOTAL_FILES}
+            className="flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center bg-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors relative"
+            title="Attach file"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+            </svg>
+            {attachments.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-violet-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none">
+                {attachments.length}
+              </span>
             )}
-          </AnimatePresence>
-        </motion.button>
+          </button>
+          <input type="file" hidden multiple ref={fileInputRef} accept={ACCEPT_TYPES} onChange={handleFileChange} />
+
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
+            disabled={status !== 'connected'}
+            placeholder="Ask a math question..."
+            className={cn(
+              'flex-1 min-h-[36px] max-h-[120px] resize-none bg-transparent',
+              'py-1.5 px-2 text-[14px] leading-relaxed',
+              'text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-400 dark:placeholder:text-zinc-500',
+              'focus:outline-none disabled:opacity-40',
+            )}
+          />
+
+          <motion.button
+            onClick={toggleRecording}
+            disabled={status !== 'connected' || isBusy}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.93 }}
+            className={cn(
+              'flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200',
+              isRecording 
+                ? 'bg-red-500/15 text-red-500 dark:bg-red-500/20 shadow-sm animate-pulse' 
+                : 'bg-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'
+            )}
+            title={isRecording ? "Stop Dictation" : "Voice Typing"}
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+              {isRecording ? (
+                <rect x="7" y="7" width="10" height="10" rx="1.5" />
+              ) : (
+                <>
+                  <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a1 1 0 0 1 2 0 7 7 0 0 1-14 0 1 1 0 0 1 2 0 5 5 0 0 0 10 0Z" />
+                  <path d="M12 21a1 1 0 0 1-1-1v-2a1 1 0 1 1 2 0v2a1 1 0 0 1-1 1Z" />
+                </>
+              )}
+            </svg>
+          </motion.button>
+
+          <motion.button
+            onClick={handleSend}
+            disabled={(!input.trim() && attachments.length === 0) || isBusy || status !== 'connected' || isProcessingAnything}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.93 }}
+            className={cn(
+              'flex-none mb-0.5 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-200',
+              (input.trim() || attachments.length > 0) && !isBusy && status === 'connected' && !isProcessingAnything
+                ? 'bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 shadow-sm'
+                : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-300 dark:text-zinc-600 cursor-not-allowed',
+            )}
+          >
+            <AnimatePresence mode="wait" initial={false}>
+              {isBusy ? (
+                <motion.span key="spin" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} className="w-3.5 h-3.5 border-2 border-current/30 border-t-current rounded-full animate-spin block" />
+              ) : (
+                <motion.svg key="send" initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3.5 h-3.5">
+                  <path d="M3.105 2.289a.75.75 0 00-.826.95l1.414 4.925A1.5 1.5 0 005.135 9.25h6.115a.75.75 0 010 1.5H5.135a1.5 1.5 0 00-1.442 1.086l-1.414 4.926a.75.75 0 00.826.95 28.896 28.896 0 0015.293-7.154.75.75 0 000-1.115A28.897 28.897 0 003.105 2.289z" />
+                </motion.svg>
+              )}
+            </AnimatePresence>
+          </motion.button>
+        </div>
+        {isProcessingAnything && (
+          <div className="absolute -top-6 left-2 right-2 text-xs text-amber-600 dark:text-amber-500 font-medium">
+             ⏳ Processing attachments...
+          </div>
+        )}
       </div>
       <p className="mt-2 mb-0.5 text-center text-[9px] font-medium tracking-widest uppercase text-zinc-400 dark:text-zinc-500 select-none">
         {status === 'connected' ? 'Agent Online' : status === 'connecting' ? 'Connecting…' : 'Agent Offline'}
@@ -453,6 +637,164 @@ export function ChatModal({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+
+  // --- Attachments State ---
+  const [attachments, setAttachments] = useState<AttachedFile[]>([]);
+
+  const processFile = useCallback(async (id: string, file: File, controller: AbortController) => {
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      
+      const res = await fetch('/api/parse', {
+        method: 'POST',
+        body: fd,
+        signal: controller.signal
+      });
+      
+      if (!res.ok) {
+        let errMsg = `Server returned ${res.status}`;
+        try {
+          const errData = await res.json();
+          if (errData.error) errMsg = errData.error;
+        } catch { /* ignore */ }
+        throw new Error(errMsg);
+      }
+      
+      const data = await res.json();
+      const result = data.results[0];
+      
+      if (result.status === 'error') {
+        throw new Error(result.error);
+      }
+
+      setAttachments(prev => prev.map(a => a.id === id ? {
+        ...a,
+        ocrState: 'done',
+        ocrMarkdown: result.fullMarkdown,
+        engine: result.engine
+      } : a));
+    } catch (err: any) {
+      if (err.name === 'AbortError') return;
+      setAttachments(prev => prev.map(a => a.id === id ? {
+        ...a,
+        ocrState: 'error',
+        ocrError: err.message
+      } : a));
+    }
+  }, []);
+
+  const addFiles = useCallback((files: File[]) => {
+    const newFiles = files.filter(f => {
+      const mime = f.type || 'application/octet-stream';
+      if (f.size > MAX_FILE_SIZE) {
+        alert(`File ${f.name} is too large (max 5MB)`);
+        return false;
+      }
+      return true;
+    });
+
+    if (!newFiles.length) return;
+
+    setAttachments(prev => {
+      const currentImageCount = prev.filter(a => IMAGE_TYPES.has(a.mimeType)).length;
+      const newImages = newFiles.filter(f => IMAGE_TYPES.has(f.type || 'application/octet-stream'));
+      
+      let allowedNewFiles = newFiles;
+      
+      if (currentImageCount + newImages.length > MAX_IMAGES) {
+        alert(`Maximum ${MAX_IMAGES} images allowed in a single message.`);
+        let imgBudget = MAX_IMAGES - currentImageCount;
+        allowedNewFiles = newFiles.filter(f => {
+          if (IMAGE_TYPES.has(f.type || 'application/octet-stream')) {
+            if (imgBudget > 0) { imgBudget--; return true; }
+            return false;
+          }
+          return true;
+        });
+      }
+
+      if (prev.length + allowedNewFiles.length > MAX_TOTAL_FILES) {
+        alert(`Maximum ${MAX_TOTAL_FILES} files allowed in a single message.`);
+        allowedNewFiles = allowedNewFiles.slice(0, Math.max(0, MAX_TOTAL_FILES - prev.length));
+      }
+
+      const toAdd = allowedNewFiles.map(f => {
+        const id = crypto.randomUUID();
+        const isImg = IMAGE_TYPES.has(f.type || 'application/octet-stream');
+        const abortController = new AbortController();
+        
+        return {
+          id,
+          file: f,
+          mimeType: f.type || 'application/octet-stream',
+          previewUrl: isImg ? URL.createObjectURL(f) : undefined,
+          ocrState: 'processing',
+          abortController
+        } as AttachedFile;
+      });
+
+      // Start processing immediately
+      toAdd.forEach(att => processFile(att.id, att.file, att.abortController));
+
+      return [...prev, ...toAdd];
+    });
+  }, [processFile]);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments(prev => {
+      const att = prev.find(a => a.id === id);
+      if (att) {
+        att.abortController.abort();
+        if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+      }
+      return prev.filter(a => a.id !== id);
+    });
+  }, []);
+
+  const openPreview = useCallback((att: AttachedFile) => {
+    if (IMAGE_TYPES.has(att.mimeType) && att.previewUrl) {
+      window.open(att.previewUrl, '_blank');
+    } else if (att.mimeType === 'application/pdf' || att.mimeType.match(/text|csv|html/)) {
+      const url = URL.createObjectURL(att.file);
+      window.open(url, '_blank');
+      // Intentionally not revoking immediately so the new window can load it
+    } else {
+      // DOCX, XLSX, PPTX, etc (LiteParse)
+      const win = window.open('', '_blank');
+      if (win) {
+        win.document.write(`
+          <html>
+            <head><title>Preview - ${att.file.name}</title></head>
+            <body style="font-family: system-ui, sans-serif; padding: 2rem; color: #3f3f46;">
+              <h2 style="color: #18181b;">${att.file.name}</h2>
+              <p style="font-size: 14px; margin-bottom: 2rem;">Size: ${(att.file.size / 1024).toFixed(2)} KB | Engine: ${att.engine || 'Pending/Unavailable'}</p>
+              ${
+                att.ocrState === 'processing' ? '<p>Still processing...</p>' :
+                att.ocrState === 'error' ? `<p style="color: red;">Error: ${att.ocrError}</p>` :
+                att.ocrMarkdown ? `<div style="background: #f4f4f5; padding: 1.5rem; border-radius: 8px; font-size: 14px; white-space: pre-wrap; font-family: monospace;">${att.ocrMarkdown}</div>` : 
+                '<p>Preview not available for this file type.</p>'
+              }
+            </body>
+          </html>
+        `);
+        win.document.close();
+      }
+    }
+  }, []);
+
+  // Cleanup all attachments when modal is closed
+  useEffect(() => {
+    if (!isOpen) {
+      setAttachments(prev => {
+        prev.forEach(att => {
+          att.abortController.abort();
+          if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+        });
+        return [];
+      });
+    }
+  }, [isOpen]);
 
   // --- Voice State ---
   const [isRecording, setIsRecording] = useState(false);
@@ -813,25 +1155,63 @@ export function ChatModal({
 
   const handleSend = useCallback(() => {
     const text = input.trim();
-    if (!text || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
+    const isProcessingAnything = attachments.some(a => a.ocrState === 'pending' || a.ocrState === 'processing');
+    
+    if ((!text && attachments.length === 0) || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN || isProcessingAnything) return;
 
-    //  IMMEDIATELY KILL RECORDING AND WS CONNECTION TO SAVE QUOTA
+    // IMMEDIATELY KILL RECORDING AND WS CONNECTION TO SAVE QUOTA
     stopRecording();
 
+    let payloadText = text;
+    
+    if (attachments.length > 0) {
+      if (payloadText) payloadText += '\n\n---\n\n';
+      attachments.forEach(att => {
+        payloadText += `**${att.file.name} (${att.engine || 'unknown engine'}):**\n`;
+        if (att.ocrState === 'done' && att.ocrMarkdown) {
+          payloadText += att.ocrMarkdown + '\n\n';
+        } else if (att.ocrState === 'error') {
+          payloadText += `[Error: could not process this file: ${att.ocrError}]\n\n`;
+        } else {
+          payloadText += `[Content unavailable]\n\n`;
+        }
+      });
+      payloadText += '---\n';
+    }
+
+    // Add empty space text if only files were sent so UI renders a bubble properly or handle it better
     setMessages((prev) => [
       ...prev,
-      { role: 'user', content: text },
+      { 
+        role: 'user', 
+        content: text, // Only text
+        attachments: attachments.map(a => ({
+          id: a.id,
+          name: a.file.name,
+          size: a.file.size,
+          mimeType: a.mimeType,
+          previewUrl: a.previewUrl,
+          engine: a.engine
+        }))
+      },
       { role: 'agent', content: '', isStreaming: true },
     ]);
+    
     setInput('');
+    // Cleanup attachments (don't revoke URL so chat history still has preview)
+    attachments.forEach(att => {
+      att.abortController.abort();
+    });
+    setAttachments([]);
     finalTranscriptRef.current = ''; // Clear voice transcript when sending
     setIsBusy(true);
+
     ws.current.send(JSON.stringify({
-      text: text,
+      text: payloadText,
       expressions: expressions?.map(e => ({ id: e.id, latex: e.latex, color: e.color, visible: e.visible })) || []
     }));
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  }, [input, isBusy, stopRecording, expressions]);
+  }, [input, isBusy, stopRecording, expressions, attachments]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -1015,7 +1395,11 @@ export function ChatModal({
               status={status}
               textareaRef={textareaRef}
               isRecording={isRecording}         
-              toggleRecording={toggleRecording} 
+              toggleRecording={toggleRecording}
+              attachments={attachments}
+              addFiles={addFiles}
+              removeAttachment={removeAttachment}
+              openPreview={openPreview}
             />
           </motion.div>
         )}
