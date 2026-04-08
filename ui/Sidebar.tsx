@@ -581,10 +581,37 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     const isMenuOpen = openMenuId === expr.id;
 
                     const safeLatex = typeof expr.latex === 'string' ? expr.latex : '';
-                    const sliderMatch = safeLatex.match(/^([a-zA-Z](?:_\{?[a-zA-Z0-9]+\}?)?)\s*=\s*([-+]?[0-9]*\.?[0-9]+)$/);
+                    const sliderMatch = safeLatex.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_\{?[a-zA-Z0-9]+\}?)?)\s*=\s*([-+]?[0-9]*\.?[0-9]+(?:[+*/\-][0-9]*\.?[0-9]+)*)$/);
                     const isSlider = !!sliderMatch;
-                    const sliderVal = isSlider ? parseFloat(sliderMatch![2]) : 0;
+                    
                     const sliderVar = isSlider ? sliderMatch![1] : '';
+                    
+                    const isPolarDomain = !isSlider && (safeLatex.includes('r=') || safeLatex.includes('r =') || safeLatex.match(/\\theta|θ/));
+                    const isParametricDomain = !isSlider && !isPolarDomain && (safeLatex.includes('\\left(') && safeLatex.includes(',') && safeLatex.includes('t'));
+                    const isDomainControl = isPolarDomain || isParametricDomain;
+                    
+                    const displayVar = isSlider ? sliderVar : (isPolarDomain ? 'θ' : 't');
+                    
+                    const parseSliderValue = (val: string): number => {
+                        if (!val) return 0;
+                        let cleaned = val
+                            .replace(/\\pi|π|(?<![a-zA-Z\\])pi(?![a-zA-Z])/gi, '*3.14')
+                            .replace(/\\theta|θ|(?<![a-zA-Z\\])theta(?![a-zA-Z])/gi, '*1')
+                            .replace(/\\alpha|(?<![a-zA-Z\\])alpha(?![a-zA-Z])/gi, '*1')
+                            .replace(/\\beta|(?<![a-zA-Z\\])beta(?![a-zA-Z])/gi, '*2')
+                            .replace(/\\gamma|(?<![a-zA-Z\\])gamma(?![a-zA-Z])/gi, '*3')
+                            .replace(/\\omega|(?<![a-zA-Z\\])omega(?![a-zA-Z])/gi, '*6.28318530717958')
+                            .replace(/\\infty|(?<![a-zA-Z\\])infinity(?![a-zA-Z])/gi, '*1000')
+                            .replace(/[^0-9.\-*/+()]/g, '')
+                            .replace(/(^|[+*/\-(])\*/g, '$1'); // Clean up leading asterisks if there was no number before the constant
+                        try {
+                            return eval(cleaned) || 0;
+                        } catch {
+                            return 0;
+                        }
+                    };
+                    
+                    const sliderVal = isSlider ? parseSliderValue(sliderMatch![2]) : 0;
                     
                     const min = expr.sliderBounds?.min ?? "-10";
                     const max = expr.sliderBounds?.max ?? "10";
@@ -740,59 +767,70 @@ export const Sidebar: React.FC<SidebarProps> = ({
                             )}
 
                             {/* Advanced Slider UI */}
-                            {isSlider && (
+                            {(isSlider || isDomainControl) && (
                                 <div className="flex flex-col gap-3 mt-1.5 p-3 bg-muted/20 rounded-lg border border-border/50">
                                     {/* Slider Row */}
-                                    <div className="flex items-center gap-3">
-                                        <button
-                                            onClick={() => setExpressionPlaying(expr.id, !expr.isPlaying)}
-                                            className={`flex items-center justify-center w-7 h-7 shrink-0 rounded-full border transition-all hover:scale-105 active:scale-95 ${expr.isPlaying ? 'bg-primary text-primary-foreground border-primary shadow-sm' : 'bg-background text-foreground/70 border-border hover:text-foreground hover:bg-muted'}`}
-                                        >
-                                            {expr.isPlaying ? <Pause size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" className="ml-0.5" />}
-                                        </button>
-                                        
-                                        <div className="flex-1 flex items-center min-w-0">
-                                             <input 
-                                                type="range"
-                                                min={min} 
-                                                max={max} 
-                                                step={step !== "" ? step : "0.01"}
-                                                value={sliderVal}
-                                                onInput={(e) => {
-                                                    const val = (e.target as HTMLInputElement).value;
-                                                    handleInput(expr.id, `${sliderVar}=${val}`);
-                                                }}
-                                                className="w-full h-1.5 bg-border/50 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-md hover:[&::-webkit-slider-thumb]:scale-125 transition-all focus:outline-none"
-                                            />
+                                    {isSlider && (
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => setExpressionPlaying(expr.id, !expr.isPlaying)}
+                                                className={`flex items-center justify-center w-7 h-7 shrink-0 rounded-full border transition-all hover:scale-105 active:scale-95 ${expr.isPlaying ? 'bg-primary text-primary-foreground border-primary shadow-sm' : 'bg-background text-foreground/70 border-border hover:text-foreground hover:bg-muted'}`}
+                                            >
+                                                {expr.isPlaying ? <Pause size={12} fill="currentColor" /> : <Play size={12} fill="currentColor" className="ml-0.5" />}
+                                            </button>
+                                            
+                                            <div className="flex-1 flex items-center min-w-0">
+                                                {(() => {
+                                                    const numMin = parseSliderValue(min);
+                                                    const numMax = parseSliderValue(max);
+                                                    const parsedStep = parseSliderValue(step);
+                                                    const numericStep = step !== "" && parsedStep > 0 ? parsedStep : "any";
+                                                    
+                                                    return (
+                                                        <input 
+                                                            type="range"
+                                                            min={numMin} 
+                                                            max={numMax} 
+                                                            step={numericStep}
+                                                            value={sliderVal}
+                                                            onInput={(e) => {
+                                                                const val = (e.target as HTMLInputElement).value;
+                                                                handleInput(expr.id, `${sliderVar}=${val}`);
+                                                            }}
+                                                            className="w-full h-1.5 bg-border/50 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-primary [&::-webkit-slider-thumb]:shadow-md hover:[&::-webkit-slider-thumb]:scale-125 transition-all focus:outline-none"
+                                                        />
+                                                    );
+                                                })()}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                     
                                     {/* Bounds Row */}
                                     <div className="flex flex-wrap items-center gap-2 justify-between text-xs text-muted-foreground font-mono">
                                         <div className="flex items-center bg-background/60 rounded-md px-2 py-1 border border-border/50 focus-within:border-primary/50 transition-colors">
                                             <input
                                                 type="text"
-                                                value={min}
+                                                value={min.replace(/\\pi/g, 'π').replace(/\\theta/g, 'θ')}
                                                 onChange={(e) => updateSliderBounds(expr.id, e.target.value, max, step)}
                                                 className="w-10 bg-transparent border-none focus:ring-0 focus:outline-none text-right transition-colors text-foreground"
-                                                placeholder="-10"
+                                                placeholder={isParametricDomain ? "0" : (isPolarDomain ? "0" : "-10")}
                                             />
                                             <span className="opacity-40 select-none mx-1.5">≤</span>
-                                            <span className="text-primary font-semibold">{sliderVar}</span>
+                                            <span className="text-primary font-semibold">{displayVar.replace(/\\theta/g, 'θ')}</span>
                                             <span className="opacity-40 select-none mx-1.5">≤</span>
                                              <input
                                                 type="text"
-                                                value={max}
+                                                value={max.replace(/\\pi/g, 'π').replace(/\\theta/g, 'θ')}
                                                 onChange={(e) => updateSliderBounds(expr.id, min, e.target.value, step)}
                                                 className="w-10 bg-transparent border-none focus:ring-0 focus:outline-none text-left transition-colors text-foreground"
-                                                placeholder="10"
+                                                placeholder={isParametricDomain ? "1" : (isPolarDomain ? "12π" : "10")}
                                             />
                                         </div>
                                         <div className="flex items-center bg-background/60 rounded-md px-2 py-1 border border-border/50 focus-within:border-primary/50 transition-colors">
                                             <span className="opacity-50 select-none mr-1.5">step:</span>
                                             <input
                                                 type="text"
-                                                value={step}
+                                                value={step.replace(/\\pi/g, 'π').replace(/\\theta/g, 'θ')}
                                                 onChange={(e) => updateSliderBounds(expr.id, min, max, e.target.value)}
                                                 className="w-10 bg-transparent border-none focus:ring-0 focus:outline-none text-center transition-colors text-foreground"
                                                 placeholder="auto"
