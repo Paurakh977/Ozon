@@ -95,6 +95,9 @@ function getDotAnim(i: number) {
   };
 }
 
+// Maximum continuous recording per session (ms). After this the recorder is auto-stopped.
+const MAX_RECORD_MS = 2 * 60 * 1000; // 2 minutes
+
 const AgentContent = React.memo(function AgentContent({ content, isUser }: { content: string; isUser: boolean }) {
   const html = useMemo(() => renderContent(content), [content]);
   return (
@@ -457,31 +460,56 @@ export function ChatModal({
   const deepgramSocketRef = useRef<WebSocket | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const finalTranscriptRef = useRef<string>('');
+  // Timer that forces recording stop after MAX_RECORD_MS
+  const stopRecordingTimerRef = useRef<number | null>(null);
   
   // Keep an up-to-date ref of input so toggleRecording doesn't re-create endlessly
   const currentInputRef = useRef(input);
   useEffect(() => { currentInputRef.current = input; }, [input]);
 
-  const toggleRecording = useCallback(async () => {
-    // 1. Stop Recording logic
-    if (isRecording) {
-      if (mediaRecorderRef.current) mediaRecorderRef.current.stop();
-      if (deepgramSocketRef.current && deepgramSocketRef.current.readyState === WebSocket.OPEN) {
+
+  //  Reusable stop function to cleanly cut the WebSocket and Mic
+  const stopRecording = useCallback(() => {
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
+    if (deepgramSocketRef.current) {
+      if (deepgramSocketRef.current.readyState === WebSocket.OPEN) {
         deepgramSocketRef.current.send(new Uint8Array(0));
       }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop());
-        streamRef.current = null;
-      }
-      setIsRecording(false);
+      deepgramSocketRef.current.close();
+      deepgramSocketRef.current = null;
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
+    }
+    // clear any outstanding auto-stop timer
+    if (stopRecordingTimerRef.current) {
+      clearTimeout(stopRecordingTimerRef.current);
+      stopRecordingTimerRef.current = null;
+    }
+    setIsRecording(false);
+  },[]);
+  
+  const toggleRecording = useCallback(async () => {
+    // 1. Stop Recording logic (delegate to shared cleanup)
+    if (isRecording) {
+      stopRecording();
       return;
     }
 
     // 2. Start Recording logic
     try {
-      const res = await fetch('/api/sst');
+      const res = await fetch('/api/stt');
       const data = await res.json();
-      if (!data.key) throw new Error("Could not retrieve Deepgram temporary key.");
+
+      if (!res.ok) {
+        throw new Error((data && (data.error || data.message)) || 'Failed to fetch temporary key.');
+      }
+
+      if (!data.key) throw new Error('Could not retrieve Deepgram temporary key.');
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
@@ -495,7 +523,7 @@ export function ChatModal({
         numerals: 'true'
       });
 
-      const socket = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`,['token', data.key]);
+      const socket = new WebSocket(`wss://api.deepgram.com/v1/listen?${params.toString()}`, ['token', data.key]);
       deepgramSocketRef.current = socket;
 
       // Preserve any text already typed before we started speaking
@@ -512,6 +540,16 @@ export function ChatModal({
           }
         });
         mediaRecorder.start(250);
+
+        // Start an auto-stop timer to ensure sessions can't run indefinitely
+        if (stopRecordingTimerRef.current) {
+          clearTimeout(stopRecordingTimerRef.current);
+          stopRecordingTimerRef.current = null;
+        }
+        stopRecordingTimerRef.current = window.setTimeout(() => {
+          stopRecording();
+          setMessages((prev) => [...prev, { role: 'agent', content: '**Notice:** Recording stopped after 2 minutes.' }]);
+        }, MAX_RECORD_MS);
       };
 
       socket.onmessage = (message) => {
@@ -528,20 +566,32 @@ export function ChatModal({
       };
 
       socket.onclose = () => {
+        // socket closed: ensure resources are cleaned up
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        if (stopRecordingTimerRef.current) {
+          clearTimeout(stopRecordingTimerRef.current);
+          stopRecordingTimerRef.current = null;
+        }
         setIsRecording(false);
-        stream.getTracks().forEach(t => t.stop());
       };
       
       socket.onerror = () => {
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        if (stopRecordingTimerRef.current) {
+          clearTimeout(stopRecordingTimerRef.current);
+          stopRecordingTimerRef.current = null;
+        }
         setIsRecording(false);
-        stream.getTracks().forEach(t => t.stop());
       };
 
     } catch (err) {
-      console.error("Microphone or API Error:", err);
-      setIsRecording(false);
+      console.error('Microphone or API Error:', err);
+      // Ensure resources are cleaned up and inform the user
+      stopRecording();
+      const msg = err instanceof Error ? err.message : String(err);
+      setMessages((prev) => [...prev, { role: 'agent', content: `**Error:** ${msg}` }]);
     }
-  }, [isRecording]);
+  }, [isRecording, stopRecording]);
 
   const ws = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -749,6 +799,13 @@ export function ChatModal({
     }
   }, [input, isOpen]);
 
+  // Safety: ensure microphone / streams are stopped when the modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      stopRecording();
+    }
+  }, [isOpen, stopRecording]);
+
   const handleInputChange = useCallback((val: string) => {
     setInput(val);
     finalTranscriptRef.current = val;
@@ -757,6 +814,10 @@ export function ChatModal({
   const handleSend = useCallback(() => {
     const text = input.trim();
     if (!text || isBusy || !ws.current || ws.current.readyState !== WebSocket.OPEN) return;
+
+    //  IMMEDIATELY KILL RECORDING AND WS CONNECTION TO SAVE QUOTA
+    stopRecording();
+
     setMessages((prev) => [
       ...prev,
       { role: 'user', content: text },
@@ -770,7 +831,7 @@ export function ChatModal({
       expressions: expressions?.map(e => ({ id: e.id, latex: e.latex, color: e.color, visible: e.visible })) || []
     }));
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  }, [input, isBusy]);
+  }, [input, isBusy, stopRecording, expressions]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
