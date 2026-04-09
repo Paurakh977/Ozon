@@ -28,7 +28,7 @@ from google.genai import types
 import json
 
 from model import root_agent
-from tools.sidebar_tools import action_queue_var, frontend_state_var
+from tools import action_queue_var, frontend_state_var
 logger = logging.getLogger("server")
 
 # Runner created once at startup — shared across all connections, no re-init per request
