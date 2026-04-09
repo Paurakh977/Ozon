@@ -964,7 +964,11 @@ export function ChatModal({
     }
 
     setStatus('connecting');
-    const socket = new WebSocket('ws://127.0.0.1:8000/ws');
+    const wsUrl = process.env.NEXT_PUBLIC_AGENT_WS_URL;
+    if (!wsUrl) {
+      throw new Error("NEXT_PUBLIC_AGENT_WS_URL environment variable is not set");
+    }
+    const socket = new WebSocket(wsUrl);
     ws.current = socket;
     intentionalCloseRef.current = false;
 
