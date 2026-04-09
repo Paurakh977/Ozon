@@ -5,8 +5,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from .config import model
-from tools import web_search_mcp_tools
-from tools.sidebar_tools import sidebar_mcp_tools
+from tools import web_search_mcp_tools, sidebar_mcp_tools
 
 
 def _instruction_provider(context: ReadonlyContext) -> str:
