@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   serverExternalPackages: ["@llamaindex/liteparse"],
+  output: "standalone",
 };
 
 export default nextConfig;
