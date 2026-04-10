@@ -112,6 +112,12 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\dfrac/g, "\\frac")
             .trim();
 
+        // Protect derivative evaluation bars early so they aren't treated as absolute values
+        clean = clean.replace(/\|\s*_/g, "EVAL_BAR_TOKEN_");
+
+        // ==========================================
+        // FIX MATHLIVE BROKEN FUNCTION NAMES
+
         // ==========================================
         // FIX MATHLIVE BROKEN FUNCTION NAMES
         // ==========================================
@@ -297,7 +303,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             let pipeDepth = 0;
             let parenDepth = 0;
             // Stack: records parenDepth at which each | was opened
-            const pipeOpenedAt: number[] = [];
+            const pipeOpenedAt: number[] =[];
 
             for (let i = 0; i < result.length; i++) {
                 const char = result[i];
@@ -307,8 +313,6 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                     finalStr += char;
                 } else if (char === ')') {
                     // Before reducing parenDepth, close any pipes that opened at a DEEPER level
-                    // (i.e., inside the parentheses being closed)
-                    // DON'T close pipes opened at the SAME level - those need explicit | closing
                     while (pipeOpenedAt.length > 0 &&
                            pipeOpenedAt[pipeOpenedAt.length - 1] > parenDepth) {
                         finalStr += "\\right|";
@@ -356,6 +360,9 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
 
             finalStr = finalStr.replace(/LEFT_PIPE_TOKEN/g, "\\left|");
             finalStr = finalStr.replace(/RIGHT_PIPE_TOKEN/g, "\\right|");
+
+            // Auto-close any remaining unclosed pipes at end of string
+            
             // Auto-close any remaining unclosed pipes at end of string
             while (pipeDepth > 0) {
                 finalStr += "\\right|";
@@ -459,6 +466,9 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         if (isPiecewise) {
             // Piecewise is already handled properly because it has \left\{ and \right\}
         }
+
+        // Restore evaluation bar token
+        clean = clean.replace(/EVAL_BAR_TOKEN_/g, "|_");
 
         setDebugInfo(clean);
 
@@ -700,20 +710,23 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
                     let targetVal = "";
                     let body = content;
 
-                    // Handle evaluation notation: |_{x=2} or \bigm|_{x=2} (bigm already removed)
-                    // Look for |_{ pattern for evaluation point
-                    const barIndex = content.lastIndexOf("|_{");
-                    if (barIndex !== -1 && content.trim().endsWith("}")) {
-                        const possibleBody = content.substring(0, barIndex).trim();
-                        const evalPart = content.substring(barIndex + 3, content.length - 1);
+                    // Handle evaluation notation: |_{x=2} or |_x=2 or \left|_{x=2}\right|
+                    // Match optional \left, then |_, then optional {, then variable=value, then optional }, then optional \right|
+                    const evalMatch = content.match(/(?:\\left)?\|_\{?([^}]+?)\}?(?:\\right\|)?$/);
+                    if (evalMatch) {
+                        const possibleBody = content.substring(0, evalMatch.index).trim();
+                        const evalPart = evalMatch[1]; // e.g., "x=2"
                         const parts = evalPart.split("=");
                         // Variable might be 'x' or '\theta' etc - compare without backslash
                         const cleanVar = variable.replace(/^\\/,'');
-                        const evalVar = parts[0].trim().replace(/^\\/,'');
-                        if (parts.length === 2 && evalVar === cleanVar) {
-                            isEvaluation = true;
-                            targetVal = parts[1].trim();
-                            body = possibleBody;
+                        
+                        if (parts.length === 2) {
+                            const evalVar = parts[0].trim().replace(/^\\/,'');
+                            if (evalVar === cleanVar) {
+                                isEvaluation = true;
+                                targetVal = parts[1].trim();
+                                body = possibleBody;
+                            }
                         }
                     }
 
@@ -958,12 +971,15 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         const isDefinition = clean.includes('=');
 
         // Check for simple slider definition: "a = 2"
+        // Check for simple slider definition: "a = 2"
         let isSliderDef = false;
         let sliderVar = "";
-        if (isDefinition) {
+        // Only check for sliders if it wasn't already handled as a Sum, Integral, or Derivative
+        if (isDefinition && !handled) {
             // Match plain variable assignment: a = ... or \theta = ... or a_{1} = ...
             // Reject if it's a function f(x)= or if the var is x/y/r/t
-            const match = clean.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/);
+            // Stricter subscript matching ensures braces must be closed if opened
+            const match = clean.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_(?:[a-zA-Z0-9]+|\{[a-zA-Z0-9]+\}))?)\s*=/);
             if (match && !/^(x|y|r|t)$/.test(match[1])) {
                 isSliderDef = true;
                 sliderVar = match[1];
@@ -973,7 +989,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // Check for y = constant definition (e.g., y = 2a)
         let isYConstant = false;
         let constantRHS = "";
-        if (isDefinition) {
+        // Only check if not already handled
+        if (isDefinition && !handled) {
              const yMatch = clean.match(/^y\s*=\s*(.*)$/);
              if (yMatch) {
                  const rhs = yMatch[1];
