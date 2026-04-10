@@ -576,6 +576,10 @@ export function ChatModal({
   };
   expressions?: MathExpression[];
 }) {
+  if (!process.env.NEXT_PUBLIC_API_URL) {
+    throw new Error('NEXT_PUBLIC_API_URL environment variable is required');
+  }
+
   const [isOpen, setIsOpen] = useState(false);
   const [isMaximized, setIsMaximized] = useState(false);
 
@@ -646,7 +650,7 @@ export function ChatModal({
       const fd = new FormData();
       fd.append('file', file);
       
-      const res = await fetch('/api/parse', {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/parse`, {
         method: 'POST',
         body: fd,
         signal: controller.signal
@@ -844,7 +848,7 @@ export function ChatModal({
 
     // 2. Start Recording logic
     try {
-      const res = await fetch('/api/stt');
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/stt`);
       const data = await res.json();
 
       if (!res.ok) {
