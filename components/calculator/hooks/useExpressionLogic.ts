@@ -971,12 +971,15 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         const isDefinition = clean.includes('=');
 
         // Check for simple slider definition: "a = 2"
+        // Check for simple slider definition: "a = 2"
         let isSliderDef = false;
         let sliderVar = "";
-        if (isDefinition) {
+        // Only check for sliders if it wasn't already handled as a Sum, Integral, or Derivative
+        if (isDefinition && !handled) {
             // Match plain variable assignment: a = ... or \theta = ... or a_{1} = ...
             // Reject if it's a function f(x)= or if the var is x/y/r/t
-            const match = clean.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_\{?[a-zA-Z0-9]+\}?)?)\s*=/);
+            // Stricter subscript matching ensures braces must be closed if opened
+            const match = clean.match(/^((?:\\[a-zA-Z]+|[a-zA-Z])(?:_(?:[a-zA-Z0-9]+|\{[a-zA-Z0-9]+\}))?)\s*=/);
             if (match && !/^(x|y|r|t)$/.test(match[1])) {
                 isSliderDef = true;
                 sliderVar = match[1];
@@ -986,7 +989,8 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // Check for y = constant definition (e.g., y = 2a)
         let isYConstant = false;
         let constantRHS = "";
-        if (isDefinition) {
+        // Only check if not already handled
+        if (isDefinition && !handled) {
              const yMatch = clean.match(/^y\s*=\s*(.*)$/);
              if (yMatch) {
                  const rhs = yMatch[1];
