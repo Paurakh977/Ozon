@@ -1,0 +1,11 @@
+eng.traineddata
+node_modules/
+.git/
+.next/
+.env
+.env.local
+.env.example
+*.log
+README.md
+server/
+service/
