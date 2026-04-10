@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+token_log.log
+*.log
+.env
+.env.example
+.python-version

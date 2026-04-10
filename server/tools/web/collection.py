@@ -29,18 +29,11 @@ DEFAULT_PARAMS = json.dumps(
 
 web_search_mcp_tools = [
     McpToolset(
-        connection_params=StdioConnectionParams(
-            server_params=StdioServerParameters(
-                command="npx",
-                args=[
-                    "-y",
-                    "tavily-mcp@latest",
-                ],
-                env={
-                    "TAVILY_API_KEY": WEB_SEARCH_API_KEY,
-                    "DEFAULT_PARAMETERS": DEFAULT_PARAMS,
-                },
-            ),
+        connection_params=StreamableHTTPServerParams(
+            url=f"https://mcp.tavily.com/mcp/?tavilyApiKey={WEB_SEARCH_API_KEY}",
+            headers={
+                "DEFAULT_PARAMETERS": DEFAULT_PARAMS
+            },
             timeout=30,
         ),
     )

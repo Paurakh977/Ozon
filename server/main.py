@@ -273,5 +273,9 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 if __name__ == "__main__":
-    print("Server starting at http://127.0.0.1:8000")
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=False)
+    import os
+    host = os.getenv("UVICORN_HOST")
+    if not host:
+        raise ValueError("UVICORN_HOST environment variable is not set")
+    print(f"Server starting at http://{host}:8000")
+    uvicorn.run("main:app", host=host, port=8000, reload=False)

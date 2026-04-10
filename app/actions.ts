@@ -21,7 +21,10 @@ let client: any = null;
 
 function getClient() {
   if (!client) {
-    const grpcUrl = process.env.GRPC_SERVER_URL || 'localhost:50051';
+    const grpcUrl = process.env.GRPC_SERVER_URL;
+    if (!grpcUrl) {
+      throw new Error("GRPC_SERVER_URL environment variable is not set");
+    }
     console.log(`[gRPC Client] Connecting to gRPC server at: ${grpcUrl}`);
     client = new calculatorProto.CalculatorService(
       grpcUrl,
