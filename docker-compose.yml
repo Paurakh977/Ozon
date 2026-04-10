@@ -1,0 +1,79 @@
+name: ozon
+
+services:
+
+  # ── gRPC math/analysis service ─────────────────────────────────
+  ozon-grpc-server:
+    build:
+      context: ./service
+      dockerfile: Dockerfile
+    container_name: ozon-grpc-server
+    env_file:
+      - ./service/.env
+    ports:
+      # Expose externally only if you need to debug/call it from outside Docker.
+      # Remove this in production — agent-server talks to it via the internal network.
+      - "50051:50051"
+    restart: unless-stopped
+    networks:
+      - ozon-internal
+    healthcheck:
+      # grpc_health_probe or just a TCP check
+      test: ["CMD-SHELL", "python -c \"import grpc; ch=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=5)\" && echo ok"]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+  # ── Agent / WebSocket server ────────────────────────────────────
+  ozon-agent-server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: ozon-agent-server
+    env_file:
+      - ./server/.env
+    environment:
+      UVICORN_HOST: "0.0.0.0"
+    ports:
+      - "8000:8000"
+    depends_on:
+      ozon-grpc-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ozon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; urllib.request.urlopen('http://localhost:8000/'); sys.exit(0)\" || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── Next.js frontend ────────────────────────────────────────────
+  ozonclient:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_AGENT_WS_URL: ${NEXT_PUBLIC_AGENT_WS_URL}
+    container_name: ozonclient
+    env_file:
+      - .env
+    environment:
+      GRPC_SERVER_URL: ozon-grpc-server:50051
+      NEXT_PUBLIC_AGENT_WS_URL: ws://localhost:8000/ws
+    ports:
+      - "3000:3000"
+    depends_on:
+      ozon-agent-server:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ozon-internal
+
+networks:
+  ozon-internal:
+    driver: bridge
+    # Containers talk to each other but are isolated from host network
+    internal: false   # set true if you add a reverse proxy like nginx/traefik

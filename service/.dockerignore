@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.ruff_cache/
+tests/
+fast_math_rs/target/
+*.egg-info/
+dist/
+.env
+.env.example
+.python-version
