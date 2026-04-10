@@ -1,36 +1,94 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ozone Calculator
 
-## Getting Started
+Math calculator with AI agent integration.
 
-First, run the development server:
+## Project Structure
+
+- `/` - Next.js application (uses Bun)
+- `/microservice` - NestJS OCR/STT microservice (uses pnpm)
+
+## Prerequisites
+
+- Node.js 18+
+- Bun (for Next.js)
+- pnpm (for microservice)
+
+## Setup
+
+### 1. Microservice (NestJS)
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cd microservice
+pnpm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Copy `.env.example` to `.env` and configure:
+```env
+PORT=3001
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+DEEPGRAM_API_KEY=your_deepgram_key
+DEEPGRAM_PROJECT_ID=your_project_id
+MISTRAL_API_KEY=your_mistral_key
+SST_MAX_KEYS_PER_WINDOW=6
+SST_KEY_WINDOW_MS=60000
+```
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Run microservice:
+```bash
+pnpm run start:dev
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### 2. Next.js Application
 
-## Learn More
+```bash
+# From root directory
+bun install
+```
 
-To learn more about Next.js, take a look at the following resources:
+Copy `.env.example` to `.env` and configure:
+```env
+NEXT_PUBLIC_API_URL=http://localhost:3001
+NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:8000/ws
+GRPC_SERVER_URL=localhost:50051
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Run Next.js:
+```bash
+bun run dev
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Environment Variables
 
-## Deploy on Vercel
+### Microservice (.env)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| PORT | Yes | Server port (e.g., 3001) |
+| NEXT_PUBLIC_APP_URL | Yes | Next.js app URL for CORS |
+| DEEPGRAM_API_KEY | Yes | Deepgram API key |
+| DEEPGRAM_PROJECT_ID | Yes | Deepgram project ID |
+| MISTRAL_API_KEY | Yes | Mistral API key |
+| SST_MAX_KEYS_PER_WINDOW | Yes | Rate limit max keys |
+| SST_KEY_WINDOW_MS | Yes | Rate limit window (ms) |
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+### Next.js (.env)
+| Variable | Required | Description |
+|----------|----------|-------------|
+| NEXT_PUBLIC_API_URL | Yes | Microservice URL |
+| NEXT_PUBLIC_AGENT_WS_URL | Yes | Agent WebSocket URL |
+| GRPC_SERVER_URL | No | gRPC server URL |
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## API Endpoints
+
+### Microservice
+- `GET /stt` - Get Deepgram temporary key
+- `POST /parse` - Parse uploaded file
+
+## Development
+
+```bash
+# Terminal 1 - Microservice
+cd microservice && pnpm run start:dev
+
+# Terminal 2 - Next.js
+bun run dev
+```

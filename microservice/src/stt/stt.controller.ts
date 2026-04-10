@@ -1,74 +1,59 @@
-import { Controller, Get, Req, HttpCode, HttpStatus, HttpException } from '@nestjs/common';
-import { SttService } from './stt.service';
+import {
+  Controller,
+  Get,
+  Req,
+  HttpCode,
+  HttpStatus,
+  HttpException,
+  Logger,
+} from '@nestjs/common';
 import type { Request } from 'express';
+import { SttService } from './stt.service';
+import { RateLimitService } from '../ratelimit/ratelimit.service';
+
 
 @Controller('stt')
 export class SttController {
-  constructor(private readonly sttService: SttService) {}
+  private readonly logger = new Logger(SttController.name);
+
+  constructor(
+    private readonly sttService: SttService,
+    private readonly rateLimitService: RateLimitService,
+  ) {}
 
   @Get()
   @HttpCode(HttpStatus.OK)
   async createKey(@Req() req: Request) {
-    const apiKey = process.env.DEEPGRAM_API_KEY;
-    const projectId = process.env.DEEPGRAM_PROJECT_ID;
+    const ip = this.resolveIp(req);
 
-    if (!apiKey || !projectId) {
+    if (!this.rateLimitService.check(ip)) {
+      this.logger.warn(`Rate limit exceeded — IP: ${ip}`);
       throw new HttpException(
-        { error: 'Deepgram environment variables are missing.' },
-        HttpStatus.INTERNAL_SERVER_ERROR
+        { error: 'Rate limit exceeded' },
+        HttpStatus.TOO_MANY_REQUESTS,
       );
     }
-
-    const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL;
-    const headers = req.headers as Record<string, string | string[] | undefined>;
-    const origin = (Array.isArray(headers.origin) ? headers.origin[0] : headers.origin) || 
-                  (Array.isArray(headers.referer) ? headers.referer[0] : headers.referer) || '';
-    if (allowedOrigin && origin && !origin.includes(allowedOrigin)) {
-      console.warn('Blocked key request from disallowed origin:', origin);
-      throw new HttpException({ error: 'Forbidden' }, HttpStatus.FORBIDDEN);
-    }
-
-    const forwarded = (Array.isArray(headers['x-forwarded-for']) ? headers['x-forwarded-for'][0] : headers['x-forwarded-for']) || '';
-    const ip = (forwarded.split(',')[0] || 
-               (Array.isArray(headers['x-real-ip']) ? headers['x-real-ip'][0] : headers['x-real-ip']) || 
-               'unknown').trim();
-
-    const maxKeysPerWindow = process.env.SST_MAX_KEYS_PER_WINDOW;
-    const windowMs = process.env.SST_KEY_WINDOW_MS;
-    
-    if (!maxKeysPerWindow || !windowMs) {
-      throw new HttpException(
-        { error: 'Rate limit configuration is missing.' },
-        HttpStatus.INTERNAL_SERVER_ERROR
-      );
-    }
-
-    const MAX_KEYS_PER_WINDOW = parseInt(maxKeysPerWindow, 10);
-    const WINDOW_MS = parseInt(windowMs, 10);
-
-    if (!globalThis.__dg_sst_rate_map) {
-      (globalThis as any).__dg_sst_rate_map = new Map();
-    }
-    const rateMap: Map<string, number[]> = (globalThis as any).__dg_sst_rate_map;
-    const now = Date.now();
-    const windowKey = `sst:${ip}`;
-    const recent = (rateMap.get(windowKey) || []).filter((t) => now - t < WINDOW_MS);
-    if (recent.length >= MAX_KEYS_PER_WINDOW) {
-      console.warn(`Rate limit exceeded for IP ${ip}`);
-      throw new HttpException({ error: 'Rate limit exceeded' }, HttpStatus.TOO_MANY_REQUESTS);
-    }
-    recent.push(now);
-    rateMap.set(windowKey, recent);
 
     try {
-      const result = await this.sttService.createDeepgramKey();
-      return result;
+      return await this.sttService.createDeepgramKey();
     } catch (error) {
-      console.error('Network error generating Deepgram key:', error);
+      this.logger.error(
+        'Failed to generate Deepgram key',
+        error instanceof Error ? error.stack : String(error),
+      );
       throw new HttpException(
         { error: error instanceof Error ? error.message : 'Internal Server Error' },
-        HttpStatus.INTERNAL_SERVER_ERROR
+        HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  /** Best-effort IP extraction; handles proxies and IPv6-mapped IPv4. */
+  private resolveIp(req: Request): string {
+    const fwd = req.headers['x-forwarded-for'];
+    const firstFwd = (Array.isArray(fwd) ? fwd[0] : fwd)?.split(',')[0]?.trim();
+    const realIp = req.headers['x-real-ip'];
+    const firstReal = Array.isArray(realIp) ? realIp[0] : realIp;
+    return firstFwd ?? firstReal ?? req.socket?.remoteAddress ?? 'unknown';
   }
 }

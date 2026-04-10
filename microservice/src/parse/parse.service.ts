@@ -1,6 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Mistral } from '@mistralai/mistralai';
+import {
+  MAX_FILE_SIZE_BYTES,
+  MAX_PDF_PAGES,
+  PDF_MIME_TYPE,
+  IMAGE_MIME_TYPES,
+  resolveMime,
+} from './parse.constants';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ParsedPage {
   index: number;
@@ -31,90 +40,57 @@ interface ParseError {
 
 export type ParseResult = ParseSuccess | ParseError;
 
-const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
-const MAX_PDF_PAGES = 5;
-const MAX_IMAGES_PER_REQUEST = 5;
+// LiteParse page shape — avoids `any`
+interface LitePageItem {
+  pageNum?: number;
+  textItems?: Array<{ text?: string }>;
+}
 
-const IMAGE_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/jpg',
-  'image/png',
-  'image/webp',
-  'image/avif',
-  'image/gif',
-  'image/tiff',
-  'image/bmp',
-]);
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const PDF_MIME_TYPE = 'application/pdf';
-
-const EXT_TO_MIME: Record<string, string> = {
-  pdf: 'application/pdf',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  png: 'image/png',
-  webp: 'image/webp',
-  avif: 'image/avif',
-  gif: 'image/gif',
-  tiff: 'image/tiff',
-  bmp: 'image/bmp',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  doc: 'application/msword',
-  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  xls: 'application/vnd.ms-excel',
-  pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  ppt: 'application/vnd.ms-powerpoint',
-  txt: 'text/plain',
-  html: 'text/html',
-  csv: 'text/csv',
-  tsv: 'text/tab-separated-values',
-  odt: 'application/vnd.oasis.opendocument.text',
-  ods: 'application/vnd.oasis.opendocument.spreadsheet',
-  odp: 'application/vnd.oasis.opendocument.presentation',
-  rtf: 'application/rtf',
-};
-
-function resolveMime(fileName: string, mimeType: string): string {
-  if (mimeType && mimeType !== 'application/octet-stream') return mimeType;
-  const ext = fileName.split('.').pop()?.toLowerCase() ?? '';
-  return EXT_TO_MIME[ext] ?? 'application/octet-stream';
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function replaceImagePlaceholders(
   markdown: string,
-  images: Array<{ id: string; imageBase64?: string | null }>
+  images: Array<{ id: string; imageBase64?: string | null }>,
 ): string {
   let result = markdown;
   for (const img of images) {
     if (!img.imageBase64) continue;
     result = result.replace(
-      new RegExp(`!\\[${escapeRegex(img.id)}\\]\\(${escapeRegex(img.id)}\\)`, 'g'),
-      `![${img.id}](${img.imageBase64})`
+      new RegExp(
+        `!\\[${escapeRegex(img.id)}\\]\\(${escapeRegex(img.id)}\\)`,
+        'g',
+      ),
+      `![${img.id}](${img.imageBase64})`,
     );
   }
   return result;
 }
 
-function escapeRegex(s: string) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class ParseService {
-  private mistral: Mistral | null = null;
+  private readonly logger = new Logger(ParseService.name);
 
-  constructor(private configService: ConfigService) {}
+  // Lazy singletons — initialised once and reused for the lifetime of the service
+  private mistralClient: Mistral | null = null;
+  // LiteParse is a dynamic import; cache the class so we only pay the import
+  // cost once rather than on every parse call.
+  private LiteParseClass: (new (opts: LiteParseOptions) => LiteParseInstance) | null = null;
 
-  private getMistralClient(): Mistral {
-    if (!this.mistral) {
-      const apiKey = this.configService.get<string>('MISTRAL_API_KEY');
-      if (!apiKey) throw new Error('MISTRAL_API_KEY is not set in environment variables.');
-      this.mistral = new Mistral({ apiKey });
-    }
-    return this.mistral;
-  }
+  constructor(private readonly configService: ConfigService) {}
 
-  async parseFile(buffer: Buffer, fileName: string, mimeType: string): Promise<ParseResult> {
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
+  async parseFile(
+    buffer: Buffer,
+    fileName: string,
+    mimeType: string,
+  ): Promise<ParseResult> {
     const resolvedMime = resolveMime(fileName, mimeType);
 
     if (buffer.length > MAX_FILE_SIZE_BYTES) {
@@ -125,15 +101,17 @@ export class ParseService {
       };
     }
 
-    const useMistral = resolvedMime === PDF_MIME_TYPE || IMAGE_MIME_TYPES.has(resolvedMime);
+    const useMistral =
+      resolvedMime === PDF_MIME_TYPE || IMAGE_MIME_TYPES.has(resolvedMime);
 
     if (useMistral) {
       try {
         return await this.runMistralOCR(buffer, resolvedMime, fileName);
       } catch (mistralErr) {
-        console.warn(
-          `[parse] Mistral OCR failed for "${fileName}", falling back to LiteParse.`,
-          mistralErr instanceof Error ? mistralErr.message : mistralErr
+        this.logger.warn(
+          `Mistral OCR failed for "${fileName}", falling back to LiteParse — ${
+            mistralErr instanceof Error ? mistralErr.message : String(mistralErr)
+          }`,
         );
         try {
           const fallback = await this.runLiteParse(buffer, fileName, resolvedMime);
@@ -142,11 +120,9 @@ export class ParseService {
           return {
             status: 'error',
             fileName,
-            error: `Mistral OCR failed (${
-              mistralErr instanceof Error ? mistralErr.message : 'unknown'
-            }) and LiteParse fallback also failed (${
-              lpErr instanceof Error ? lpErr.message : 'unknown'
-            }).`,
+            error:
+              `Mistral OCR failed (${mistralErr instanceof Error ? mistralErr.message : 'unknown'})` +
+              ` and LiteParse fallback also failed (${lpErr instanceof Error ? lpErr.message : 'unknown'}).`,
           };
         }
       }
@@ -163,18 +139,50 @@ export class ParseService {
     }
   }
 
+  // ─── Private helpers ─────────────────────────────────────────────────────────
+
+  private getMistralClient(): Mistral {
+    if (!this.mistralClient) {
+      const apiKey = this.configService.getOrThrow<string>('MISTRAL_API_KEY');
+      this.mistralClient = new Mistral({ apiKey });
+    }
+    return this.mistralClient;
+  }
+
+  /** Import LiteParse once, then reuse the class on subsequent calls. */
+  private async getLiteParseClass(): Promise<
+    new (opts: LiteParseOptions) => LiteParseInstance
+  > {
+    if (!this.LiteParseClass) {
+      const mod = await import('@llamaindex/liteparse');
+      // The upstream LiteParse constructor has a slightly different
+      // parameter shape; cast to our minimal constructor type to
+      // avoid a strict mismatch while keeping runtime behavior.
+      this.LiteParseClass = mod.LiteParse as unknown as new (
+        opts: LiteParseOptions,
+      ) => LiteParseInstance;
+    }
+    return this.LiteParseClass as new (opts: LiteParseOptions) => LiteParseInstance;
+  }
+
   private async runMistralOCR(
     buffer: Buffer,
     mimeType: string,
-    fileName: string
+    fileName: string,
   ): Promise<ParseSuccess> {
     const client = this.getMistralClient();
     const base64 = buffer.toString('base64');
-
     const isPdf = mimeType === PDF_MIME_TYPE;
+
     const document = isPdf
-      ? { type: 'document_url' as const, documentUrl: `data:application/pdf;base64,${base64}` }
-      : { type: 'image_url' as const, imageUrl: `data:${mimeType};base64,${base64}` };
+      ? {
+          type: 'document_url' as const,
+          documentUrl: `data:application/pdf;base64,${base64}`,
+        }
+      : {
+          type: 'image_url' as const,
+          imageUrl: `data:${mimeType};base64,${base64}`,
+        };
 
     const response = await client.ocr.process({
       model: 'mistral-ocr-latest',
@@ -187,7 +195,10 @@ export class ParseService {
     const pagesToProcess = truncated ? allPages.slice(0, MAX_PDF_PAGES) : allPages;
 
     const pages: ParsedPage[] = pagesToProcess.map((page) => {
-      const images = page.images ?? [];
+      const images = (page.images ?? []) as Array<{
+        id: string;
+        imageBase64?: string | null;
+      }>;
       const markdown = replaceImagePlaceholders(page.markdown ?? '', images);
       return {
         index: page.index,
@@ -195,8 +206,6 @@ export class ParseService {
         hasEmbeddedImages: images.some((img) => !!img.imageBase64),
       };
     });
-
-    const fullMarkdown = pages.map((p) => p.markdown).join('\n\n---\n\n');
 
     return {
       status: 'success',
@@ -208,7 +217,7 @@ export class ParseService {
       truncated,
       ...(truncated ? { truncatedAt: MAX_PDF_PAGES } : {}),
       pages,
-      fullMarkdown,
+      fullMarkdown: pages.map((p) => p.markdown).join('\n\n---\n\n'),
       model: response.model,
       usageInfo: response.usageInfo as Record<string, unknown> | undefined,
     };
@@ -217,9 +226,9 @@ export class ParseService {
   private async runLiteParse(
     buffer: Buffer,
     fileName: string,
-    mimeType: string
+    mimeType: string,
   ): Promise<ParseSuccess> {
-    const { LiteParse } = await import('@llamaindex/liteparse');
+    const LiteParse = await this.getLiteParseClass();
     const parser = new LiteParse({
       ocrEnabled: true,
       outputFormat: 'text',
@@ -229,16 +238,15 @@ export class ParseService {
 
     const result = await parser.parse(buffer);
 
-    const pages: ParsedPage[] = (result.pages ?? []).map((p: any, i: number) => {
-      const pageNum = typeof p.pageNum === 'number' ? p.pageNum : i + 1;
-      const textItems = Array.isArray(p.textItems) ? p.textItems : [];
-      const text = textItems.map((item: any) => item.text ?? '').join(' ');
-      return {
-        index: pageNum - 1,
-        markdown: text,
-        hasEmbeddedImages: false,
-      };
-    });
+    const pages: ParsedPage[] = (result.pages ?? []).map(
+      (p: LitePageItem, i: number) => {
+        const pageNum = typeof p.pageNum === 'number' ? p.pageNum : i + 1;
+        const text = (p.textItems ?? [])
+          .map((item) => item.text ?? '')
+          .join(' ');
+        return { index: pageNum - 1, markdown: text, hasEmbeddedImages: false };
+      },
+    );
 
     const fullMarkdown =
       typeof result.text === 'string' && result.text.trim()
@@ -257,4 +265,22 @@ export class ParseService {
       fullMarkdown,
     };
   }
+}
+
+// ─── Minimal LiteParse interface shapes (avoids `any`) ───────────────────────
+
+interface LiteParseOptions {
+  ocrEnabled?: boolean;
+  outputFormat?: string;
+  dpi?: number;
+  maxPages?: number;
+}
+
+interface LiteParseResult {
+  text?: string;
+  pages?: LitePageItem[];
+}
+
+interface LiteParseInstance {
+  parse(buffer: Buffer): Promise<LiteParseResult>;
 }
