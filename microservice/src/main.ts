@@ -6,7 +6,11 @@ async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
   const app = await NestFactory.create(AppModule, {
-    bufferLogs: true,
+    bodyParser: false,
+  });
+
+  app.setGlobalPrefix('api', {
+    exclude: ['/api/auth/(.*)'],
   });
 
   app.useGlobalPipes(
@@ -29,7 +33,6 @@ async function bootstrap() {
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   });
 
-  // Graceful shutdown 
   app.enableShutdownHooks();
 
   const port = process.env.PORT;
@@ -38,7 +41,7 @@ async function bootstrap() {
   }
 
   await app.listen(port);
-  logger.log(`Microservice running on http://localhost:${port}`);
+  logger.log(`🚀 Microservice running on http://localhost:${port}`);
 }
 
 bootstrap();

@@ -650,9 +650,10 @@ export function ChatModal({
       const fd = new FormData();
       fd.append('file', file);
       
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/parse`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/parse`, {
         method: 'POST',
         body: fd,
+        credentials:"include",
         signal: controller.signal
       });
       
@@ -848,7 +849,9 @@ export function ChatModal({
 
     // 2. Start Recording logic
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/stt`);
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/stt`, {
+        credentials: 'include',  // <-- Add this
+      });
       const data = await res.json();
 
       if (!res.ok) {
