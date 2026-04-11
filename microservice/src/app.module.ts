@@ -1,6 +1,9 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import * as Joi from 'joi';
+import { AuthModule } from '@thallesp/nestjs-better-auth';
+import { auth } from './auth';
+import { UsersModule } from './users/users.module';
 import { SttModule } from './stt/stt.module';
 import { ParseModule } from './parse/parse.module';
 import { RatelimitModule } from './ratelimit/ratelimit.module';
@@ -22,6 +25,14 @@ import { RatelimitModule } from './ratelimit/ratelimit.module';
       }),
       validationOptions: { abortEarly: true },
     }),
+    AuthModule.forRoot({
+      auth,
+      bodyParser: {
+        json: { limit: '2mb' },
+        urlencoded: { limit: '2mb', extended: true },
+      },
+    }),
+    UsersModule,
     SttModule,
     ParseModule,
     RatelimitModule,
