@@ -2,7 +2,6 @@ name: ozon
 
 services:
 
-  # ── gRPC math/analysis service ─────────────────────────────────
   ozon-grpc-server:
     build:
       context: ./service
@@ -11,21 +10,38 @@ services:
     env_file:
       - ./service/.env
     ports:
-      # Expose externally only if you need to debug/call it from outside Docker.
-      # Remove this in production — agent-server talks to it via the internal network.
       - "50051:50051"
     restart: unless-stopped
     networks:
       - ozon-internal
     healthcheck:
-      # grpc_health_probe or just a TCP check
       test: ["CMD-SHELL", "python -c \"import grpc; ch=grpc.insecure_channel('localhost:50051'); grpc.channel_ready_future(ch).result(timeout=5)\" && echo ok"]
       interval: 20s
       timeout: 10s
       retries: 3
       start_period: 15s
 
-  # ── Agent / WebSocket server ────────────────────────────────────
+  ozon-microservice:
+    build:
+      context: ./microservice
+      dockerfile: Dockerfile
+    container_name: ozon-microservice
+    env_file:
+      - microservice/.env
+    environment:
+      PORT: "3001"
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    networks:
+      - ozon-internal
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3001/stt', (r) => process.exit(0)).on('error', () => process.exit(1))\""]
+      interval: 20s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
   ozon-agent-server:
     build:
       context: ./server
@@ -50,23 +66,26 @@ services:
       retries: 5
       start_period: 60s
 
-  # ── Next.js frontend ────────────────────────────────────────────
   ozonclient:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_AGENT_WS_URL: ${NEXT_PUBLIC_AGENT_WS_URL}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
     container_name: ozonclient
     env_file:
       - .env
     environment:
       GRPC_SERVER_URL: ozon-grpc-server:50051
       NEXT_PUBLIC_AGENT_WS_URL: ws://localhost:8000/ws
+      NEXT_PUBLIC_API_URL: http://ozon-microservice:3001
     ports:
       - "3000:3000"
     depends_on:
       ozon-agent-server:
+        condition: service_healthy
+      ozon-microservice:
         condition: service_healthy
     restart: unless-stopped
     networks:
@@ -75,5 +94,4 @@ services:
 networks:
   ozon-internal:
     driver: bridge
-    # Containers talk to each other but are isolated from host network
-    internal: false   # set true if you add a reverse proxy like nginx/traefik
+    internal: false   # set true later with nginx/traefik
