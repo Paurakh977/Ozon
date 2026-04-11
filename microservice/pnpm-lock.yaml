@@ -8,9 +8,18 @@ importers:
 
   .:
     dependencies:
+      '@llamaindex/liteparse':
+        specifier: ^1.4.6
+        version: 1.4.6
+      '@mistralai/mistralai':
+        specifier: ^2.2.0
+        version: 2.2.0
       '@nestjs/common':
         specifier: ^11.0.1
         version: 11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+      '@nestjs/config':
+        specifier: ^4.0.4
+        version: 4.0.4(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
       '@nestjs/core':
         specifier: ^11.0.1
         version: 11.1.18(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.1.18)(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -20,6 +29,9 @@ importers:
       '@nestjs/platform-express':
         specifier: ^11.0.1
         version: 11.1.18(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.18)
+      '@nestjs/throttler':
+        specifier: ^6.5.0
+        version: 6.5.0(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.18)(reflect-metadata@0.2.2)
       class-transformer:
         specifier: ^0.5.1
         version: 0.5.1
@@ -29,6 +41,9 @@ importers:
       joi:
         specifier: ^18.1.2
         version: 18.1.2
+      multer:
+        specifier: ^2.1.1
+        version: 2.1.1
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -42,27 +57,15 @@ importers:
       '@eslint/js':
         specifier: ^9.18.0
         version: 9.39.4
-      '@llamaindex/liteparse':
-        specifier: ^1.4.6
-        version: 1.4.6
-      '@mistralai/mistralai':
-        specifier: ^2.2.0
-        version: 2.2.0
       '@nestjs/cli':
         specifier: ^11.0.0
         version: 11.0.19(@types/node@22.19.17)
-      '@nestjs/config':
-        specifier: ^4.0.4
-        version: 4.0.4(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(rxjs@7.8.2)
       '@nestjs/schematics':
         specifier: ^11.0.0
         version: 11.0.10(chokidar@4.0.3)(typescript@5.9.3)
       '@nestjs/testing':
         specifier: ^11.0.1
         version: 11.1.18(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.18)(@nestjs/platform-express@11.1.18)
-      '@nestjs/throttler':
-        specifier: ^6.5.0
-        version: 6.5.0(@nestjs/common@11.1.18(class-transformer@0.5.1)(class-validator@0.15.1)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.1.18)(reflect-metadata@0.2.2)
       '@types/express':
         specifier: ^5.0.0
         version: 5.0.6
