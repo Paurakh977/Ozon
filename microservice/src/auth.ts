@@ -7,14 +7,18 @@ import { sendEmail } from "./email";
 
 const prisma = new PrismaClient();
 
+const API_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:3001";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+
+const isProduction = process.env.NODE_ENV === "production";
+
 export const auth: any = betterAuth({
-  appName: "MyApp",
+  appName: "Ozon",
 
   database: prismaAdapter(prisma, {
     provider: "postgresql",
   }),
 
-  // ─── Email & Password ───────────────────────────────────────────────────────
   emailAndPassword: {
     enabled: true,
     minPasswordLength: 8,
@@ -24,7 +28,7 @@ export const auth: any = betterAuth({
     sendResetPassword: async ({ user, url }) => {
       await sendEmail({
         to: user.email,
-        subject: "Reset your password — MyApp",
+        subject: "Reset your password — Ozon",
         html: `
           <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px">
             <h2 style="color:#1e293b">Reset your password</h2>
@@ -45,12 +49,11 @@ export const auth: any = betterAuth({
     revokeSessionsOnPasswordReset: true,
   },
 
-  // ─── Email Verification ─────────────────────────────────────────────────────
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
       await sendEmail({
         to: user.email,
-        subject: "Verify your email — MyApp",
+        subject: "Verify your email — Ozon",
         html: `
           <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px">
             <h2 style="color:#1e293b">Verify your email</h2>
@@ -67,11 +70,9 @@ export const auth: any = betterAuth({
         `,
       });
     },
-    // Redirect here after clicking the email link
-    callbackURL: "http://localhost:3000/auth/verify-email",
+    callbackURL: `${APP_URL}/auth/verify-email`,
   },
 
-  // ─── Social Providers ───────────────────────────────────────────────────────
   socialProviders: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID as string,
@@ -84,7 +85,6 @@ export const auth: any = betterAuth({
     },
   },
 
-  // ─── Session ────────────────────────────────────────────────────────────────
   session: {
     expiresIn: 60 * 60 * 24 * 7,
     updateAge: 60 * 60 * 24,
@@ -94,7 +94,6 @@ export const auth: any = betterAuth({
     },
   },
 
-  // ─── Rate Limiting ──────────────────────────────────────────────────────────
   rateLimit: {
     enabled: true,
     window: 60,
@@ -104,12 +103,11 @@ export const auth: any = betterAuth({
 
   trustedOrigins: [
     "http://localhost:3000",
-    "https://yourdomain.com",
+    APP_URL,
   ],
 
   advanced: {
-    useSecureCookies: false,
-    // Fix the IP warning from your logs:
+    useSecureCookies: isProduction,
     ipAddress: {
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },
@@ -117,17 +115,16 @@ export const auth: any = betterAuth({
 
   plugins: [
     twoFactor({
-      issuer: "MyApp",
+      issuer: "Ozon",
       totpOptions: {
         digits: 6,
-        period: 30,
+        period: 30, // 30secs
       },
-      // ── Email OTP (this fixes "send otp isn't configured") ──────────────────
       otpOptions: {
         sendOTP: async ({ user, otp }) => {
           await sendEmail({
             to: user.email,
-            subject: "Your verification code — MyApp",
+            subject: "Your verification code — Ozon",
             html: `
               <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto;padding:32px">
                 <h2 style="color:#1e293b">Your verification code</h2>
@@ -143,7 +140,7 @@ export const auth: any = betterAuth({
             `,
           });
         },
-        period: 3,           // expires in 3 minutes
+        period: 3, // 3mins
         allowedAttempts: 5,
       },
       backupCodeOptions: {

@@ -5,6 +5,18 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
+  const requiredEnvVars = [
+    'BETTER_AUTH_URL',
+    'NEXT_PUBLIC_APP_URL',
+    'PORT',
+  ];
+
+  for (const key of requiredEnvVars) {
+    if (!process.env[key]) {
+      throw new Error(`Missing required environment variable: ${key}`);
+    }
+  }
+
   const app = await NestFactory.create(AppModule, {
     bodyParser: false,
   });
@@ -22,9 +34,7 @@ async function bootstrap() {
   );
 
   const allowedOrigin = process.env.NEXT_PUBLIC_APP_URL;
-  if (!allowedOrigin) {
-    throw new Error('NEXT_PUBLIC_APP_URL environment variable is required');
-  }
+  const apiUrl = process.env.BETTER_AUTH_URL;
 
   app.enableCors({
     origin: allowedOrigin,
@@ -35,13 +45,9 @@ async function bootstrap() {
 
   app.enableShutdownHooks();
 
-  const port = process.env.PORT;
-  if (!port) {
-    throw new Error('PORT environment variable is required');
-  }
-
-  await app.listen(port);
-  logger.log(`Microservice running on http://localhost:${port}`);
+  await app.listen(process.env.PORT!);
+  logger.log(`Microservice running on ${apiUrl}`);
+  logger.log(`CORS allowed origin: ${allowedOrigin}`);
 }
 
 bootstrap();
