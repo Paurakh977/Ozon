@@ -30,7 +30,7 @@ async function bootstrap() {
     origin: allowedOrigin,
     methods: ['GET', 'POST', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'cookie'],
   });
 
   app.enableShutdownHooks();
@@ -41,7 +41,7 @@ async function bootstrap() {
   }
 
   await app.listen(port);
-  logger.log(`🚀 Microservice running on http://localhost:${port}`);
+  logger.log(`Microservice running on http://localhost:${port}`);
 }
 
 bootstrap();
