@@ -45,9 +45,9 @@ export async function sendEmail({
   const recipient = DEV_EMAIL_OVERRIDE ?? to;
 
   // In production, use your verified domain. In dev, use Resend's test domain.
-  const fromAddress = isProduction 
-    ? "Ozon <noreply@yourdomain.com>"  // TODO: Replace with your verified domain
-    : "Ozon <onboarding@resend.dev>";
+  const fromAddress = DEV_EMAIL_OVERRIDE 
+    ? "Ozon <onboarding@resend.dev>"
+    : "Ozon <noreply@yourdomain.com>"; // TODO: Replace with your verified domain
 
   const { error } = await resend.emails.send({
     from: fromAddress,

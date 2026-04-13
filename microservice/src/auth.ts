@@ -10,7 +10,6 @@ const prisma = new PrismaClient();
 const API_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:3001";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
-const isProduction = process.env.NODE_ENV === "production";
 
 export const auth: any = betterAuth({
   appName: "Ozon",
@@ -104,11 +103,13 @@ export const auth: any = betterAuth({
   trustedOrigins: [
     "http://localhost:3000",
     APP_URL,
+    "https://localhost"
   ],
 
   advanced: {
-    useSecureCookies: isProduction,
+    useSecureCookies: process.env.BETTER_AUTH_URL?.startsWith("https") ?? false,
     ipAddress: {
+      disableIpCheck: process.env.NODE_ENV !== "production",
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },
   },

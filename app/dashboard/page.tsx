@@ -85,7 +85,7 @@ export default function DashboardPage() {
 
   const { error } = await authClient.requestPasswordReset({
     email: session.user.email,
-    redirectTo: `${window.location.origin}/auth/reset-password`,
+    redirectTo: `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/auth/reset-password`,
   });
 
   if (error) {

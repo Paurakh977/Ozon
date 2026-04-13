@@ -15,13 +15,13 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSent, setResendSent] = useState(false);
-
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
   const handleResendVerification = async () => {
     setResendLoading(true);
     const { error } = await authClient.sendVerificationEmail({
       email,
-      callbackURL: "http://localhost:3000/dashboard",
+      callbackURL: `${APP_URL}/dashboard`,
     });
     if (error) {
       setError(error.message ?? "Failed to resend.");
@@ -42,7 +42,7 @@ export default function AuthPage() {
         email,
         password,
         name,
-        callbackURL: "http://localhost:3000/dashboard",
+        callbackURL: `${APP_URL}/dashboard`,
       });
       if (error) {
         setError(error.message ?? "Sign up failed");
@@ -54,7 +54,7 @@ export default function AuthPage() {
       }
     } else {
       const { data, error } = await authClient.signIn.email(
-        { email, password, callbackURL: "http://localhost:3000/dashboard" },
+        { email, password, callbackURL: `${APP_URL}/dashboard` },
         {
           onSuccess(ctx) {
             if (ctx.data?.twoFactorRedirect) return; // twoFactorClient handles this
@@ -79,14 +79,14 @@ export default function AuthPage() {
   const handleGoogleSignIn = async () => {
     await authClient.signIn.social({
       provider: "google",
-      callbackURL: "http://localhost:3000/dashboard",
+      callbackURL: `${APP_URL}/dashboard`,
     });
   };
 
   const handleGithubSignIn = async () => {
     await authClient.signIn.social({
       provider: "github",
-      callbackURL: "http://localhost:3000/dashboard",
+      callbackURL: `${APP_URL}/dashboard`,
     });
   };
 
