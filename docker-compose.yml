@@ -101,10 +101,6 @@ services:
       - microservice/.env
     environment:
       PORT: "3001"
-      NEXT_PUBLIC_APP_URL: "https://localhost"
-      BETTER_AUTH_URL: "https://localhost"
-      DATABASE_URL: "postgresql://ozon:ozon69@ozon-postgres:5432/ozon"
-      REDIS_URL: "redis://ozon-redis:6379"
     depends_on:
       ozon-postgres:
         condition: service_healthy
@@ -127,8 +123,6 @@ services:
     container_name: ozon-agent-server
     env_file:
       - ./server/.env
-    environment:
-      UVICORN_HOST: "0.0.0.0"
     depends_on:
       ozon-grpc-server:
         condition: service_healthy
@@ -147,17 +141,12 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_AGENT_WS_URL: wss://localhost/ws
-        NEXT_PUBLIC_API_URL: https://localhost
-        NEXT_PUBLIC_APP_URL: https://localhost
+        NEXT_PUBLIC_AGENT_WS_URL: ${NEXT_PUBLIC_AGENT_WS_URL}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL}
     container_name: ozonclient
     env_file:
       - .env
-    environment:
-      GRPC_SERVER_URL: ozon-grpc-server:50051 # Internal Docker DNS, no TLS needed server-to-server
-      NEXT_PUBLIC_AGENT_WS_URL: wss://localhost/ws
-      NEXT_PUBLIC_API_URL: https://localhost
-      NEXT_PUBLIC_APP_URL: https://localhost
     depends_on:
       ozon-agent-server:
         condition: service_healthy

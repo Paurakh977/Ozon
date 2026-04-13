@@ -184,7 +184,12 @@ async def serve():
     calculator_pb2_grpc.add_CalculatorServiceServicer_to_server(
         CalculatorService(), server
     )
-    port = os.getenv("GRPC_SERVER_PORT", "50051")
+    url = os.getenv("GRPC_SERVER_URL")
+    if not url:
+        raise RuntimeError("Missing required environment variable: GRPC_SERVER_URL")
+    port = os.getenv("GRPC_SERVER_PORT")
+    if not port:
+        raise RuntimeError("Missing required environment variable: GRPC_SERVER_PORT")
     listen_addr = f"[::]:{port}"
     server.add_insecure_port(listen_addr)
     logging.info(

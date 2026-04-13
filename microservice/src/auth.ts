@@ -7,8 +7,8 @@ import { sendEmail } from "./email";
 
 const prisma = new PrismaClient();
 
-const API_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:3001";
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const API_URL = process.env.BETTER_AUTH_URL as string;
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL as string;
 
 
 export const auth: any = betterAuth({
@@ -85,18 +85,18 @@ export const auth: any = betterAuth({
   },
 
   session: {
-    expiresIn: 60 * 60 * 24 * 7,
-    updateAge: 60 * 60 * 24,
+    expiresIn: process.env.SESSION_EXPIRES_IN ? parseInt(process.env.SESSION_EXPIRES_IN) : 60 * 60 * 24 * 7,
+    updateAge: process.env.SESSION_UPDATE_AGE ? parseInt(process.env.SESSION_UPDATE_AGE) : 60 * 60 * 24,
     cookieCache: {
       enabled: true,
-      maxAge: 60 * 5,
+      maxAge: process.env.SESSION_COOKIE_MAX_AGE ? parseInt(process.env.SESSION_COOKIE_MAX_AGE) : 60 * 5,
     },
   },
 
   rateLimit: {
     enabled: true,
-    window: 60,
-    max: 20,
+    window: process.env.RATE_LIMIT_WINDOW ? parseInt(process.env.RATE_LIMIT_WINDOW) : 60,
+    max: process.env.RATE_LIMIT_MAX ? parseInt(process.env.RATE_LIMIT_MAX) : 20,
     storage: "database",
   },
 
@@ -119,7 +119,7 @@ export const auth: any = betterAuth({
       issuer: "Ozon",
       totpOptions: {
         digits: 6,
-        period: 30, // 30secs
+        period: process.env.TWO_FACTOR_TOTP_PERIOD ? parseInt(process.env.TWO_FACTOR_TOTP_PERIOD) : 30, // 30secs
       },
       otpOptions: {
         sendOTP: async ({ user, otp }) => {
@@ -141,16 +141,16 @@ export const auth: any = betterAuth({
             `,
           });
         },
-        period: 3, // 3mins
-        allowedAttempts: 5,
+        period: process.env.TWO_FACTOR_OTP_PERIOD ? parseInt(process.env.TWO_FACTOR_OTP_PERIOD) : 3, // 3mins
+        allowedAttempts: process.env.TWO_FACTOR_OTP_ATTEMPTS ? parseInt(process.env.TWO_FACTOR_OTP_ATTEMPTS) : 5,
       },
       backupCodeOptions: {
-        amount: 10,
-        length: 10,
+        amount: process.env.TWO_FACTOR_BACKUP_AMOUNT ? parseInt(process.env.TWO_FACTOR_BACKUP_AMOUNT) : 10,
+        length: process.env.TWO_FACTOR_BACKUP_LENGTH ? parseInt(process.env.TWO_FACTOR_BACKUP_LENGTH) : 10,
         storeBackupCodes: "encrypted",
       },
-      twoFactorCookieMaxAge: 600,
-      trustDeviceMaxAge: 60 * 60 * 24 * 30,
+      twoFactorCookieMaxAge: process.env.TWO_FACTOR_COOKIE_MAX_AGE ? parseInt(process.env.TWO_FACTOR_COOKIE_MAX_AGE) : 600,
+      trustDeviceMaxAge: process.env.TRUST_DEVICE_MAX_AGE ? parseInt(process.env.TRUST_DEVICE_MAX_AGE) : 60 * 60 * 24 * 30,
     }),
 
     admin(),

@@ -15,7 +15,7 @@ export default function AuthPage() {
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [resendSent, setResendSent] = useState(false);
-  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL as string;
 
   const handleResendVerification = async () => {
     setResendLoading(true);

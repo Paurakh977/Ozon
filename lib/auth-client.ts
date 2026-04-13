@@ -13,7 +13,7 @@ import { twoFactorClient } from "better-auth/client/plugins";
  * Used for: signIn, signUp, signOut, session management, OAuth flows.
  */
 export const authClient = createAuthClient({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001",
+  baseURL: process.env.NEXT_PUBLIC_API_URL as string,
   plugins: [
     twoFactorClient({
       onTwoFactorRedirect() {

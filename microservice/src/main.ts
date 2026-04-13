@@ -8,7 +8,19 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
 
-  const requiredEnvVars = ['BETTER_AUTH_URL', 'NEXT_PUBLIC_APP_URL', 'PORT'];
+  const requiredEnvVars = [
+    'PORT',
+    'DATABASE_URL',
+    'BETTER_AUTH_SECRET',
+    'BETTER_AUTH_URL',
+    'NEXT_PUBLIC_APP_URL',
+    'GOOGLE_CLIENT_ID',
+    'GOOGLE_CLIENT_SECRET',
+    'GITHUB_CLIENT_ID',
+    'GITHUB_CLIENT_SECRET',
+    'RESEND_API_KEY',
+    'REDIS_URL'
+  ];
   for (const key of requiredEnvVars) {
     if (!process.env[key]) {
       throw new Error(`Missing required environment variable: ${key}`);

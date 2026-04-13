@@ -16,13 +16,13 @@ const DEV_EMAIL_OVERRIDE = process.env.DEV_EMAIL_OVERRIDE;
  * BETTER_AUTH_URL: The API server URL used in email links.
  * In PRODUCTION: https://api.yourdomain.com
  */
-const API_URL = process.env.BETTER_AUTH_URL ?? "http://localhost:3001";
+const API_URL = process.env.BETTER_AUTH_URL as string;
 
 /**
  * NEXT_PUBLIC_APP_URL: Your frontend URL for email callbacks.
  * In PRODUCTION: https://yourdomain.com
  */
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL as string;
 
 const isProduction = process.env.NODE_ENV === "production";
 
