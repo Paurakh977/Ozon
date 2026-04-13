@@ -2,6 +2,24 @@ name: ozon
 
 services:
 
+  nginx:
+    image: nginx:alpine
+    container_name: ozon-nginx
+    ports:
+      - "80:80"        
+      - "443:443"      
+      - "50051:50051"  
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - ozonclient
+      - ozon-microservice
+      - ozon-agent-server
+    networks:
+      - ozon-internal
+    restart: unless-stopped
+
   ozon-postgres:
     image: postgres:16-alpine
     container_name: ozon-postgres
@@ -12,7 +30,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432" # Securely bind to local machine only
     restart: unless-stopped
     networks:
       - ozon-internal
@@ -26,23 +44,17 @@ services:
   pgadmin:
     image: dpage/pgadmin4
     container_name: ozon-pgadmin
-
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@ozon.com
       PGADMIN_DEFAULT_PASSWORD: admin123
-
     ports:
-      - "5050:80"
-
+      - "127.0.0.1:5050:80" # Securely bind to local machine only
     depends_on:
       - ozon-postgres
-
     networks:
       - ozon-internal
-
     volumes:
       - pgadmin_data:/var/lib/pgadmin
-
     restart: unless-stopped
 
   redis:
@@ -52,7 +64,7 @@ services:
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379" # Securely bind to local machine only
     restart: unless-stopped
     networks:
       - ozon-internal
@@ -70,8 +82,6 @@ services:
     container_name: ozon-grpc-server
     env_file:
       - ./service/.env
-    ports:
-      - "50051:50051"
     restart: unless-stopped
     networks:
       - ozon-internal
@@ -91,10 +101,10 @@ services:
       - microservice/.env
     environment:
       PORT: "3001"
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-ozon}
-      REDIS_URL: redis://redis:6379
-    ports:
-      - "3001:3001"
+      NEXT_PUBLIC_APP_URL: "https://localhost"
+      BETTER_AUTH_URL: "https://localhost"
+      DATABASE_URL: "postgresql://ozon:ozon69@ozon-postgres:5432/ozon"
+      REDIS_URL: "redis://ozon-redis:6379"
     depends_on:
       ozon-postgres:
         condition: service_healthy
@@ -119,8 +129,6 @@ services:
       - ./server/.env
     environment:
       UVICORN_HOST: "0.0.0.0"
-    ports:
-      - "8000:8000"
     depends_on:
       ozon-grpc-server:
         condition: service_healthy
@@ -139,17 +147,17 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_AGENT_WS_URL: ${NEXT_PUBLIC_AGENT_WS_URL}
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_AGENT_WS_URL: wss://localhost/ws
+        NEXT_PUBLIC_API_URL: https://localhost
+        NEXT_PUBLIC_APP_URL: https://localhost
     container_name: ozonclient
     env_file:
       - .env
     environment:
-      GRPC_SERVER_URL: ozon-grpc-server:50051
-      NEXT_PUBLIC_AGENT_WS_URL: ws://localhost:8000/ws
-      NEXT_PUBLIC_API_URL: http://ozon-microservice:3001
-    ports:
-      - "3000:3000"
+      GRPC_SERVER_URL: ozon-grpc-server:50051 # Internal Docker DNS, no TLS needed server-to-server
+      NEXT_PUBLIC_AGENT_WS_URL: wss://localhost/ws
+      NEXT_PUBLIC_API_URL: https://localhost
+      NEXT_PUBLIC_APP_URL: https://localhost
     depends_on:
       ozon-agent-server:
         condition: service_healthy
