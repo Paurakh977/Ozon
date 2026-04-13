@@ -1,94 +1,71 @@
-# Ozone Calculator
+# Ozon Calculator
 
-Math calculator with AI agent integration.
+Math calculator with AI agent integration across multiple microservices.
 
-## Project Structure
+## Architecture
 
-- `/` - Next.js application (uses Bun)
-- `/microservice` - NestJS OCR/STT microservice (uses pnpm)
+The project consists of 4 main services:
+- **Next.js Client**: Frontend application (Port 3000 / https://localhost)
+- **NestJS Microservice**: Handles Auth, STT, OCR (Port 3001 / https://localhost)
+- **FastAPI Agent Server**: Handles AI Agent workflows (Port 8000)
+- **gRPC Server**: Mathematical computations (Port 50051)
 
-## Prerequisites
+## Environment Setup
 
-- Node.js 18+
-- Bun (for Next.js)
-- pnpm (for microservice)
+You can run this application gracefully either via **Local Development (No Docker)** or **Production (Docker Compose)**. 
 
-## Setup
+### Local Development
 
-### 1. Microservice (NestJS)
+This runs all services directly on your host machine ports:
 
-```bash
-cd microservice
-pnpm install
-```
+1. Database & Redis:
+   You need a local PostgreSQL on `5432` and a local Redis on `6379`.
 
-Copy `.env.example` to `.env` and configure:
-```env
-PORT=3001
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-DEEPGRAM_API_KEY=your_deepgram_key
-DEEPGRAM_PROJECT_ID=your_project_id
-MISTRAL_API_KEY=your_mistral_key
-SST_MAX_KEYS_PER_WINDOW=6
-SST_KEY_WINDOW_MS=60000
-```
+2. Base Environment:
+   ```bash
+   cp .env.local.example .env
+   cd microservice && cp .env.local.example .env && cd ..
+   cd server && cp .env.local.example .env && cd ..
+   cd service && cp .env.local.example .env && cd ..
+   ```
+   *Make sure you fill out all the necessary variables in `.env` for each directory.*
 
-Run microservice:
-```bash
-pnpm run start:dev
-```
+3. Start services:
+   ```bash
+   # Terminal 1 - Microservice
+   cd microservice && pnpm install && pnpm run start:dev
 
-### 2. Next.js Application
+   # Terminal 2 - Next.js
+   bun install && bun run dev
 
-```bash
-# From root directory
-bun install
-```
+   # Terminal 3/4 - FastAPI & gRPC (refer to their directories)
+   ```
 
-Copy `.env.example` to `.env` and configure:
-```env
-NEXT_PUBLIC_API_URL=http://localhost:3001
-NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:8000/ws
-GRPC_SERVER_URL=localhost:50051
-```
+### Production Setup (Docker Compose)
 
-Run Next.js:
-```bash
-bun run dev
-```
+This runs all services through Docker, wrapped with Nginx handling HTTPS traffic directly on `https://localhost`.
 
-## Environment Variables
+1. Base Environment:
+   ```bash
+   cp .env.production.example .env
+   cd microservice && cp .env.production.example .env && cd ..
+   cd server && cp .env.production.example .env && cd ..
+   cd service && cp .env.production.example .env && cd ..
+   ```
+   *Make sure you fill out all the necessary variables in `.env` for each directory.*
 
-### Microservice (.env)
-| Variable | Required | Description |
-|----------|----------|-------------|
-| PORT | Yes | Server port (e.g., 3001) |
-| NEXT_PUBLIC_APP_URL | Yes | Next.js app URL for CORS |
-| DEEPGRAM_API_KEY | Yes | Deepgram API key |
-| DEEPGRAM_PROJECT_ID | Yes | Deepgram project ID |
-| MISTRAL_API_KEY | Yes | Mistral API key |
-| SST_MAX_KEYS_PER_WINDOW | Yes | Rate limit max keys |
-| SST_KEY_WINDOW_MS | Yes | Rate limit window (ms) |
+2. Build and start via Docker:
+   ```bash
+   docker compose build --no-cache
+   docker compose up -d
+   ```
 
-### Next.js (.env)
-| Variable | Required | Description |
-|----------|----------|-------------|
-| NEXT_PUBLIC_API_URL | Yes | Microservice URL |
-| NEXT_PUBLIC_AGENT_WS_URL | Yes | Agent WebSocket URL |
-| GRPC_SERVER_URL | No | gRPC server URL |
+## Nginx Configuration Overview
 
-## API Endpoints
+In production mode, `nginx/nginx.conf` sets up an SSL reverse proxy on port 443 that forwards requests contextually based on the URL paths.
+- `https://localhost/api/*` routes to `ozon-microservice:3001`
+- `https://localhost/*` routes to `ozonclient:3000`
 
-### Microservice
-- `GET /stt` - Get Deepgram temporary key
-- `POST /parse` - Parse uploaded file
+## OAuth Configurations
 
-## Development
-
-```bash
-# Terminal 1 - Microservice
-cd microservice && pnpm run start:dev
-
-# Terminal 2 - Next.js
-bun run dev
-```
+When running OAuth (Google/GitHub), the callbacks must map properly. Use `http://localhost:3001` when running locally, and `https://localhost` when running via Docker compose. Remember to continuously update the redirect URL configurations in the respective Google/GitHub development consoles!
