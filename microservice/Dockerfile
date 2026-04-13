@@ -16,7 +16,8 @@ WORKDIR /app
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY ./ ./
-RUN pnpm run build
+RUN npx prisma generate
+RUN pnpm run build || (echo "Build failed, listing dist:" && ls -la dist/ && exit 1)
 
 
 FROM base AS prod-deps
@@ -55,10 +56,13 @@ RUN mkdir -p /home/nodejs/.cache/dconf /home/nodejs/.config/libreoffice && \
 COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
 COPY --from=prod-deps --chown=nodejs:nodejs /app/node_modules ./node_modules
 COPY --from=builder --chown=nodejs:nodejs /app/package.json ./
+COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 
+RUN npx prisma generate
 # Explicitly set HOME so LibreOffice knows exactly where to write
 ENV HOME=/home/nodejs
-ENV NODE_ENV=production
+#until you get verifed domain for email 
+ENV NODE_ENV=development 
 ENV PORT=3001
 
 USER nodejs
@@ -68,4 +72,4 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:3001/stt', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-CMD ["node", "dist/main.js"]
+CMD ["node", "dist/src/main.js"]
