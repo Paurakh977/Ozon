@@ -86,3 +86,6 @@ tmp/
 #python cache
 __pycache__/
 *.pyc
+
+#certificates
+certs/
