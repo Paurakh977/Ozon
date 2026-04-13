@@ -8,12 +8,12 @@ export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
-
+  const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const { error } = await authClient.requestPasswordReset({
       email,
-      redirectTo: "http://localhost:3000/auth/reset-password",
+      redirectTo: `${APP_URL}/auth/reset-password`,
     });
     if (error) setError(error.message ?? "Something went wrong");
     else setSent(true);
