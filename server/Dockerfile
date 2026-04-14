@@ -1,12 +1,6 @@
-
 FROM python:3.12-slim-bookworm AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && rm -rf /var/lib/apt/lists/*
-
-# place uv in ~/.local/bin
-ENV PATH="/root/.local/bin:$PATH"
+COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
 COPY pyproject.toml uv.lock ./

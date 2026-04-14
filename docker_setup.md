@@ -32,6 +32,10 @@ NEXT_PUBLIC_AGENT_WS_URL=wss://localhost/ws
 # Docker DNS resolution natively calls the inner docker name `ozon-grpc-server` instead of localhost!
 GRPC_SERVER_URL=ozon-grpc-server:50051
 
+# Redis Configuration (Required - must match microservice/.env)
+# This is used by Docker Compose to configure Redis with password authentication
+REDIS_PASSWORD=your_strong_redis_password
+
 DEEPGRAM_API_KEY=your_deepgram_key
 MISTRAL_API_KEY=your_mistral_key
 ```
@@ -49,7 +53,8 @@ BETTER_AUTH_SECRET=your_32_character_secret
 
 # DATABASE & REDIS dynamically lookup the Docker Container names `ozon-postgres` and `ozon-redis` respectively instead of explicit localhost routing bindings.
 DATABASE_URL=postgresql://ozon:ozon69@ozon-postgres:5432/ozon
-REDIS_URL=redis://ozon-redis:6379
+REDIS_URL=redis://:your_redis_password@ozon-redis:6379
+REDIS_PASSWORD=your_redis_password
 
 RESEND_API_KEY=your_resend_api_key
 # IMPORTANT: Keep DEV_EMAIL_OVERRIDE active in production until a custom domain is verified through Resend.
@@ -59,6 +64,13 @@ DEV_EMAIL_OVERRIDE=your_email@gmail.com
 # SESSION_EXPIRES_IN=604800
 # TWO_FACTOR_OTP_PERIOD=3
 ```
+
+### Redis Password Setup (Required)
+Redis requires authentication. The password MUST be in **both** `.env` files with the **same value**:
+- **Root `.env`**: `REDIS_PASSWORD=your_strong_redis_password` — used by Docker Compose to configure Redis
+- **microservice/.env`**: `REDIS_PASSWORD=your_strong_redis_password` and `REDIS_URL=redis://:your_strong_redis_password@ozon-redis:6379` — used by the microservice to connect
+
+Both passwords MUST match exactly.
 
 ### C) `server/.env` (FastAPI Agent)
 Run `cp server/.env.production.example server/.env`.

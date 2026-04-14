@@ -5,5 +5,6 @@ import { RatelimitController } from './ratelimit.controller';
 @Module({
   controllers: [RatelimitController],
   providers: [RateLimitService],
+  exports: [RateLimitService], 
 })
 export class RatelimitModule {}

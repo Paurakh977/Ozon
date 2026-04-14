@@ -1,10 +1,15 @@
 import { Module } from '@nestjs/common';
 import { SttController } from './stt.controller';
 import { SttService } from './stt.service';
-import { RateLimitService } from '../ratelimit/ratelimit.service';
+import { RatelimitModule } from '../ratelimit/ratelimit.module';
 
+/**
+ * SttModule imports RatelimitModule so it can inject RateLimitService.
+ * RedisModule is @Global(), so no explicit import needed here.
+ */
 @Module({
+  imports: [RatelimitModule],
   controllers: [SttController],
-  providers: [SttService, RateLimitService],
+  providers: [SttService],
 })
 export class SttModule {}

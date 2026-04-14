@@ -61,15 +61,16 @@ COPY --from=builder --chown=nodejs:nodejs /app/prisma ./prisma
 RUN npx prisma generate
 # Explicitly set HOME so LibreOffice knows exactly where to write
 ENV HOME=/home/nodejs
-#until you get verifed domain for email 
-ENV NODE_ENV=development 
+# Set to production — enables HSTS, secure cookies, etc.
+# Keep as development only if you don't yet have a verified email domain for Resend.
+ENV NODE_ENV=development
 ENV PORT=3001
 
 USER nodejs
 
 EXPOSE 3001
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:3001/stt', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:3001/api/ratelimit/health', (r) => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
 
-CMD ["node", "dist/src/main.js"]
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/main.js"]
