@@ -8,7 +8,9 @@ import Redis from "ioredis";
 
 const redis = new Redis(process.env.REDIS_URL || "");
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  log: ['query', 'info', 'warn', 'error'], // <-- Enabled Prisma query logging
+});
 
 const API_URL = process.env.BETTER_AUTH_URL as string;
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL as string;
@@ -20,19 +22,23 @@ export const auth: any = betterAuth({
   secondaryStorage: {
     get: async (key) => {
       const value = await redis.get(key);
-      console.log("[Redis Cache] GET " + key + " -> " + (value ? "🟢 HIT" : "🔴 MISS"));
+      const isRL = key.includes("rate-limit") || key.includes("rl:") || key.includes("|");
+      const prefix = isRL ? "🛡️ [RateLimit Redis]" : "📦 [Redis Cache]";
+      console.log(`${prefix} GET ${key} -> ${value ? "🟢 HIT" : "🔴 MISS"}`);
       return value ? value : null;
     },
     set: async (key, value, ttl) => {
-      const ttlMsg = ttl ? "(TTL: " + ttl + "s)" : "";
-      console.log("[Redis Cache] SET " + key + " " + ttlMsg);
-      if (ttl)
-        await redis.set(key, value, "EX", ttl);
-      else
-        await redis.set(key, value);
+      const isRL = key.includes("rate-limit") || key.includes("rl:") || key.includes("|");
+      const prefix = isRL ? "🛡️ [RateLimit Redis]" : "📦 [Redis Cache]";
+      const ttlMsg = ttl ? `(TTL: ${ttl}s)` : "";
+      console.log(`${prefix} SET ${key} ${ttlMsg}`);
+      if (ttl) await redis.set(key, value, "EX", ttl);
+      else await redis.set(key, value);
     },
     delete: async (key) => {
-      console.log("[Redis Cache] DELETE " + key);
+      const isRL = key.includes("rate-limit") || key.includes("rl:") || key.includes("|");
+      const prefix = isRL ? "🛡️ [RateLimit Redis]" : "📦 [Redis Cache]";
+      console.log(`${prefix} DELETE ${key}`);
       await redis.del(key);
     },
   },
@@ -48,7 +54,8 @@ export const auth: any = betterAuth({
     requireEmailVerification: true,
 
     sendResetPassword: async ({ user, url }) => {
-      await sendEmail({
+      // Fire and forget email sending to prevent timing attacks
+      sendEmail({
         to: user.email,
         subject: "Reset your password — Ozon",
         html: `
@@ -73,7 +80,8 @@ export const auth: any = betterAuth({
 
   emailVerification: {
     sendVerificationEmail: async ({ user, url }) => {
-      await sendEmail({
+      // Fire and forget email sending to prevent timing attacks
+      sendEmail({
         to: user.email,
         subject: "Verify your email — Ozon",
         html: `
@@ -90,7 +98,7 @@ export const auth: any = betterAuth({
             </p>
           </div>
         `,
-      });
+      }); // .catch() removed since sendEmail handles or ignores its own rejects or returns void
     },
     callbackURL: `${APP_URL}/auth/verify-email`,
   },
@@ -141,6 +149,15 @@ export const auth: any = betterAuth({
       disableIpTracking: false, 
       ipAddressHeaders: ["x-forwarded-for", "x-real-ip"],
     },
+    backgroundTasks: {
+      handler: async (promise) => {
+        try {
+          await promise;
+        } catch (e) {
+          console.error("Better Auth Background Task Failed:", e);
+        }
+      },
+    },
   },
 
   plugins: [
@@ -152,7 +169,8 @@ export const auth: any = betterAuth({
       },
       otpOptions: {
         sendOTP: async ({ user, otp }) => {
-          await sendEmail({
+          // Fire and forget OTP email to prevent timing attacks
+          sendEmail({
             to: user.email,
             subject: "Your verification code — Ozon",
             html: `
@@ -168,7 +186,7 @@ export const auth: any = betterAuth({
                 </p>
               </div>
             `,
-          });
+          }); // removed await
         },
         period: process.env.TWO_FACTOR_OTP_PERIOD ? parseInt(process.env.TWO_FACTOR_OTP_PERIOD) : 3, // 3mins
         allowedAttempts: process.env.TWO_FACTOR_OTP_ATTEMPTS ? parseInt(process.env.TWO_FACTOR_OTP_ATTEMPTS) : 5,
