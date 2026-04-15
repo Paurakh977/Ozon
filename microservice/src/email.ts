@@ -41,7 +41,7 @@ export async function sendEmail({
   to: string;
   subject: string;
   html: string;
-}) {
+}): Promise<void> {
   const recipient = DEV_EMAIL_OVERRIDE ?? to;
 
   // In production, use your verified domain. In dev, use Resend's test domain.
@@ -58,7 +58,8 @@ export async function sendEmail({
 
   if (error) {
     console.error("[Email Error]", error);
-    throw new Error(error.message);
+    // Don't throw the error, just log it, so that fire-and-forget callers don't crash
+    return;
   }
 
   if (DEV_EMAIL_OVERRIDE) {

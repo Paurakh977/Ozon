@@ -21,6 +21,18 @@ export const authClient = createAuthClient({
       },
     }),
   ],
+  fetchOptions: {
+    onError(e: any) {
+      if (e.error?.status === 429) {
+        console.warn("Rate limited! Too many requests.");
+        if (typeof window !== "undefined") {
+          alert("Too many requests. Please try again in a minute.");
+        }
+        // We can throw an error or just let it pass so it doesn't trigger a global logout
+        // The individual hooks will just return an error state instead of null data that causes redirects.
+      }
+    },
+  },
 });
 
 export const {
@@ -30,3 +42,4 @@ export const {
   useSession,
   getSession,
 } = authClient;
+
