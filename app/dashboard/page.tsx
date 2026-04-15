@@ -22,13 +22,18 @@ export default function DashboardPage() {
   // Account listing (used to detect whether a user has a local password/credential)
   const [userAccounts, setUserAccounts] = useState<any>([]);
 
+  const [hasFetchedAccounts, setHasFetchedAccounts] = useState(false);
+
   useEffect(() => {
-    if (session) {
+    if (session?.user?.id && !isPending && !hasFetchedAccounts) {
+      setHasFetchedAccounts(true); // Set synchronously to avoid race conditions
       authClient.listAccounts().then((response: any) => {
         setUserAccounts(response.data ?? []);
+      }).catch(() => {
+        setHasFetchedAccounts(false); // Reset on error
       });
     }
-  }, [session]);
+  }, [session?.user?.id, isPending, hasFetchedAccounts]);
 
   // Check if user has a credential (email/password) account
   const hasPasswordAccount = userAccounts ? userAccounts.find((acc: any) => acc.providerId === "credential") : false;
