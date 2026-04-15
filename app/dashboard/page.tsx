@@ -5,42 +5,44 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
 import QRCode from "react-qr-code";
+import React from "react";
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { data: session, isPending } = authClient.useSession();
+  const { data: session, isPending, error: sessionError } = authClient.useSession();
 
   // 2FA setup state
   const [show2FASetup, setShow2FASetup] = useState(false);
   const [totpURI, setTotpURI] = useState("");
-  const [backupCodes, setBackupCodes] = useState<string[]>([]);
+  const [backupCodes, setBackupCodes] = useState<any>([]);
   const [totpCode, setTotpCode] = useState("");
   const [setupPassword, setSetupPassword] = useState("");
   const [setupStep, setSetupStep] = useState<"password" | "qr" | "done">("password");
 
   // Account listing (used to detect whether a user has a local password/credential)
-  const [userAccounts, setUserAccounts] = useState<any[]>([]);
+  const [userAccounts, setUserAccounts] = useState<any>([]);
 
   useEffect(() => {
     if (session) {
-      authClient.listAccounts().then(({ data }) => {
-        setUserAccounts(data ?? []);
+      authClient.listAccounts().then((response: any) => {
+        setUserAccounts(response.data ?? []);
       });
     }
   }, [session]);
 
   // Check if user has a credential (email/password) account
-  const hasPasswordAccount = userAccounts.some(
-    (acc) => acc.providerId === "credential"
-  );
+  const hasPasswordAccount = userAccounts ? userAccounts.find((acc: any) => acc.providerId === "credential") : false;
 
   useEffect(() => {
-    if (!isPending && !session) {
+    // Check if the reason we don't have a session is just a rate limit.
+    // If it is a rate limit, don't kick them out.
+    if (!isPending && !session && sessionError?.status !== 429) {
       router.push("/auth");
     }
-  }, [session, isPending, router]);
+  }, [session, isPending, router, sessionError]);
 
   if (isPending) return <div style={styles.loading}>Loading...</div>;
+  if (!session && sessionError?.status === 429) return <div style={styles.loading}>Rate limited. Please wait a moment...</div>;
   if (!session) return null;
 
   const handleSignOut = async () => {
@@ -131,9 +133,9 @@ export default function DashboardPage() {
             <div style={styles.oauthNotice}>
               <p style={{ margin: 0, fontSize: "14px", color: "#64748b" }}>
                 You signed in with{" "}
-                <strong>
-                  {userAccounts[0]?.providerId === "google" ? "Google" : "GitHub"}
-                </strong>
+                  <strong>
+                    {userAccounts[0] && userAccounts[0].providerId === "google" ? "Google" : "GitHub"}
+                  </strong>
                 . Two-factor authentication is managed by your social provider.
                 To enable app-level 2FA, first{" "}
                 <button
@@ -208,7 +210,7 @@ export default function DashboardPage() {
                         ⚠️ Save these backup codes in a secure place:
                       </p>
                       <div style={styles.codeGrid}>
-                        {backupCodes.map((code, i) => (
+                        {backupCodes.map((code: any, i: any) => (
                           <code key={i} style={styles.backupCode}>{code}</code>
                         ))}
                       </div>
@@ -225,7 +227,7 @@ export default function DashboardPage() {
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const styles: { [key: string]: React.CSSProperties } = {
   container: { minHeight: "100vh", background: "#f8fafc", fontFamily: "system-ui, sans-serif" },
   loading: { display: "flex", alignItems: "center", justifyContent: "center", height: "100vh" },
   header: {
