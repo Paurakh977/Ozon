@@ -7,7 +7,10 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.135.1",
     "google-adk[extensions]>=1.26.0",
+    "httpx>=0.28.1",
     "python-dotenv>=1.2.2",
+    "python-jose[cryptography]>=3.5.0",
+    "redis>=7.4.0",
     "requests>=2.32.5",
     "ruff>=0.15.9",
     "uvicorn[standard]>=0.41.0",
