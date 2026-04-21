@@ -126,7 +126,11 @@ services:
     env_file:
       - ./server/.env
     depends_on:
+      ozon-microservice:
+        condition: service_healthy
       ozon-grpc-server:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
     networks:

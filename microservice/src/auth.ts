@@ -5,6 +5,7 @@ import { admin } from "better-auth/plugins/admin";
 import { PrismaClient } from "@prisma/client";
 import { sendEmail } from "./email";
 import Redis from "ioredis";
+import { jwt } from "better-auth/plugins";
 
 const redis = new Redis(process.env.REDIS_URL || "");
 
@@ -201,6 +202,32 @@ export const auth: any = betterAuth({
     }),
 
     admin(),
+
+    jwt({
+      jwt: {
+        // ES256 has the best cross-language support (Python, Go, etc.)
+        // EdDSA (default) is poorly supported in python-jose
+        expirationTime: "30m",
+
+        // Only embed what FastAPI actually needs — keep payload lean
+        definePayload: ({ user }) => ({
+          sub:   user.id,
+          email: user.email,
+          // Add role/plan here if you have it, e.g.: plan: user.plan
+        }),
+
+        issuer:   API_URL,   // e.g. "https://api.yourdomain.com"
+        audience: API_URL,
+      },
+      jwks: {
+        keyPairConfig: {
+          alg: "ES256",      // ← override the default EdDSA
+        },
+        rotationInterval: 60 * 60 * 24 * 30, // rotate keys every 30 days
+        gracePeriod:      60 * 60 * 24 * 7,  // old key valid 7 days after rotation
+      },
+    }),
+    
   ],
 
   hooks: {},

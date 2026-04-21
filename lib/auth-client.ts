@@ -1,7 +1,19 @@
 // lib/auth-client.ts
 import { createAuthClient } from "better-auth/react";
 import { twoFactorClient } from "better-auth/client/plugins";
+import { jwtClient } from "better-auth/client/plugins";
 
+type AuthClientError = { error?: { status?: number } };
+
+let lastRateLimitWarnAt = 0;
+
+function notifyRateLimit() {
+  const now = Date.now();
+  // Prevent noisy repeated logs when multiple background auth calls hit 429.
+  if (now - lastRateLimitWarnAt < 5000) return;
+  lastRateLimitWarnAt = now;
+  console.warn("Rate limited! Too many requests.");
+}
 /**
  * NEXT_PUBLIC_API_URL: Your NestJS API server base URL
  * 
@@ -20,14 +32,13 @@ export const authClient = createAuthClient({
         window.location.href = "/auth/two-factor";
       },
     }),
+    jwtClient(), 
   ],
   fetchOptions: {
-    onError(e: any) {
+    credentials: "include",
+    onError(e: AuthClientError) {
       if (e.error?.status === 429) {
-        console.warn("Rate limited! Too many requests.");
-        if (typeof window !== "undefined") {
-          alert("Too many requests. Please try again in a minute.");
-        }
+        notifyRateLimit();
         // We can throw an error or just let it pass so it doesn't trigger a global logout
         // The individual hooks will just return an error state instead of null data that causes redirects.
       }

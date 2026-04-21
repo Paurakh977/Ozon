@@ -11,8 +11,8 @@ Since Docker routes production traffic entirely via `https://localhost`, you req
 mkdir certs && cd certs
 mkcert -install
 mkcert localhost
-mv localhost.pem cert.pem
-mv localhost-key.pem key.pem
+mv localhost.pem localhost.crt
+mv localhost-key.pem localhost.key
 cd ..
 ```
 
@@ -83,6 +83,18 @@ MODEL_API_KEY=your_model_api_key
 TAVILY_API_KEY=your_tavily_key
 GOOGLE_API_KEY=your_google_key
 INCEPTION_API_KEY=your_inception_key
+
+# JWT verification settings for WS auth handshake
+# IMPORTANT: In Docker, localhost points to the agent container itself.
+# Use internal service DNS for JWKS fetch; keep issuer/audience as public origin.
+NEST_JWKS_URL=http://ozon-microservice:3001/api/auth/jwks
+NEST_JWKS_FALLBACK_URLS=https://localhost/api/auth/jwks
+NEST_JWKS_VERIFY_SSL=true
+NEST_JWT_ISSUER=https://localhost
+NEST_JWT_AUDIENCE=https://localhost
+
+# Redis backing for agent rate limits
+REDIS_URL=redis://:your_redis_password@ozon-redis:6379
 ```
 
 ### D) `service/.env` (gRPC Math Computation)

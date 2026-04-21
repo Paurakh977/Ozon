@@ -8,6 +8,7 @@ import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { motion, AnimatePresence, type Variants, type Transition } from 'framer-motion';
 import { MathExpression } from "./calculator/types";
+import { authClient, useSession as useAuthSession } from "@/lib/auth-client";
 
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
@@ -641,6 +642,18 @@ export function ChatModal({
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const {
+    data: sessionData,
+    error: sessionError,
+    isPending: isSessionPending,
+  } = useAuthSession();
+  const sessionErrorStatus =
+    typeof sessionError === 'object' && sessionError !== null
+      ? (
+        (sessionError as { status?: number; error?: { status?: number } }).status
+        ?? (sessionError as { status?: number; error?: { status?: number } }).error?.status
+      )
+      : undefined;
 
   // --- Attachments State ---
   const [attachments, setAttachments] = useState<AttachedFile[]>([]);
@@ -943,6 +956,10 @@ export function ChatModal({
   }, [isRecording, stopRecording]);
 
   const ws = useRef<WebSocket | null>(null);
+  const jwtTokenRef = useRef<string | null>(null);
+  const lastSessionUserIdRef = useRef<string | null | undefined>(undefined);
+  const authRefreshInFlightRef = useRef(false);
+  const tokenRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -963,6 +980,121 @@ export function ChatModal({
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intentionalCloseRef = useRef(false);
+  const authTierRef = useRef<'authenticated' | 'anonymous' | null>(null);
+  const reconnectBlockedUntilRef = useRef(0);
+  const sessionUserIdRef = useRef<string | null>(sessionData?.user?.id ?? null);
+  const logoutProbeInFlightRef = useRef(false);
+  const authRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearTokenRefreshTimer = useCallback(() => {
+    if (tokenRefreshTimerRef.current) {
+      clearTimeout(tokenRefreshTimerRef.current);
+      tokenRefreshTimerRef.current = null;
+    }
+  }, []);
+
+  const clearAuthRetryTimer = useCallback(() => {
+    if (authRetryTimerRef.current) {
+      clearTimeout(authRetryTimerRef.current);
+      authRetryTimerRef.current = null;
+    }
+  }, []);
+
+  const fetchJwtToken = useCallback(async (): Promise<string | null> => {
+    try {
+      const { data, error } = await authClient.token();
+      const errorStatus =
+        typeof error === 'object' && error !== null
+          ? (
+            (error as { status?: number; error?: { status?: number } }).status
+            ?? (error as { status?: number; error?: { status?: number } }).error?.status
+          )
+          : undefined;
+
+      // Better Auth endpoints can transiently 429 during bursts; keep current token
+      // to avoid accidental auth downgrade on active sockets.
+      if (errorStatus === 429) {
+        return jwtTokenRef.current;
+      }
+
+      if (error || !data?.token) return null;
+      return data.token;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const sendAuthFrame = useCallback(async (socket?: WebSocket | null) => {
+    if (authRefreshInFlightRef.current) return;
+
+    const target = socket ?? ws.current;
+    if (!target || target.readyState !== WebSocket.OPEN) return;
+
+    authRefreshInFlightRef.current = true;
+
+    try {
+      const token = await fetchJwtToken();
+      jwtTokenRef.current = token;
+
+      // Don't accidentally downgrade an authenticated socket because token fetch
+      // temporarily returned null during session revalidation.
+      if (!token && (authTierRef.current === 'authenticated' || sessionUserIdRef.current)) {
+        if (sessionUserIdRef.current && !authRetryTimerRef.current) {
+          authRetryTimerRef.current = setTimeout(() => {
+            authRetryTimerRef.current = null;
+            void sendAuthFrame(target);
+          }, 700);
+        }
+        return;
+      }
+
+      clearAuthRetryTimer();
+
+      target.send(JSON.stringify({
+        type: 'auth',
+        ...(token ? { token } : {}),
+      }));
+    } catch (err) {
+      console.error('[ws] failed to send auth frame:', err);
+    } finally {
+      authRefreshInFlightRef.current = false;
+    }
+  }, [clearAuthRetryTimer, fetchJwtToken]);
+
+  const scheduleTokenRefresh = useCallback((tokenExp?: number | null) => {
+    clearTokenRefreshTimer();
+
+    if (!tokenExp) return;
+
+    // Refresh shortly before expiry so active sockets keep the correct tier.
+    const refreshAtMs = tokenExp * 1000 - 30000;
+    const delayMs = refreshAtMs - Date.now();
+
+    if (delayMs <= 0) {
+      void sendAuthFrame();
+      return;
+    }
+
+    tokenRefreshTimerRef.current = setTimeout(() => {
+      void sendAuthFrame();
+    }, delayMs);
+  }, [clearTokenRefreshTimer, sendAuthFrame]);
+
+  const forceAnonymousAuthFrame = useCallback((socket?: WebSocket | null) => {
+    const target = socket ?? ws.current;
+    if (!target || target.readyState !== WebSocket.OPEN) return;
+
+    authRefreshInFlightRef.current = false;
+    jwtTokenRef.current = null;
+    clearAuthRetryTimer();
+    clearTokenRefreshTimer();
+
+    try {
+      target.send(JSON.stringify({ type: 'auth', logout: true }));
+    } catch (err) {
+      console.error('[ws] failed to send anonymous auth frame:', err);
+    }
+  }, [clearAuthRetryTimer, clearTokenRefreshTimer]);
 
   const connect = useCallback(() => {
     if (ws.current) {
@@ -979,20 +1111,43 @@ export function ChatModal({
     ws.current = socket;
     intentionalCloseRef.current = false;
 
-    socket.onopen = () => {
-      setStatus('connected');
-      reconnectAttemptRef.current = 0;
+    socket.onopen = async () => {
+      // Send auth frame as the first WS message.
+      await sendAuthFrame(socket);
     };
 
     socket.onclose = (ev) => {
       setStatus('disconnected');
       setIsBusy(false);
       ws.current = null;
+      jwtTokenRef.current = null;
+      authTierRef.current = null;
+      authRefreshInFlightRef.current = false;
+      clearAuthRetryTimer();
+      clearTokenRefreshTimer();
 
       if (!intentionalCloseRef.current) {
-        const attempt = reconnectAttemptRef.current;
-        const delay = Math.min(1000 * Math.pow(2, attempt), 30000);
-        reconnectAttemptRef.current = attempt + 1;
+        let delay: number;
+        if (ev.code === 1008) {
+          // Handshake policy violation (often anon rate-limit). Don't reconnect
+          // aggressively and burn more anonymous quota.
+          const now = Date.now();
+          if (sessionUserIdRef.current) {
+            // If user is signed in, retry quickly to re-handshake as authenticated.
+            reconnectBlockedUntilRef.current = 0;
+            reconnectAttemptRef.current = 0;
+            delay = 1500;
+          } else {
+            const blockedFor = reconnectBlockedUntilRef.current - now;
+            delay = blockedFor > 0 ? blockedFor : 6000;
+            reconnectAttemptRef.current = 0;
+          }
+        } else {
+          const attempt = reconnectAttemptRef.current;
+          delay = Math.min(1000 * Math.pow(2, attempt), 30000);
+          reconnectAttemptRef.current = attempt + 1;
+        }
+
         reconnectTimerRef.current = setTimeout(() => {
           connect();
         }, delay);
@@ -1008,6 +1163,76 @@ export function ChatModal({
       try {
         data = JSON.parse(event.data);
       } catch {
+        return;
+      }
+
+      if (data.type === 'auth_ok') {
+        const nextTier = data.tier === 'authenticated' ? 'authenticated' : 'anonymous';
+        const shouldForceReauth = nextTier === 'anonymous' && !!sessionUserIdRef.current;
+
+        setStatus(shouldForceReauth ? 'connecting' : 'connected');
+        reconnectAttemptRef.current = 0;
+        authTierRef.current = nextTier;
+        authRefreshInFlightRef.current = false;
+
+        const tokenExp =
+          typeof data.tokenExp === 'number'
+            ? data.tokenExp
+            : typeof data.tokenExp === 'string'
+              ? Number.parseInt(data.tokenExp, 10)
+              : null;
+        if (authTierRef.current === 'authenticated' && Number.isFinite(tokenExp)) {
+          scheduleTokenRefresh(tokenExp);
+        } else {
+          scheduleTokenRefresh(null);
+
+          // If client session says logged-in but socket came up anonymous,
+          // try upgrading again once token/session fetch settles.
+          if (shouldForceReauth) {
+            setTimeout(() => {
+              void sendAuthFrame();
+            }, 300);
+          }
+        }
+        return;
+      }
+
+      if (data.type === 'rate_limited') {
+        setStatus('connected');
+        const isAnon = data.tier === 'anonymous';
+        const defaultMsg = isAnon
+          ? 'Anonymous users can send 3 prompts per minute. [Sign in](/auth/sign-in) for higher limits.'
+          : 'Please wait a moment before sending another message.';
+        const serverMsg = typeof data.message === 'string' && data.message.trim().length > 0
+          ? data.message.trim()
+          : defaultMsg;
+        const warningText = `⚠️ **Rate limit reached.** ${serverMsg}`;
+
+        setMessages(prev => {
+          const last = prev[prev.length - 1];
+          const withoutStreaming = last?.role === 'agent' && last.isStreaming
+            ? prev.slice(0, -1)
+            : prev;
+          const finalLast = withoutStreaming[withoutStreaming.length - 1];
+          if (finalLast?.role === 'agent' && finalLast.content === warningText) {
+            return withoutStreaming;
+          }
+          return [...withoutStreaming, {
+            role: 'agent',
+            content: warningText,
+          }];
+        });
+        setIsBusy(false);
+
+        if (isAnon) {
+          reconnectBlockedUntilRef.current = Date.now() + 60000;
+        }
+
+        // If user has just signed in, try to upgrade this existing socket from anon to auth.
+        if (isAnon && sessionUserIdRef.current) {
+          setStatus('connecting');
+          void sendAuthFrame();
+        }
         return;
       }
 
@@ -1094,7 +1319,95 @@ export function ChatModal({
     };
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [clearAuthRetryTimer, clearTokenRefreshTimer, scheduleTokenRefresh, sendAuthFrame]);
+
+  const sessionUserId = sessionData?.user?.id ?? null;
+
+  // Keep the same socket but refresh auth tier whenever sign-in/sign-out state changes.
+  useEffect(() => {
+    if (sessionUserId) {
+      sessionUserIdRef.current = sessionUserId;
+    }
+
+    if (lastSessionUserIdRef.current === undefined) {
+      lastSessionUserIdRef.current = sessionUserId;
+      return;
+    }
+
+    const sessionChanged = lastSessionUserIdRef.current !== sessionUserId;
+    if (sessionChanged) {
+      lastSessionUserIdRef.current = sessionUserId;
+    }
+
+    // Login: immediately unblock reconnect and authenticate current/new socket.
+    if (sessionUserId) {
+      if (sessionChanged) {
+        reconnectBlockedUntilRef.current = 0;
+        if (!ws.current || ws.current.readyState !== WebSocket.OPEN) {
+          connect();
+        } else {
+          setStatus('connecting');
+          void sendAuthFrame();
+        }
+      }
+      return;
+    }
+
+    // Session hooks can transiently report null during refresh/rate-limit hiccups.
+    // Don't downgrade until we can confirm token truly disappeared.
+    if (isSessionPending || sessionErrorStatus === 429) {
+      return;
+    }
+
+    // Only probe potential logout when state actually changes to null.
+    if (!sessionChanged) {
+      return;
+    }
+
+    const openSocket = ws.current && ws.current.readyState === WebSocket.OPEN;
+    if (!openSocket) {
+      sessionUserIdRef.current = null;
+      return;
+    }
+
+    if (logoutProbeInFlightRef.current) return;
+    logoutProbeInFlightRef.current = true;
+
+    void (async () => {
+      try {
+        // Double-check token with a short delay to avoid false sign-out downgrades
+        // caused by transient session hook flips.
+        let token = await fetchJwtToken();
+        if (!token) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+          token = await fetchJwtToken();
+        }
+
+        // Ignore stale async result if auth state changed again.
+        if (lastSessionUserIdRef.current !== null) return;
+
+        if (token) {
+          jwtTokenRef.current = token;
+          void sendAuthFrame();
+          return;
+        }
+
+        // Confirmed sign-out: now downgrade existing socket tier.
+        sessionUserIdRef.current = null;
+        forceAnonymousAuthFrame();
+      } finally {
+        logoutProbeInFlightRef.current = false;
+      }
+    })();
+  }, [
+    sessionUserId,
+    isSessionPending,
+    sessionErrorStatus,
+    fetchJwtToken,
+    sendAuthFrame,
+    forceAnonymousAuthFrame,
+    connect,
+  ]);
 
   // Connect only when modal is open to save resources, or just connect once.
   // We connect on mount so the websocket is ready when opened.
@@ -1103,9 +1416,11 @@ export function ChatModal({
     return () => {
       intentionalCloseRef.current = true;
       if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      clearAuthRetryTimer();
+      clearTokenRefreshTimer();
       if (ws.current) ws.current.close();
     };
-  }, [connect]);
+  }, [clearAuthRetryTimer, clearTokenRefreshTimer, connect]);
 
   // Scroll logic
   useEffect(() => {

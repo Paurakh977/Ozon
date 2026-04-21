@@ -63,6 +63,14 @@ MODEL_API_KEY=your_model_api_key
 TAVILY_API_KEY=your_tavily_key
 GOOGLE_API_KEY=your_google_key
 INCEPTION_API_KEY=your_inception_key
+
+# JWT verification settings for WS auth handshake
+NEST_JWKS_URL=http://localhost:3001/api/auth/jwks
+NEST_JWT_ISSUER=http://localhost:3001
+NEST_JWT_AUDIENCE=http://localhost:3001
+
+# Redis backing for agent rate limits
+REDIS_URL=redis://localhost:6379
 ```
 
 ### D) `service/.env` (gRPC Math Environment)
