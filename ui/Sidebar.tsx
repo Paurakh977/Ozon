@@ -330,27 +330,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     e.preventDefault();
                     e.stopImmediatePropagation();
                     addExpr();
-                } else if (e.key === ')') {
-                    const latex = typeof mf.getValue === 'function' 
-                        ? mf.getValue('latex-without-placeholders') 
-                        : (mf.value || '');
-
-                    // Count unmatched \left( — if there's one open, let MathLive close it naturally
-                    const leftCount  = (latex.match(/\\left\s*\(/g) || []).length;
-                    const rightCount = (latex.match(/\\right\s*\)/g) || []).length;
-
-                    if (leftCount > rightCount) {
-                        // There's an unclosed \left( — let smartFence handle it
-                        return;
-                    }
-
-                    // Brackets are balanced: wrap content from cursor back to group start
-                    e.preventDefault();
-                    e.stopImmediatePropagation();
-                    // Select backwards to the start of the current group (e.g. inside \sqrt{}, numerator, etc.)
-                    mf.executeCommand('extendToGroupStart');
-                    // Wrap whatever is selected in \left( \right)
-                    mf.executeCommand(['insert', '\\left(#@\\right)']);
                 }
             };
             
