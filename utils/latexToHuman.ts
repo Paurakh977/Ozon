@@ -134,7 +134,7 @@ function extractGroup(str: string, pos: number): { content: string; end: number 
     let depth = 1, i = pos + 1;
     while (i < str.length && depth > 0) {
         if (str[i] === open) depth++; else if (str[i] === close) depth--;
-        i++;``
+        i++;
     }
     return { content: str.substring(pos + 1, i - 1), end: i };
 }

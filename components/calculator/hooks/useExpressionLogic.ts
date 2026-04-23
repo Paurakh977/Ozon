@@ -178,6 +178,147 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         clean = clean.replace(/\\log_(\d+)/g, "\\log_{$1}");
 
         // ==========================================
+        // NORMALIZE FLOOR/CEIL + COMPLEX/POLYGON FUNCTION FORMS
+        // ==========================================
+        // MathLive manual typing often emits delimiter forms for floor/ceil and
+        // plain identifiers for functions Desmos expects as operator names.
+        // Canonicalize them before generic delimiter normalization.
+        clean = clean
+            .replace(/\\left\s*\\lfloor/g, '\\left\\lfloor')
+            .replace(/\\right\s*\\rfloor/g, '\\right\\rfloor')
+            .replace(/\\left\s*\\lceil/g, '\\left\\lceil')
+            .replace(/\\right\s*\\rceil/g, '\\right\\rceil');
+
+        const convertDelimitedFunction = (source: string, openTok: string, closeTok: string, fnName: string): string => {
+            let result = '';
+            let cursor = 0;
+
+            while (cursor < source.length) {
+                const openIdx = source.indexOf(openTok, cursor);
+                if (openIdx === -1) {
+                    result += source.substring(cursor);
+                    break;
+                }
+
+                result += source.substring(cursor, openIdx);
+
+                let depth = 1;
+                let i = openIdx + openTok.length;
+                while (i < source.length && depth > 0) {
+                    if (source.startsWith(openTok, i)) {
+                        depth++;
+                        i += openTok.length;
+                    } else if (source.startsWith(closeTok, i)) {
+                        depth--;
+                        if (depth === 0) break;
+                        i += closeTok.length;
+                    } else {
+                        i++;
+                    }
+                }
+
+                if (depth !== 0) {
+                    result += source.substring(openIdx);
+                    break;
+                }
+
+                const inner = source.substring(openIdx + openTok.length, i).trim();
+                result += `\\operatorname{${fnName}}(${inner})`;
+                cursor = i + closeTok.length;
+            }
+
+            return result;
+        };
+
+        clean = convertDelimitedFunction(clean, '\\left\\lfloor', '\\right\\rfloor', 'floor');
+        clean = convertDelimitedFunction(clean, '\\lfloor', '\\rfloor', 'floor');
+        clean = convertDelimitedFunction(clean, '\\left\\lceil', '\\right\\rceil', 'ceil');
+        clean = convertDelimitedFunction(clean, '\\lceil', '\\rceil', 'ceil');
+
+        const canonicalizeOperatorFunctions = (source: string): string => {
+            const mappedName: Record<string, string> = {
+                imaginary: 'imag',
+                angle: 'arg',
+                conjugate: 'conj',
+                Re: 'real',
+                Im: 'imag',
+                floor: 'floor',
+                ceil: 'ceil',
+                polygon: 'polygon',
+                real: 'real',
+                imag: 'imag',
+                arg: 'arg',
+                conj: 'conj',
+            };
+
+            const isLetter = (ch: string): boolean => /[a-zA-Z]/.test(ch);
+            const skipSpaces = (s: string, idx: number): number => {
+                let i = idx;
+                while (i < s.length && /\s/.test(s[i])) i++;
+                return i;
+            };
+
+            const isCallStart = (s: string, idx: number): boolean => {
+                const i = skipSpaces(s, idx);
+                return s.startsWith('\\left(', i) || s[i] === '(';
+            };
+
+            let out = '';
+            let i = 0;
+
+            while (i < source.length) {
+                if (source.startsWith('\\operatorname{', i)) {
+                    const nameStart = i + '\\operatorname{'.length;
+                    const nameEnd = source.indexOf('}', nameStart);
+                    if (nameEnd !== -1) {
+                        const name = source.substring(nameStart, nameEnd);
+                        const mapped = mappedName[name] || name;
+                        if (isCallStart(source, nameEnd + 1)) {
+                            out += `\\operatorname{${mapped}}`;
+                            i = nameEnd + 1;
+                            continue;
+                        }
+                    }
+                }
+
+                if (source[i] === '\\') {
+                    let j = i + 1;
+                    while (j < source.length && isLetter(source[j])) j++;
+
+                    if (j > i + 1) {
+                        const name = source.substring(i + 1, j);
+                        const mapped = mappedName[name];
+                        if (mapped && isCallStart(source, j)) {
+                            out += `\\operatorname{${mapped}}`;
+                            i = j;
+                            continue;
+                        }
+                    }
+                }
+
+                if (isLetter(source[i])) {
+                    let j = i;
+                    while (j < source.length && isLetter(source[j])) j++;
+
+                    const name = source.substring(i, j);
+                    const mapped = mappedName[name];
+                    if (mapped && isCallStart(source, j)) {
+                        out += `\\operatorname{${mapped}}`;
+                        i = j;
+                        continue;
+                    }
+                }
+
+                out += source[i];
+                i++;
+            }
+
+            return out;
+        };
+
+        clean = canonicalizeOperatorFunctions(clean);
+
+        // ==========================================
         // NORMALIZE ROUND PARENTHESES FOR DESMOS
         // ==========================================
         // Desmos handles both \left(...\right) and plain (...) parentheses
@@ -194,6 +335,80 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             .replace(/\\right\)/g, ')')
             .replace(/\\left\[/g, '(')
             .replace(/\\right\]/g, ')');
+
+        // Repair malformed polygon point lists generated by manual typing,
+        // e.g. polygon((0,0)(4,7),(9,0)) -> polygon((0,0),(4,7),(9,0))
+        const normalizePolygonPointLists = (source: string): string => {
+            const findClosingParen = (text: string, openIdx: number): number => {
+                let depth = 1;
+                for (let i = openIdx + 1; i < text.length; i++) {
+                    if (text[i] === '(') depth++;
+                    else if (text[i] === ')') {
+                        depth--;
+                        if (depth === 0) return i;
+                    }
+                }
+                return -1;
+            };
+
+            const repairTupleAdjacency = (args: string): string => {
+                let out = '';
+                let depth = 0;
+
+                for (let i = 0; i < args.length; i++) {
+                    const ch = args[i];
+                    out += ch;
+
+                    if (ch === '(') {
+                        depth++;
+                    } else if (ch === ')') {
+                        depth = Math.max(0, depth - 1);
+                        if (depth === 0) {
+                            let j = i + 1;
+                            while (j < args.length && /\s/.test(args[j])) j++;
+                            if (j < args.length && args[j] === '(') {
+                                out += ',';
+                            }
+                        }
+                    }
+                }
+
+                return out;
+            };
+
+            const heads = ['\\operatorname{polygon}(', 'polygon('];
+            let result = source;
+            let cursor = 0;
+
+            while (cursor < result.length) {
+                let nextIdx = -1;
+                let nextHead = '';
+
+                for (const head of heads) {
+                    const idx = result.indexOf(head, cursor);
+                    if (idx !== -1 && (nextIdx === -1 || idx < nextIdx)) {
+                        nextIdx = idx;
+                        nextHead = head;
+                    }
+                }
+
+                if (nextIdx === -1) break;
+
+                const openIdx = nextIdx + nextHead.length - 1;
+                const closeIdx = findClosingParen(result, openIdx);
+                if (closeIdx === -1) break;
+
+                const args = result.substring(openIdx + 1, closeIdx);
+                const repairedArgs = repairTupleAdjacency(args);
+
+                result = result.substring(0, openIdx + 1) + repairedArgs + result.substring(closeIdx);
+                cursor = openIdx + repairedArgs.length + 2;
+            }
+
+            return result;
+        };
+
+        clean = normalizePolygonPointLists(clean);
 
         clean = normalizeAbsDelimiters(clean, 'latex');
 
@@ -426,11 +641,11 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             // Use a non-greedy match or match from the last \left\{ to ensure we don't grab too much
             const domainMatch = clean.match(/\\left\\{((?:(?!\\left\\{).)*)\\right\\}$/);
             if (domainMatch) {
-                let innerContent = domainMatch[1];
+                const innerContent = domainMatch[1];
                 
                 // Normalize common LaTeX to what Desmos understands
                 // This must happen BEFORE checking for comparison operators
-                let normalizedContent = innerContent
+                const normalizedContent = innerContent
                     .replace(/\\le/g, '<=')
                     .replace(/\\ge/g, '>=')
                     .replace(/\\leq/g, '<=')
@@ -817,8 +1032,12 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             const hasEquals = finalLatex.includes('=');
             // Use negative lookahead to prevent \left matching as \le, \geq matching as \ge etc.
             const hasInequality = /\\leq|\\geq|\\le(?![a-z])|\\ge(?![a-z])|\\lt(?![a-z])|\\gt(?![a-z])|<|>/.test(finalLatex);
-            const hasX = /[^a-zA-Z]x[^a-zA-Z]|^x[^a-zA-Z]|[^a-zA-Z]x$|^x$/.test(finalLatex) || 
-                         finalLatex.includes('(x)');  // Function calls like f(x), g(x), sin(x)
+            const xProbe = finalLatex
+                .replace(/\\operatorname\{([^}]+)\}/g, '$1')
+                .replace(/\\[a-zA-Z]+/g, ' ')
+                .replace(/[{}]/g, '')
+                .replace(/(arcsinh|arccosh|arctanh|arccoth|arcsech|arccsch|arcsin|arccos|arctan|arccot|arcsec|arccsc|sinh|cosh|tanh|coth|sech|csch|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|theta|floor|ceil|round|sgn|min|max|real|imag|arg|conj|polygon|angle|imaginary|conjugate)/g, ' ');
+            const hasX = /x/.test(xProbe) || finalLatex.includes('(x)');  // Graph expressions with x anywhere (e.g. e^{ix})
             const isJustNumber = /^-?\d+\.?\d*$/.test(finalLatex.trim());
             
             // If it's an expression with x but no equals/inequality, add y= to make it graph
@@ -893,7 +1112,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
              // Includes inverse trig: arcsin, arccos, arctan, arccot, arcsec, arccsc
              // Includes inverse hyperbolic: arcsinh, arccosh, arctanh, arccoth, arcsech, arccsch
              // Longer names first to avoid partial matching issues
-             s = s.replace(/(arcsinh|arccosh|arctanh|arccoth|arcsech|arccsch|arcsin|arccos|arctan|arccot|arcsec|arccsc|arsinh|arcosh|artanh|arcoth|arsech|arcsch|sinh|cosh|tanh|coth|sech|csch|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|theta|floor|ceil|round|sgn|min|max|diff|limit|sum|prod|int|oint|iint|iiint|gd|arc|step|sign|mod|nCr|nPr|gcd|lcm)/g, '');
+             s = s.replace(/(arcsinh|arccosh|arctanh|arccoth|arcsech|arccsch|arcsin|arccos|arctan|arccot|arcsec|arccsc|arsinh|arcosh|artanh|arcoth|arsech|arcsch|sinh|cosh|tanh|coth|sech|csch|sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|theta|floor|ceil|round|sgn|min|max|real|imag|arg|conj|polygon|angle|imaginary|conjugate|diff|limit|sum|prod|int|oint|iint|iiint|gd|arc|step|sign|mod|nCr|nPr|gcd|lcm)/g, '');
              
              // Remove independent variables that don't need sliders
              // Note: x, y, r, t are context variables usually
@@ -964,7 +1183,7 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
         // Note: 'y' is allowed in implicit eq, but we want result for '2z'.
         const checkStr = clean
             .replace(/\\[a-zA-Z]+/g, '') 
-            .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|gcd|lcm|mod|nCr|nPr)/g, '');
+            .replace(/(sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi|e|theta|floor|ceil|round|sgn|min|max|real|imag|arg|conj|polygon|angle|imaginary|conjugate|gcd|lcm|mod|nCr|nPr)/g, '');
         
         // We consider x, y, r, t, theta as graph paramters -> no scalar result
         const hasGraphVars = /(x|y|r|t)/.test(checkStr);
