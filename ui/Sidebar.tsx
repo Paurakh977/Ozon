@@ -330,6 +330,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     e.preventDefault();
                     e.stopImmediatePropagation();
                     addExpr();
+                } else if (e.key === ')') {
+                    const latex = typeof mf.getValue === 'function'
+                        ? (mf.getValue('latex-without-placeholders') || mf.value || '')
+                        : (mf.value || '');
+
+                    if (!latex || !latex.trim()) {
+                        return;
+                    }
+
+                    // Count unmatched \left( — if there's one open, let MathLive close it naturally
+                    const leftCount = (latex.match(/\\left\s*\(/g) || []).length;
+                    const rightCount = (latex.match(/\\right\s*\)/g) || []).length;
+
+                    if (leftCount > rightCount) {
+                        // There's an unclosed \left( — let smartFence handle it
+                        return;
+                    }
+
+                    // Brackets are balanced: wrap content from cursor back to group start
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    try {
+                        // Select backwards to the start of the current group
+                        mf.executeCommand('extendToGroupStart');
+                        // Wrap selected content in \left( \right)
+                        mf.executeCommand(['insert', '\\left(#@\\right)']);
+                    } catch {
+                        // If wrapping fails for any reason, fall back to a plain ')'
+                        mf.executeCommand(['insert', ')']);
+                    }
                 }
             };
             
@@ -708,7 +738,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                                         smart-fence="true"
                                         smart-superscript="false"
                                         virtual-keyboard-mode="onfocus"
-                                        onInput={(e: any) => handleInput(expr.id, e.target.value)}
+                                        onInput={(e: any) => {
+                                            const mf = e.currentTarget as any;
+                                            const readLatex = (format?: string): string => {
+                                                if (typeof mf?.getValue !== 'function') return '';
+                                                try {
+                                                    const v = format ? mf.getValue(format) : mf.getValue();
+                                                    return typeof v === 'string' ? v : '';
+                                                } catch {
+                                                    return '';
+                                                }
+                                            };
+
+                                            let latex = readLatex('latex');
+                                            if (!latex) latex = readLatex('latex-without-placeholders');
+                                            if (!latex && typeof mf?.value === 'string') latex = mf.value;
+                                            if (!latex) latex = readLatex();
+
+                                            // Defensive fix for occasional leaked label text in MathLive value.
+                                            if (typeof latex === 'string') {
+                                                latex = latex
+                                                    .replace(/^[\s\u200B-\u200D\uFEFF]*(?:Output|Result)\s*[:：]?\s*(?:\r?\n|[\u2028\u2029])+\s*/i, '')
+                                                    .replace(/^[\s\u200B-\u200D\uFEFF]*(?:Output|Result)\s*[:：]\s*/i, '');
+                                            }
+
+                                            handleInput(expr.id, latex);
+                                        }}
                                         onFocus={(e: any) => {
                                             const target = e.target;
                                             if (target && typeof target.focus === 'function') {
