@@ -1,14 +1,18 @@
 from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.readonly_context import ReadonlyContext
 from dotenv import load_dotenv
+from functools import lru_cache
 
 load_dotenv()
 
-from .config import model
+from .config import get_model, ReasoningEffort, DEFAULT_REASONING_EFFORT
 from tools import web_search_mcp_tools, sidebar_mcp_tools
 
 
-def _instruction_provider(context: ReadonlyContext) -> str:
+_agent_cache: dict[ReasoningEffort, LlmAgent] = {}
+
+
+def _get_instruction_provider(context: ReadonlyContext) -> str:
     return r"""You are a calculus tutor and graphing assistant. Solve problems step-by-step and ALWAYS visualize on the graph — no exceptions.
 
 
@@ -306,10 +310,21 @@ Always use distinct colors for each curve, slider, and point. Examples: `#2d70b3
 - End with a short key takeaway"""
 
 
-root_agent = LlmAgent(
-    name="Mercury2_agent",
-    model=model,
-    instruction=_instruction_provider,
-    description="A concise, expert Calculus tutor that solves student problems step-by-step.",
-    tools=[*web_search_mcp_tools, *sidebar_mcp_tools],
-)
+def get_root_agent(reasoning_effort: ReasoningEffort | None = None) -> LlmAgent:
+    effort = reasoning_effort or DEFAULT_REASONING_EFFORT
+    if effort not in _agent_cache:
+        model = get_model(effort)
+        _agent_cache[effort] = LlmAgent(
+            name="Mercury2_agent",
+            model=model,
+            instruction=_get_instruction_provider,
+            description="A concise, expert Calculus tutor that solves student problems step-by-step.",
+            tools=[*web_search_mcp_tools, *sidebar_mcp_tools],
+        )
+        logger.info(f"Created agent with reasoning_effort={effort}")
+    return _agent_cache[effort]
+
+
+import logging
+logger = logging.getLogger("model.agent")
+root_agent = get_root_agent()
