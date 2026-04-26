@@ -639,6 +639,7 @@ export function ChatModal({
   }, [dimensions]);
 
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
+  const [reasoningEffort, setReasoningEffort] = useState<'low' | 'medium' | 'high'>('medium');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -1534,10 +1535,11 @@ export function ChatModal({
 
     ws.current.send(JSON.stringify({
       text: payloadText,
-      expressions: expressions?.map(e => ({ id: e.id, latex: e.latex, color: e.color, visible: e.visible })) || []
+      expressions: expressions?.map(e => ({ id: e.id, latex: e.latex, color: e.color, visible: e.visible })) || [],
+      reasoningEffort: reasoningEffort
     }));
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
-  }, [input, isBusy, stopRecording, expressions, attachments]);
+  }, [input, isBusy, stopRecording, expressions, attachments, reasoningEffort]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
@@ -1620,6 +1622,16 @@ export function ChatModal({
                 <span className="text-[13px] font-semibold tracking-wide text-zinc-800 dark:text-zinc-200">
                   Ozone Agent
                 </span>
+                <select
+                  value={reasoningEffort}
+                  onChange={(e) => setReasoningEffort(e.target.value as 'low' | 'medium' | 'high')}
+                  className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
+                  title="Reasoning Effort: higher = more thorough reasoning, lower = faster responses"
+                >
+                  <option value="low">Instant</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
               </div>
               <div className="flex items-center gap-1.5 text-zinc-400 dark:text-zinc-500">
                 <button
