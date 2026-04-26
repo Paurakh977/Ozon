@@ -6,7 +6,7 @@ from typing import Literal
 
 load_dotenv()
 
-ReasoningEffort = Literal["low", "medium", "high"]
+ReasoningEffort = Literal["instant", "low", "medium", "high"]
 
 DEFAULT_REASONING_EFFORT: ReasoningEffort = "medium"
 

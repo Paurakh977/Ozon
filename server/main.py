@@ -123,7 +123,7 @@ async def lifespan(app):
         logger.warning("Agent warmup failed for effort=%s: %s", DEFAULT_REASONING_EFFORT, e)
 
     # Now pre-warm other efforts (they will share session_service from default)
-    for effort in ("low", "medium", "high"):
+    for effort in ("instant", "low", "medium", "high"):
         if effort == DEFAULT_REASONING_EFFORT:
             continue
         try:
@@ -239,7 +239,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     def update_reasoning_effort(effort: str) -> None:
         nonlocal current_reasoning_effort
-        if effort in ("low", "medium", "high"):
+        if effort in ("instant", "low", "medium", "high"):
             current_reasoning_effort = effort
             logger.info("Session %s using reasoning_effort=%s", session.id, effort)
 
