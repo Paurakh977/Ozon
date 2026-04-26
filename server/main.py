@@ -31,7 +31,8 @@ from google.adk.runners import InMemoryRunner
 from google.genai import types
 import json
 
-from model import root_agent
+from model import get_root_agent
+from model.config import DEFAULT_REASONING_EFFORT, ReasoningEffort
 from tools import action_queue_var, frontend_state_var
 logger = logging.getLogger("server")
 
@@ -53,9 +54,33 @@ agent_auth.JWT_ISSUER = os.environ["NEST_JWT_ISSUER"]
 agent_auth.JWT_AUDIENCE = os.environ["NEST_JWT_AUDIENCE"]
 agent_auth.REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 
-# Runner created once at startup — shared across all connections, no re-init per request
+# Runner created per reasoning effort — shared across sessions with same effort
 APP_NAME = "math_diffusion_web"
-runner = InMemoryRunner(agent=root_agent, app_name=APP_NAME)
+_runners: dict[ReasoningEffort, InMemoryRunner] = {}
+
+
+def get_runner(effort: ReasoningEffort) -> InMemoryRunner:
+    if effort not in _runners:
+        # Ensure default runner exists first to share its services from
+        if DEFAULT_REASONING_EFFORT not in _runners:
+            _runners[DEFAULT_REASONING_EFFORT] = InMemoryRunner(
+                agent=get_root_agent(DEFAULT_REASONING_EFFORT),
+                app_name=APP_NAME
+            )
+        
+        agent = get_root_agent(effort)
+        runner = InMemoryRunner(agent=agent, app_name=APP_NAME)
+        
+        # Share the session service from default effort runner to preserve chat history
+        runner.session_service = _runners[DEFAULT_REASONING_EFFORT].session_service
+        runner.artifact_service = _runners[DEFAULT_REASONING_EFFORT].artifact_service
+        
+        _runners[effort] = runner
+    return _runners[effort]
+
+
+# Initial runner with default effort (will pre-warm and share its services)
+_initial_runner = get_runner(DEFAULT_REASONING_EFFORT)
 
 # ── Heartbeat interval (seconds) ─────────────────────────────────────────────
 HEARTBEAT_INTERVAL = 25  # WebSocket ping every 25s to keep connection alive
@@ -77,23 +102,48 @@ async def lifespan(app):
         logger.warning("JWKS prefetch failed (will retry on first request): %s", e)
 
     # ... your existing agent warmup code unchanged ...
+    # Pre-warm default effort first (its session_service will be shared)
     try:
-        warmup_session = await runner.session_service.create_session(
-            app_name=APP_NAME, user_id="__warmup__",
+        warmup_runner = get_runner(DEFAULT_REASONING_EFFORT)
+        warmup_session = await warmup_runner.session_service.create_session(
+            app_name=APP_NAME, user_id=f"__warmup_{DEFAULT_REASONING_EFFORT}__",
         )
         warmup_content = types.Content(
             role="user", parts=[types.Part.from_text(text="2+2")],
         )
-        async for _ in runner.run_async(
-            user_id="__warmup__",
+        async for _ in warmup_runner.run_async(
+            user_id=f"__warmup_{DEFAULT_REASONING_EFFORT}__",
             session_id=warmup_session.id,
             new_message=warmup_content,
             run_config=RunConfig(streaming_mode=StreamingMode.NONE),
         ):
             pass
-        logger.info("Agent pre-warmed in %.1fs", time.monotonic() - t0)
+        logger.info("Agent pre-warmed with reasoning_effort=%s in %.1fs", DEFAULT_REASONING_EFFORT, time.monotonic() - t0)
     except Exception as e:
-        logger.warning("Agent warmup failed: %s", e)
+        logger.warning("Agent warmup failed for effort=%s: %s", DEFAULT_REASONING_EFFORT, e)
+
+    # Now pre-warm other efforts (they will share session_service from default)
+    for effort in ("low", "medium", "high"):
+        if effort == DEFAULT_REASONING_EFFORT:
+            continue
+        try:
+            warmup_runner = get_runner(effort)
+            warmup_session = await warmup_runner.session_service.create_session(
+                app_name=APP_NAME, user_id=f"__warmup_{effort}__",
+            )
+            warmup_content = types.Content(
+                role="user", parts=[types.Part.from_text(text="2+2")],
+            )
+            async for _ in warmup_runner.run_async(
+                user_id=f"__warmup_{effort}__",
+                session_id=warmup_session.id,
+                new_message=warmup_content,
+                run_config=RunConfig(streaming_mode=StreamingMode.NONE),
+            ):
+                pass
+            logger.info("Agent pre-warmed with reasoning_effort=%s in %.1fs", effort, time.monotonic() - t0)
+        except Exception as e:
+            logger.warning("Agent warmup failed for effort=%s: %s", effort, e)
 
     yield
     logger.info("Server shutting down.")
@@ -184,8 +234,18 @@ async def websocket_endpoint(websocket: WebSocket):
     session_user_id = auth_result.user_id or f"anon_{uuid.uuid4().hex[:8]}"
     logger.info("Session started user=%s tier=%s", session_user_id, auth_result.tier)
 
+    # Default reasoning effort for this session (can be changed per message)
+    current_reasoning_effort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+
+    def update_reasoning_effort(effort: str) -> None:
+        nonlocal current_reasoning_effort
+        if effort in ("low", "medium", "high"):
+            current_reasoning_effort = effort
+            logger.info("Session %s using reasoning_effort=%s", session.id, effort)
+
     # ── Create agent session ──────────────────────────────────────────
     t0 = time.monotonic()
+    runner = get_runner(current_reasoning_effort)
     session = await runner.session_service.create_session(
         app_name=APP_NAME,
         user_id=session_user_id,
@@ -314,11 +374,18 @@ async def websocket_endpoint(websocket: WebSocket):
             if isinstance(data, dict):
                 prompt = data.get("text", "")
                 client_expressions = data.get("expressions", [])
+                effort = data.get("reasoningEffort", current_reasoning_effort)
+                if effort != current_reasoning_effort:
+                    update_reasoning_effort(effort)
+                    runner = get_runner(current_reasoning_effort)
+                    # Don't create a new session - the shared session_service preserves chat history
+                    logger.info("Session %s switched to reasoning_effort=%s", session.id, current_reasoning_effort)
             else:
                 prompt = raw
 
             request_label = auth_result.user_id or session_user_id
             logger.info("[%s] User message: %s", request_label, prompt[:120])
+            logger.info("[%s] Using reasoning_effort=%s", request_label, current_reasoning_effort)
 
             content = types.Content(
                 role="user",
