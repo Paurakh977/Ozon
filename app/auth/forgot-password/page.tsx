@@ -1,58 +1,105 @@
-// app/auth/forgot-password/page.tsx
 "use client";
 
 import { useState } from "react";
 import { authClient } from "@/lib/auth-client";
+import { motion } from "framer-motion";
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const APP_URL = process.env.NEXT_PUBLIC_APP_URL as string;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setLoading(true);
+    setError("");
     const { error } = await authClient.requestPasswordReset({
       email,
       redirectTo: `${APP_URL}/auth/reset-password`,
     });
     if (error) setError(error.message ?? "Something went wrong");
     else setSent(true);
+    setLoading(false);
   };
 
   if (sent) {
     return (
-      <div style={centerStyle}>
-        <div style={cardStyle}>
-          <h2>Check your email</h2>
-          <p>If an account exists for {email}, you will receive a reset link shortly.</p>
-          <a href="/auth" style={{ color: "#6366f1" }}>Back to sign in</a>
-        </div>
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground font-sans relative overflow-hidden p-4">
+        <motion.div 
+          initial={{ opacity: 0, scale: 0.95 }} 
+          animate={{ opacity: 1, scale: 1 }} 
+          className="relative z-10 bg-card/80 backdrop-blur-xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-2xl shadow-black/5 text-center"
+        >
+          <div className="w-14 h-14 bg-primary/10 text-primary border border-primary/20 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+          </div>
+          <h2 className="text-2xl font-semibold tracking-tight mb-3">Check your email</h2>
+          <p className="text-muted-foreground text-[14px] leading-relaxed mb-8">
+            If an account exists for <strong className="text-foreground">{email}</strong>, you will receive a reset link shortly.
+          </p>
+          <a href="/auth" className="inline-block w-full py-3 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-xl text-[14px] font-medium transition-all border border-border/50">
+            Back to sign in
+          </a>
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div style={centerStyle}>
-      <div style={cardStyle}>
-        <h2>Reset Password</h2>
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground font-sans relative overflow-hidden p-4">
+      <motion.div 
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 bg-card/80 backdrop-blur-xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
+      >
+        <div className="mb-8 text-center">
+          <div className="w-12 h-12 bg-secondary text-secondary-foreground border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight mb-2">Reset Password</h2>
+          <p className="text-[13px] text-muted-foreground">Enter your email and we'll send a link</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
           <input
+            className="w-full px-4 py-3 bg-background/50 border border-border/60 rounded-xl text-[14px] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/70"
             type="email"
             placeholder="Your email address"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            style={{ padding: "12px", border: "1px solid #e2e8f0", borderRadius: "8px" }}
           />
-          {error && <p style={{ color: "#ef4444", fontSize: "13px" }}>{error}</p>}
-          <button type="submit" style={{ padding: "12px", background: "#6366f1", color: "#fff", border: "none", borderRadius: "8px", cursor: "pointer" }}>
-            Send reset link
+          
+          {error && (
+            <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-red-500 text-xs bg-red-500/10 p-2.5 rounded-lg border border-red-500/20">
+              {error}
+            </motion.p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-primary text-primary-foreground rounded-xl text-[14px] font-semibold hover:bg-primary/90 transition-all disabled:opacity-70 flex justify-center items-center shadow-sm"
+          >
+            {loading ? <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span> : "Send reset link"}
           </button>
         </form>
-      </div>
+
+        <div className="mt-8 text-center">
+          <a href="/auth" className="text-[13px] text-muted-foreground hover:text-foreground font-medium transition-colors">
+            ← Back to sign in
+          </a>
+        </div>
+      </motion.div>
     </div>
   );
 }
-
-const centerStyle: React.CSSProperties = { minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" };
-const cardStyle: React.CSSProperties = { background: "#fff", borderRadius: "12px", padding: "40px", maxWidth: "400px", width: "100%", boxShadow: "0 4px 24px rgba(0,0,0,0.08)" };

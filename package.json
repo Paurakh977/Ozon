@@ -15,7 +15,7 @@
     "clsx": "^2.1.1",
     "copy-to-clipboard": "^3.3.3",
     "desmos": "^1.5.4",
-    "framer-motion": "^12.34.5",
+    "framer-motion": "^12.38.0",
     "lodash": "^4.17.21",
     "lucide-react": "^0.576.0",
     "mafs": "^0.21.0",

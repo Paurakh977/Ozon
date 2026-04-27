@@ -1,9 +1,9 @@
-// app/auth/verify-email/page.tsx
 "use client";
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { motion, AnimatePresence } from "framer-motion";
 
 function VerifyEmailContent() {
   const router = useRouter();
@@ -12,9 +12,6 @@ function VerifyEmailContent() {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    // Better Auth handles the actual verification via the callbackURL
-    // By the time the user lands here they're already verified
-    // We just check session and redirect
     authClient.getSession().then(({ data }) => {
       if (data?.session) {
         setStatus("success");
@@ -27,48 +24,65 @@ function VerifyEmailContent() {
   }, [router]);
 
   return (
-    <div style={center}>
-      <div style={card}>
-        {status === "loading" && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px" }}>⏳</div>
-            <h2>Verifying your email...</h2>
-          </div>
-        )}
-        {status === "success" && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px" }}>✅</div>
-            <h2 style={{ color: "#22c55e" }}>Email verified!</h2>
-            <p style={{ color: "#64748b" }}>Redirecting you to the dashboard...</p>
-          </div>
-        )}
-        {status === "error" && (
-          <div style={{ textAlign: "center" }}>
-            <div style={{ fontSize: "32px", marginBottom: "16px" }}>❌</div>
-            <h2 style={{ color: "#ef4444" }}>Verification failed</h2>
-            <p style={{ color: "#64748b" }}>{message}</p>
-            <a href="/auth" style={{ color: "#6366f1" }}>Back to sign in</a>
-          </div>
-        )}
-      </div>
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground font-sans relative overflow-hidden p-4">
+      <div className="absolute inset-0 z-0 bg-[radial-gradient(circle_at_center,var(--primary)/0.03_0,transparent_100%)]"></div>
+      
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.4, ease: "easeOut" }}
+        className="relative z-10 bg-card/80 backdrop-blur-xl border border-border/50 rounded-[24px] p-10 w-full max-w-[400px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)] text-center"
+      >
+        <AnimatePresence mode="wait">
+          {status === "loading" && (
+            <motion.div key="loading" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, scale: 0.9 }}>
+              <div className="w-16 h-16 border-4 border-primary/20 border-t-primary rounded-full animate-spin mx-auto mb-6"></div>
+              <h2 className="text-xl font-semibold tracking-tight">Verifying your email...</h2>
+              <p className="text-muted-foreground text-sm mt-2">Just a moment please</p>
+            </motion.div>
+          )}
+
+          {status === "success" && (
+            <motion.div key="success" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
+              <div className="w-16 h-16 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold tracking-tight text-foreground">Email verified!</h2>
+              <p className="text-muted-foreground text-sm mt-2">Redirecting you to the dashboard...</p>
+            </motion.div>
+          )}
+
+          {status === "error" && (
+            <motion.div key="error" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
+              <div className="w-16 h-16 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold tracking-tight">Verification failed</h2>
+              <p className="text-muted-foreground text-sm mt-2 mb-8 leading-relaxed">{message}</p>
+              <a href="/auth" className="inline-block w-full py-2.5 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-xl text-sm font-medium transition-all border border-border/50">
+                Back to sign in
+              </a>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
     </div>
   );
 }
 
 export default function VerifyEmailPage() {
   return (
-    <Suspense fallback={<div style={center}>Loading...</div>}>
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+        <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+      </div>
+    }>
       <VerifyEmailContent />
     </Suspense>
   );
 }
-
-const center: React.CSSProperties = {
-  minHeight: "100vh", display: "flex",
-  alignItems: "center", justifyContent: "center", background: "#f8fafc",
-};
-const card: React.CSSProperties = {
-  background: "#fff", borderRadius: "12px", padding: "40px",
-  maxWidth: "400px", width: "100%", boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-  textAlign: "center",
-};
