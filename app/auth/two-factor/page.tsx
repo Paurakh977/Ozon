@@ -1,9 +1,9 @@
-// app/auth/two-factor/page.tsx
 "use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { authClient } from "@/lib/auth-client";
+import { motion, AnimatePresence } from "framer-motion";
 
 type Method = "totp" | "otp" | "backup";
 
@@ -45,45 +45,73 @@ export default function TwoFactorPage() {
   };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.card}>
-        <h1 style={styles.title}>Two-Factor Authentication</h1>
-        <p style={styles.subtitle}>Verify your identity to continue</p>
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground font-sans relative overflow-hidden p-4">
+      {/* Ambient background blur */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-primary/5 rounded-[100%] blur-[100px] pointer-events-none opacity-50"></div>
+
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="relative z-10 bg-card/80 backdrop-blur-2xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
+      >
+        <div className="mb-8 text-center">
+          <motion.div className="w-12 h-12 bg-primary/10 text-primary border border-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+            </svg>
+          </motion.div>
+          <h1 className="text-2xl font-bold tracking-tight mb-1.5">Two-Step Verification</h1>
+          <p className="text-[13px] text-muted-foreground">Verify your identity to continue</p>
+        </div>
 
         {/* Method selector */}
-        <div style={styles.methodRow}>
+        <div className="flex bg-muted/50 p-1 rounded-xl mb-8 border border-border/40">
           {(["totp", "otp", "backup"] as Method[]).map((m) => (
             <button
               key={m}
-              onClick={() => setMethod(m)}
-              style={{
-                ...styles.methodBtn,
-                ...(method === m ? styles.methodBtnActive : {}),
-              }}
+              onClick={() => { setMethod(m); setCode(""); setError(""); }}
+              className={`flex-1 relative rounded-lg text-[12px] font-medium py-2 transition-colors z-10 ${
+                method === m ? "text-foreground" : "text-muted-foreground hover:text-foreground"
+              }`}
             >
-              {m === "totp" ? "Authenticator" : m === "otp" ? "Email OTP" : "Backup Code"}
+              {method === m && (
+                <motion.div 
+                  layoutId="method-active"
+                  className="absolute inset-0 bg-background border border-border/40 rounded-lg shadow-sm -z-10"
+                  transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                />
+              )}
+              {m === "totp" ? "App" : m === "otp" ? "Email" : "Backup"}
             </button>
           ))}
         </div>
 
-        <form onSubmit={handleVerify} style={styles.form}>
-          {method === "totp" && (
-            <p style={styles.hint}>Enter the 6-digit code from your authenticator app</p>
-          )}
-          {method === "otp" && (
-            <div>
-              <p style={styles.hint}>Enter the code sent to your email</p>
-              <button type="button" onClick={sendOtp} style={styles.secondaryBtn}>
-                Send OTP
-              </button>
-            </div>
-          )}
-          {method === "backup" && (
-            <p style={styles.hint}>Enter one of your saved backup codes</p>
-          )}
+        <form onSubmit={handleVerify} className="space-y-5">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={method}
+              initial={{ opacity: 0, y: 5 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -5 }}
+              transition={{ duration: 0.15 }}
+            >
+              {method === "totp" && <p className="text-[13px] text-center text-muted-foreground mb-4">Enter the 6-digit code from your authenticator app</p>}
+              {method === "otp" && (
+                <div className="text-center mb-4">
+                  <p className="text-[13px] text-muted-foreground mb-3">Enter the code sent to your email</p>
+                  <button type="button" onClick={sendOtp} className="text-xs bg-secondary text-secondary-foreground hover:bg-secondary/80 px-3 py-1.5 rounded-md font-medium transition-colors border border-border/50">
+                    Send OTP
+                  </button>
+                </div>
+              )}
+              {method === "backup" && <p className="text-[13px] text-center text-muted-foreground mb-4">Enter one of your saved backup codes</p>}
+            </motion.div>
+          </AnimatePresence>
 
           <input
-            style={styles.input}
+            className="w-full px-4 py-3.5 bg-background/50 border border-border/60 rounded-xl text-[18px] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all text-center tracking-[0.25em] font-mono placeholder:tracking-normal placeholder:font-sans placeholder:text-muted-foreground/50"
             type="text"
             placeholder={method === "backup" ? "Backup code" : "000000"}
             value={code}
@@ -93,58 +121,33 @@ export default function TwoFactorPage() {
             autoComplete="one-time-code"
           />
 
-          <label style={styles.checkboxLabel}>
+          <label className="flex items-center gap-2.5 text-[13px] text-muted-foreground cursor-pointer justify-center mt-4">
             <input
               type="checkbox"
               checked={trustDevice}
               onChange={(e) => setTrustDevice(e.target.checked)}
+              className="rounded border-border bg-background text-primary focus:ring-primary/20 w-4 h-4"
             />
-            {" "}Trust this device for 30 days
+            <span>Trust this device for 30 days</span>
           </label>
 
-          {error && <p style={styles.error}>{error}</p>}
+          <AnimatePresence>
+            {error && (
+              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
+                <p className="text-red-500 text-xs text-center bg-red-500/10 p-2 rounded-lg border border-red-500/20">{error}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
-          <button type="submit" style={styles.primaryBtn} disabled={loading}>
-            {loading ? "Verifying..." : "Verify"}
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 mt-2 bg-primary text-primary-foreground rounded-xl text-[14px] font-semibold hover:bg-primary/90 transition-all disabled:opacity-70 flex justify-center items-center shadow-sm"
+          >
+            {loading ? <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span> : "Verify"}
           </button>
         </form>
-      </div>
+      </motion.div>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    minHeight: "100vh", display: "flex", alignItems: "center",
-    justifyContent: "center", background: "#f8fafc",
-  },
-  card: {
-    background: "#fff", borderRadius: "12px", padding: "40px",
-    width: "100%", maxWidth: "400px", boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-  },
-  title: { fontSize: "22px", fontWeight: 700, color: "#1e293b", marginBottom: "8px" },
-  subtitle: { color: "#64748b", fontSize: "14px", marginBottom: "24px" },
-  methodRow: { display: "flex", gap: "8px", marginBottom: "20px" },
-  methodBtn: {
-    flex: 1, padding: "8px", border: "1px solid #e2e8f0",
-    borderRadius: "6px", background: "#fff", cursor: "pointer", fontSize: "12px",
-  },
-  methodBtnActive: { background: "#6366f1", color: "#fff", borderColor: "#6366f1" },
-  form: { display: "flex", flexDirection: "column", gap: "12px" },
-  hint: { color: "#64748b", fontSize: "13px", margin: "0" },
-  input: {
-    padding: "12px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
-    fontSize: "16px", outline: "none", letterSpacing: "4px", textAlign: "center",
-    width: "100%", boxSizing: "border-box",
-  },
-  checkboxLabel: { fontSize: "13px", color: "#64748b", display: "flex", alignItems: "center", gap: "6px" },
-  primaryBtn: {
-    padding: "12px", background: "#6366f1", color: "#fff", border: "none",
-    borderRadius: "8px", cursor: "pointer", fontSize: "15px", fontWeight: 600,
-  },
-  secondaryBtn: {
-    padding: "8px 14px", background: "#f1f5f9", border: "1px solid #e2e8f0",
-    borderRadius: "6px", cursor: "pointer", fontSize: "13px",
-  },
-  error: { color: "#ef4444", fontSize: "13px", margin: "0" },
-};
