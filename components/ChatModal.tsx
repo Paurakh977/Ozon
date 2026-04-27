@@ -639,7 +639,7 @@ export function ChatModal({
   }, [dimensions]);
 
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
-  const [reasoningEffort, setReasoningEffort] = useState<'low' | 'medium' | 'high'>('medium');
+  const [reasoningEffort, setReasoningEffort] = useState<'instant' | 'low' | 'medium' | 'high'>('medium');
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -1624,11 +1624,12 @@ export function ChatModal({
                 </span>
                 <select
                   value={reasoningEffort}
-                  onChange={(e) => setReasoningEffort(e.target.value as 'low' | 'medium' | 'high')}
+                  onChange={(e) => setReasoningEffort(e.target.value as 'instant' | 'low' | 'medium' | 'high')}
                   className="text-[10px] font-medium px-1.5 py-0.5 rounded-md bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 focus:outline-none focus:ring-1 focus:ring-violet-500 cursor-pointer"
                   title="Reasoning Effort: higher = more thorough reasoning, lower = faster responses"
                 >
-                  <option value="low">Instant</option>
+                  <option value="instant">Instant</option>
+                  <option value="low">Low</option>
                   <option value="medium">Medium</option>
                   <option value="high">High</option>
                 </select>
