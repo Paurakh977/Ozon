@@ -40,7 +40,7 @@ def plot_expression(latex_expression: str, color: Optional[str] = None) -> str:
         }
         if color:
             action["color"] = color
-        queue.append(action)
+        queue.put_nowait(action)
     return f"Successfully queued plot request for '{latex_expression}'. Inform the user."
 
 def remove_expression(target_id: str) -> str:
@@ -52,7 +52,7 @@ def remove_expression(target_id: str) -> str:
     """
     queue = action_queue_var.get()
     if queue is not None:
-        queue.append({
+        queue.put_nowait({
             "action": "removeExpr",
             "latex": target_id
         })
@@ -71,7 +71,7 @@ def update_slider_bounds(variable: str, min_val: str, max_val: str, step: str) -
     """
     queue = action_queue_var.get()
     if queue is not None:
-        queue.append({
+        queue.put_nowait({
             "action": "updateSliderBounds",
             "variable": variable,
             "min": min_val,
@@ -88,7 +88,7 @@ def clear_all_expressions() -> str:
     queue = action_queue_var.get()
     if queue is not None:
         for exp in expressions:
-            queue.append({
+            queue.put_nowait({
                 "action": "removeExpr",
                 "latex": exp.get("id", "")
             })
@@ -117,22 +117,22 @@ def bulk_configure_graph(
         if clear_first:
             expressions = frontend_state_var.get([])
             for exp in expressions:
-                queue.append({"action": "removeExpr", "latex": exp.get("id", "")})
+                queue.put_nowait({"action": "removeExpr", "latex": exp.get("id", "")})
         
         if removes:
             for target_id in removes:
-                queue.append({"action": "removeExpr", "latex": target_id})
+                queue.put_nowait({"action": "removeExpr", "latex": target_id})
         
         if plots:
             for p in plots:
                 action = {"action": "addExpr", "latex": p.get("latex", "")}
                 if p.get("color"):
                     action["color"] = p.get("color")
-                queue.append(action)
+                queue.put_nowait(action)
                 
         if slider_bounds:
             for s in slider_bounds:
-                queue.append({
+                queue.put_nowait({
                     "action": "updateSliderBounds",
                     "variable": s.get("variable", ""),
                     "min": s.get("min", "-10"),

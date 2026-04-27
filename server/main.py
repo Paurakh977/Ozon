@@ -406,8 +406,25 @@ async def websocket_endpoint(websocket: WebSocket):
             t_start = time.monotonic()
             first_text_event = True
 
-            action_queue = []
+            action_queue = asyncio.Queue()
             token = action_queue_var.set(cast(Any, action_queue))
+
+            # Background task to instantly flush tool actions to the frontend
+            async def flush_actions():
+                while True:
+                    action = await action_queue.get()
+                    if action is None:  # Sentinel to stop the task
+                        action_queue.task_done()
+                        break
+                    try:
+                        await websocket.send_json({"type": "action", **action})
+                        logger.debug("Sent action to frontend: %s", action)
+                    except Exception as e:
+                        logger.error("Error sending tool action via WS: %s", e)
+                    finally:
+                        action_queue.task_done()
+
+            action_task = asyncio.create_task(flush_actions())
 
             try:
                 async for event in runner.run_async(
@@ -416,12 +433,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     new_message=content,
                     run_config=RunConfig(streaming_mode=StreamingMode.SSE),
                 ):
-                    # Check for tool actions
-                    if action_queue:
-                        while action_queue:
-                            action = action_queue.pop(0)
-                            await websocket.send_json({"type": "action", **action})
-
                     if not event.content:
                         continue
 
@@ -488,6 +499,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 except Exception:
                     pass
             finally:
+                # Signal the flush task to stop
+                await action_queue.put(None)
+                await action_task
                 action_queue_var.reset(token)
                 frontend_state_var.reset(state_token)
 
