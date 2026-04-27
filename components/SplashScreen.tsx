@@ -1,39 +1,98 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Infinity</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  html, body {
-    background:#fff;
-    width:100%; height:100%;
-    min-height:100vh;
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    overflow:hidden;
-  }
-  canvas {
-    display:block;
-    width: min(92vw, 820px);
-    height: auto;
-    image-rendering: crisp-edges;
-  }
-</style>
-</head>
-<body>
-<canvas id="c"></canvas>
-<script>
-/* ─────────────────────────────────────────────
-   The SVG is loaded as an image onto a canvas.
-   A second "mask" canvas is filled progressively
-   with narrow swept-quad slices oriented perpendicular
-   to the ribbon centerline at each sample point.
-   This makes the crossover look like two diagonal
-   ribbon strips crossing — exactly correct.
-   ───────────────────────────────────────────── */
+"use client";
+
+import { useRef, useEffect, useState } from "react";
+import { TextScramble } from "@/components/ui/text-scramble";
+import { motion, AnimatePresence } from "framer-motion";
+
+function BackgroundSparkles() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let particles: { x: number, y: number, r: number, a: number, da: number, dx: number, dy: number }[] = [];
+    let animationFrameId: number;
+
+    const resize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      initParticles();
+    };
+
+    const initParticles = () => {
+      particles = [];
+      const particleCount = window.innerWidth < 768 ? 25 : 60;
+      for (let i = 0; i < particleCount; i++) {
+        particles.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          r: Math.random() * 1.2 + 0.3,
+          a: Math.random(),
+          da: (Math.random() - 0.5) * 0.015,
+          dx: (Math.random() - 0.5) * 0.15,
+          dy: (Math.random() - 0.5) * 0.15 - 0.08,
+        });
+      }
+    };
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      particles.forEach((p) => {
+        p.x += p.dx;
+        p.y += p.dy;
+        p.a += p.da;
+
+        if (p.a <= 0) {
+          p.a = 0;
+          p.da = Math.abs(p.da);
+        } else if (p.a >= 1) {
+          p.a = 1;
+          p.da = -Math.abs(p.da);
+        }
+
+        if (p.y < -10) p.y = canvas.height + 10;
+        if (p.x < -10) p.x = canvas.width + 10;
+        if (p.x > canvas.width + 10) p.x = -10;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(160, 165, 180, ${p.a * 0.5})`;
+        ctx.fill();
+      });
+      animationFrameId = requestAnimationFrame(draw);
+    };
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+
+    return () => {
+      window.removeEventListener('resize', resize);
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
+
+  return (
+    <motion.canvas
+      ref={canvasRef}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 1.5 }}
+      style={{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        zIndex: 0,
+      }}
+    />
+  );
+}
 
 const SVG_SRC = `<svg viewBox="0 0 2048 2048" xmlns="http://www.w3.org/2000/svg">
 <defs>
@@ -99,136 +158,252 @@ const SVG_SRC = `<svg viewBox="0 0 2048 2048" xmlns="http://www.w3.org/2000/svg"
 <path fill="rgb(72,238,251)" d="M 1064.57 829.073 C 1067.2 826.346 1071.73 821.008 1075.27 820.587 C 1074.08 824.393 1068.56 828.598 1065.41 831.34 L 1064.57 829.073 z"/>
 </svg>`;
 
-/* ── Ribbon centerline as cubic bezier segments ──
-   [x0,y0, cx1,cy1, cx2,cy2, x1,y1]
-   Starts at rightmost tip of right loop.
-   Sequence: right-loop top arc → crossover →
-             left loop (all the way around) →
-             crossover back → right-loop bottom → home.            */
-const SEGS = [
-  [1942, 958,  1942, 762,  1816, 594,  1630, 578],   // right top
-  [1630, 578,  1448, 562,  1232, 692,  1024, 942],   // crossover ↘ into left (Foreground)
-  [1024, 942,  816,  1192, 582,  1296, 364,  1258],  // left lower
-  [364,  1258, 148,  1220, 62,   1006, 152,  832],   // left peak
-  [152,  832,  242,  658,  462,  598,  648,  632],   // left upper
-  [648,  632,  834,  666,  982,  806,  1024, 942],   // crossover ↗ back right (Background)
-  [1024, 942,  1066, 1078, 1262, 1228, 1478, 1258],  // right lower
-  [1478, 1258, 1694, 1288, 1912, 1150, 1942, 958],  // home
+const SEGS = [[1942, 958, 1942, 762, 1816, 594, 1630, 578],[1630, 578, 1448, 562, 1232, 692, 1024, 942],[1024, 942, 816, 1192, 582, 1296, 364, 1258],[364, 1258, 148, 1220, 62, 1006, 152, 832],[152, 832, 242, 658, 462, 598, 648, 632],[648, 632, 834, 666, 982, 806, 1024, 942],[1024, 942, 1066, 1078, 1262, 1228, 1478, 1258],[1478, 1258, 1694, 1288, 1912, 1150, 1942, 958],
 ];
 
-const N        = SEGS.length;
-const HALF_W   = 170;   // tighter half-width to prevent bleeding into shadows
-const DURATION = 2000;  // ms
-const SIZE     = 2048;
-const SAMPLES  = 90;    // sub-steps per frame for smooth sweeping
+const N = SEGS.length;
+const HALF_W = 170;
+const DURATION = 2000;
+const SIZE = 2048;
+const SAMPLES = 90;
 
-/* ── Bezier helpers ── */
-function bezPt(s, t) {
-  const mt=1-t, mt2=mt*mt, mt3=mt2*mt, t2=t*t, t3=t2*t;
+function bezPt(s: number[], t: number) {
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const mt3 = mt2 * mt;
+  const t2 = t * t;
+  const t3 = t2 * t;
   return {
-    x: mt3*s[0] + 3*mt2*t*s[2] + 3*mt*t2*s[4] + t3*s[6],
-    y: mt3*s[1] + 3*mt2*t*s[3] + 3*mt*t2*s[5] + t3*s[7]
+    x: mt3 * s[0] + 3 * mt2 * t * s[2] + 3 * mt * t2 * s[4] + t3 * s[6],
+    y: mt3 * s[1] + 3 * mt2 * t * s[3] + 3 * mt * t2 * s[5] + t3 * s[7],
   };
 }
-function bezTan(s, t) {
-  const mt=1-t, mt2=mt*mt, t2=t*t;
-  const dx = 3*(mt2*(s[2]-s[0]) + 2*mt*t*(s[4]-s[2]) + t2*(s[6]-s[4]));
-  const dy = 3*(mt2*(s[3]-s[1]) + 2*mt*t*(s[5]-s[3]) + t2*(s[7]-s[5]));
-  const L  = Math.sqrt(dx*dx + dy*dy) || 1;
-  return { x: dx/L, y: dy/L };
+
+function bezTan(s: number[], t: number) {
+  const mt = 1 - t;
+  const mt2 = mt * mt;
+  const t2 = t * t;
+  const dx = 3 * (mt2 * (s[2] - s[0]) + 2 * mt * t * (s[4] - s[2]) + t2 * (s[6] - s[4]));
+  const dy = 3 * (mt2 * (s[3] - s[1]) + 2 * mt * t * (s[5] - s[3]) + t2 * (s[7] - s[5]));
+  const L = Math.sqrt(dx * dx + dy * dy) || 1;
+  return { x: dx / L, y: dy / L };
 }
 
-/* Global progress [0,1] → point + outward normal */
-function pathInfo(g) {
+function pathInfo(g: number) {
   const raw = g * N;
-  const si  = Math.min(Math.floor(raw), N - 1);
-  const lt  = raw - si;
-  const s   = SEGS[si];
-  const pt  = bezPt(s, lt);
+  const si = Math.min(Math.floor(raw), N - 1);
+  const lt = raw - si;
+  const s = SEGS[si];
+  const pt = bezPt(s, lt);
   const tan = bezTan(s, lt);
   return { pt, norm: { x: -tan.y, y: tan.x } };
 }
 
-function easeInOut(t) { return t < 0.5 ? 2*t*t : -1+(4-2*t)*t; }
-
-/* ── Canvas setup ── */
-const canvas = document.getElementById('c');
-canvas.width = canvas.height = SIZE;
-const ctx = canvas.getContext('2d');
-
-/* Offscreen mask – accumulates the white reveal region */
-const mCvs = document.createElement('canvas');
-mCvs.width = mCvs.height = SIZE;
-const mCtx = mCvs.getContext('2d');
-
-/* Load SVG as image */
-const blob = new Blob([SVG_SRC], { type: 'image/svg+xml;charset=utf-8' });
-const url  = URL.createObjectURL(blob);
-const img  = new Image();
-img.onload = startAnim;
-img.src    = url;
-
-function startAnim() {
-  let startTS   = null;
-  let lastProg  = 0;
-  let lastInfo  = pathInfo(0);
-
-  /* Seed the mask with a small circle at the starting tip */
-  const { pt: p0, norm: n0 } = lastInfo;
-  mCtx.fillStyle = 'white';
-  mCtx.beginPath();
-  mCtx.arc(p0.x, p0.y, HALF_W * 0.6, 0, Math.PI * 2);
-  mCtx.fill();
-
-  function frame(ts) {
-    if (!startTS) startTS = ts;
-    const raw  = Math.min((ts - startTS) / DURATION, 1);
-    const prog = easeInOut(raw);
-
-    if (prog > lastProg) {
-      /* ── Draw smooth stroke on mask canvas ───────────────
-         Using a rounded stroke prevents the sharp, blocky 
-         artifacts caused by wide perpendicular swept quads,
-         keeping the mask tightly hugging the ribbon's shape. */
-      const range = prog - lastProg;
-
-      mCtx.strokeStyle = 'white';
-      mCtx.lineWidth = HALF_W * 2;
-      mCtx.lineCap = 'round';
-      mCtx.lineJoin = 'round';
-      mCtx.beginPath();
-      mCtx.moveTo(lastInfo.pt.x, lastInfo.pt.y);
-
-      for (let i = 1; i <= SAMPLES; i++) {
-        const tB = lastProg + range * (i / SAMPLES);
-        const { pt: pB } = pathInfo(tB);
-        mCtx.lineTo(pB.x, pB.y);
-      }
-      mCtx.stroke();
-
-      lastInfo = pathInfo(prog);
-      lastProg = prog;
-    }
-
-    /* ── Composite: SVG clipped by accumulated mask ── */
-    ctx.clearRect(0, 0, SIZE, SIZE);
-    ctx.drawImage(img, 0, 0, SIZE, SIZE);
-    ctx.globalCompositeOperation = 'destination-in';
-    ctx.drawImage(mCvs, 0, 0);
-    ctx.globalCompositeOperation = 'source-over';
-
-    if (raw < 1) {
-      requestAnimationFrame(frame);
-    } else {
-      /* Animation complete — show pristine SVG (no mask artefacts) */
-      ctx.clearRect(0, 0, SIZE, SIZE);
-      ctx.drawImage(img, 0, 0, SIZE, SIZE);
-      URL.revokeObjectURL(url);
-    }
-  }
-
-  setTimeout(() => requestAnimationFrame(frame), 200);
+function easeInOut(t: number) {
+  return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
-</script>
-</body>
-</html>
+
+interface SplashScreenProps {
+  onComplete?: () => void;
+}
+
+export default function SplashScreen({ onComplete }: SplashScreenProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [showText, setShowText] = useState(false);
+  const [isExiting, setIsExiting] = useState(false);
+
+  useEffect(() => {
+    if (isExiting) {
+      const t = setTimeout(() => {
+        onComplete?.();
+      }, 850); // wait for the 800ms exit animation to complete smoothly
+      return () => clearTimeout(t);
+    }
+  }, [isExiting, onComplete]);
+
+  useEffect(() => {
+    // Show text after a slight delay
+    const t = setTimeout(() => setShowText(true), 400);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    let animationFrameId: number;
+    let timeoutId: NodeJS.Timeout;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const mCvs = document.createElement("canvas");
+    mCvs.width = SIZE;
+    mCvs.height = SIZE;
+    const mCtx = mCvs.getContext("2d");
+    if (!mCtx) return;
+
+    const blob = new Blob([SVG_SRC], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+
+    img.onload = () => {
+      // Prevents execution if strict-mode already tore down this instance
+      if (!isMounted) return;
+
+      let startTS: number | null = null;
+      let lastProg = 0;
+      let lastInfo = pathInfo(0);
+
+      const p0 = lastInfo.pt;
+      mCtx.fillStyle = "white";
+      mCtx.beginPath();
+      mCtx.arc(p0.x, p0.y, HALF_W * 0.6, 0, Math.PI * 2);
+      mCtx.fill();
+
+      const frame = (ts: number) => {
+        if (!isMounted) return;
+        
+        if (!startTS) startTS = ts;
+        const raw = Math.min((ts - startTS) / DURATION, 1);
+        const prog = easeInOut(raw);
+
+        if (prog > lastProg) {
+          const range = prog - lastProg;
+          mCtx.strokeStyle = "white";
+          mCtx.lineWidth = HALF_W * 2;
+          mCtx.lineCap = "round";
+          mCtx.lineJoin = "round";
+          mCtx.beginPath();
+          mCtx.moveTo(lastInfo.pt.x, lastInfo.pt.y);
+
+          for (let i = 1; i <= SAMPLES; i++) {
+            const tB = lastProg + range * (i / SAMPLES);
+            const { pt: pB } = pathInfo(tB);
+            mCtx.lineTo(pB.x, pB.y);
+          }
+          mCtx.stroke();
+
+          lastInfo = pathInfo(prog);
+          lastProg = prog;
+        }
+
+        ctx.clearRect(0, 0, SIZE, SIZE);
+        ctx.drawImage(img, 0, 0, SIZE, SIZE);
+        ctx.globalCompositeOperation = "destination-in";
+        ctx.drawImage(mCvs, 0, 0);
+        ctx.globalCompositeOperation = "source-over";
+
+        if (raw < 1) {
+          animationFrameId = requestAnimationFrame(frame);
+        } else {
+          ctx.clearRect(0, 0, SIZE, SIZE);
+          ctx.drawImage(img, 0, 0, SIZE, SIZE);
+          // Wait for vaporize
+        }
+      };
+
+      timeoutId = setTimeout(() => {
+        if (isMounted) {
+          animationFrameId = requestAnimationFrame(frame);
+        }
+      }, 200);
+    };
+
+    img.src = url;
+
+    return () => {
+      isMounted = false;
+      clearTimeout(timeoutId);
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
+      URL.revokeObjectURL(url);
+    };
+  }, [onComplete]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 1 }}
+      animate={{ 
+        opacity: isExiting ? 0 : 1,
+        filter: isExiting ? "blur(12px)" : "blur(0px)",
+      }}
+      transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+      style={{
+        margin: 0,
+        padding: 0,
+        boxSizing: "border-box",
+        background: "radial-gradient(circle at center, #ffffff 0%, #f4f4f6 100%)",
+        width: "100%",
+        height: "100%",
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
+      <BackgroundSparkles />
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@800&display=swap');
+      `}</style>
+      <motion.canvas
+        ref={canvasRef}
+        animate={{ scale: isExiting ? 1.08 : 1 }}
+        transition={{ duration: 0.8, ease: [0.4, 0, 0.2, 1] }}
+        style={{
+          display: "block",
+          width: "min(92vw, 820px)",
+          height: "auto",
+          imageRendering: "crisp-edges",
+          zIndex: 1,
+        }}
+      />
+      {showText && (
+        <motion.div
+          key="ozon-text"
+          initial={{ opacity: 0, filter: "blur(10px)", y: 10 }}
+          animate={{ 
+            opacity: isExiting ? 0 : 1, 
+            filter: isExiting ? "blur(12px)" : "blur(0px)", 
+            y: isExiting ? -15 : 0,
+            scale: isExiting ? 1.05 : 1
+          }}
+          transition={{ 
+            duration: isExiting ? 0.8 : 1, 
+            ease: isExiting ? [0.4, 0, 0.2, 1] : "easeOut" 
+          }}
+          style={{
+            position: "absolute",
+            bottom: "18%",
+            zIndex: 2,
+          }}
+        >
+          <TextScramble
+            as="h1"
+            className="uppercase text-zinc-900"
+            duration={1.0}
+            speed={0.03}
+            characterSet="ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+            onScrambleComplete={() => {
+              setTimeout(() => setIsExiting(true), 1200); // Trigger global exit
+            }}
+            style={{
+              fontFamily: "'Syne', 'DM Sans', system-ui, sans-serif",
+              fontSize: "clamp(2rem, 4vw, 3.5rem)",
+              letterSpacing: "0.2em",
+              color: "#080808",
+              fontWeight: 800,
+              marginLeft: "0.2em" // offset for optical centering with letter-spacing
+            }}
+          >
+            OZON
+          </TextScramble>
+        </motion.div>
+      )}
+    </motion.div>
+  );
+}

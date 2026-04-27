@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useTheme } from "next-themes";
+import SplashScreen from "@/components/SplashScreen";
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 
@@ -293,6 +294,7 @@ export default function DocsPage() {
   const [active, setActive]       = useState("intro");
   const [drawerOpen, setDrawer]   = useState(false);
   const [searchOpen, setSearch]   = useState(false);
+  const [splashDone, setSplashDone] = useState(false);
   const { theme, setTheme } = useTheme();
 
   useEffect(() => {
@@ -322,6 +324,10 @@ export default function DocsPage() {
     document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
     setDrawer(false);
   };
+
+  if (!splashDone) {
+    return <SplashScreen onComplete={() => setSplashDone(true)} />;
+  }
 
   return (
     <>
