@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Moon, Sun, Calculator as CalcIcon, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Moon, Sun, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 
 interface HeaderProps {
     sidebarOpen: boolean;
@@ -17,8 +17,8 @@ export const Header: React.FC<HeaderProps> = ({ sidebarOpen, setSidebarOpen, the
                     {sidebarOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
                 </button>
                 <h1 className="font-bold text-lg flex items-center gap-2">
-                    <CalcIcon className="text-primary h-5 w-5" />
-                    <span className="font-serif italic font-medium">ƒ</span>(x) Engine
+                    <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain bg-white rounded-md p-1 shadow-sm" />
+                    Ozon Engine
                 </h1>
             </div>
             <button onClick={() => setTheme(theme === "dark" ? "light" : "dark")} className="p-2 rounded-full hover:bg-accent transition-colors">

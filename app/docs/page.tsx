@@ -409,10 +409,11 @@ export default function DocsPage() {
           display: flex; align-items: center; gap: 10px;
         }
         .logo-mark {
-          width: 24px; height: 24px;
+          width: 32px; height: 32px;
           border: 1.5px solid var(--line-strong);
-          border-radius: 5px;
+          border-radius: 8px;
           display: flex; align-items: center; justify-content: center;
+          background: white;
         }
         .logo-name {
           font-family: 'Syne', sans-serif;
@@ -742,7 +743,12 @@ export default function DocsPage() {
               <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <span className="mobile-logo">Ozon</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ background: 'white', borderRadius: '6px', padding: '3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <img src="/logo.svg" alt="Ozon" className="w-5 h-5 object-contain" />
+            </div>
+            <span className="mobile-logo">Ozon</span>
+          </div>
           <button className="icon-btn" onClick={() => setSearch(true)} style={{ marginLeft: "auto" }} aria-label="Search">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
@@ -755,9 +761,7 @@ export default function DocsPage() {
           <div className="sidebar-header">
             <div className="sidebar-logo">
               <div className="logo-mark">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-2)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 3h7l3 3 3-3h5v5l-3 3 3 3v5h-5l-3-3-3 3H3v-5l3-3-3-3V3z"/>
-                </svg>
+                <img src="/logo.svg" alt="Ozon" className="w-6 h-6 object-contain" />
               </div>
               <span className="logo-name">Ozon</span>
             </div>

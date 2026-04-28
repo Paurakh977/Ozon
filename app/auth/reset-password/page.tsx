@@ -41,20 +41,28 @@ function ResetPasswordForm() {
     if (error) {
       setError(error.message ?? "Reset failed.");
     } else {
-      alert("Password set! You can now enable 2FA.");
-      router.push("/dashboard");
+      alert("Password set! You can now sign in.");
+      router.push("/auth");
     }
     setLoading(false);
   };
 
   return (
-    <div style={center}>
-      <div style={card}>
-        <h2 style={{ margin: "0 0 8px", color: "#1e293b" }}>Set Your Password</h2>
-        <p style={{ color: "#64748b", fontSize: "14px", marginBottom: "24px" }}>
-          Create a password to enable two-factor authentication on your account.
-        </p>
-        <form onSubmit={handleSubmit} style={form}>
+    <div className="min-h-screen flex items-center justify-center bg-background text-foreground font-sans relative overflow-hidden p-4">
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[300px] bg-primary/5 rounded-[100%] blur-[100px] pointer-events-none opacity-50"></div>
+
+      <div className="relative z-10 bg-card/80 backdrop-blur-2xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[420px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]">
+        <div className="mb-8 text-center">
+          <div className="w-12 h-12 bg-white border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+            <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight mb-2">Set Your Password</h2>
+          <p className="text-[13px] text-muted-foreground">
+            Create a password to enable two-factor authentication on your account.
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-3.5">
           <input
             type="password"
             placeholder="New password (min 8 characters)"
@@ -62,7 +70,7 @@ function ResetPasswordForm() {
             onChange={(e) => setPassword(e.target.value)}
             minLength={8}
             required
-            style={input}
+            className="w-full px-4 py-3 bg-background/50 border border-border/60 rounded-xl text-[14px] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/70"
           />
           <input
             type="password"
@@ -70,13 +78,29 @@ function ResetPasswordForm() {
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
             required
-            style={input}
+            className="w-full px-4 py-3 bg-background/50 border border-border/60 rounded-xl text-[14px] outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/70"
           />
-          {error && <p style={{ color: "#ef4444", fontSize: "13px", margin: 0 }}>{error}</p>}
-          <button type="submit" disabled={loading} style={btn}>
-            {loading ? "Setting password..." : "Set Password"}
+
+          {error && (
+            <p className="text-red-500 text-xs bg-red-500/10 p-2.5 rounded-lg border border-red-500/20">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-3 bg-primary text-primary-foreground rounded-xl text-[14px] font-semibold hover:bg-primary/90 transition-all disabled:opacity-70 flex justify-center items-center shadow-sm"
+          >
+            {loading ? <span className="w-5 h-5 border-2 border-white/20 border-t-white rounded-full animate-spin"></span> : "Set Password"}
           </button>
         </form>
+
+        <div className="mt-8 text-center">
+          <a href="/auth" className="text-[13px] text-muted-foreground hover:text-foreground font-medium transition-colors">
+            ← Back to sign in
+          </a>
+        </div>
       </div>
     </div>
   );
@@ -84,26 +108,12 @@ function ResetPasswordForm() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<div style={center}>Loading...</div>}>
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-background text-foreground">
+        <div className="w-8 h-8 border-2 border-primary/20 border-t-primary rounded-full animate-spin"></div>
+      </div>
+    }>
       <ResetPasswordForm />
     </Suspense>
   );
 }
-
-const center: React.CSSProperties = {
-  minHeight: "100vh", display: "flex",
-  alignItems: "center", justifyContent: "center", background: "#f8fafc",
-};
-const card: React.CSSProperties = {
-  background: "#fff", borderRadius: "12px", padding: "40px",
-  maxWidth: "420px", width: "100%", boxShadow: "0 4px 24px rgba(0,0,0,0.08)",
-};
-const form: React.CSSProperties = { display: "flex", flexDirection: "column", gap: "12px" };
-const input: React.CSSProperties = {
-  padding: "12px 14px", border: "1px solid #e2e8f0", borderRadius: "8px",
-  fontSize: "14px", outline: "none", width: "100%", boxSizing: "border-box",
-};
-const btn: React.CSSProperties = {
-  padding: "12px", background: "#6366f1", color: "#fff", border: "none",
-  borderRadius: "8px", cursor: "pointer", fontSize: "15px", fontWeight: 600,
-};

@@ -119,13 +119,11 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col">
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-border/40">
         <div className="max-w-[760px] mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="w-7 h-7 border border-border/80 bg-card rounded-md flex items-center justify-center">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M3 3h7l3 3 3-3h5v5l-3 3 3 3v5h-5l-3-3-3 3H3v-5l3-3-3-3V3z"/>
-              </svg>
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 border border-border/80 bg-white rounded-xl flex items-center justify-center shadow-sm">
+              <img src="/logo.svg" alt="Ozon" className="w-6 h-6 object-contain" />
             </div>
-            <span className="font-bold text-[15px] tracking-tight">Ozon</span>
+            <span className="font-bold text-[17px] tracking-tight">Ozon</span>
           </div>
           <button 
             onClick={handleSignOut}

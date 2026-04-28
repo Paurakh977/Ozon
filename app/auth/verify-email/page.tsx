@@ -44,10 +44,8 @@ function VerifyEmailContent() {
 
           {status === "success" && (
             <motion.div key="success" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
-              <div className="w-16 h-16 bg-green-500/10 text-green-500 border border-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
+              <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+                <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
               </div>
               <h2 className="text-xl font-bold tracking-tight text-foreground">Email verified!</h2>
               <p className="text-muted-foreground text-sm mt-2">Redirecting you to the dashboard...</p>
@@ -56,11 +54,8 @@ function VerifyEmailContent() {
 
           {status === "error" && (
             <motion.div key="error" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
-              <div className="w-16 h-16 bg-red-500/10 text-red-500 border border-red-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
+              <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+                <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
               </div>
               <h2 className="text-xl font-bold tracking-tight">Verification failed</h2>
               <p className="text-muted-foreground text-sm mt-2 mb-8 leading-relaxed">{message}</p>

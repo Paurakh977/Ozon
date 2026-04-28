@@ -56,11 +56,8 @@ export default function TwoFactorPage() {
         className="relative z-10 bg-card/80 backdrop-blur-2xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
       >
         <div className="mb-8 text-center">
-          <motion.div className="w-12 h-12 bg-primary/10 text-primary border border-primary/20 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
-              <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
-            </svg>
+          <motion.div className="w-16 h-16 bg-white border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+            <img src="/logo.svg" alt="Ozon" className="w-10 h-10 object-contain" />
           </motion.div>
           <h1 className="text-2xl font-bold tracking-tight mb-1.5">Two-Step Verification</h1>
           <p className="text-[13px] text-muted-foreground">Verify your identity to continue</p>

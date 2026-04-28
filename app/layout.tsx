@@ -6,8 +6,28 @@ import { ThemeProvider } from "@/components/providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Ozon Calculator",
-  description: "Desmos clone",
+  title: "Ozon | Advanced Graphing Calculator & Math AI",
+  description: "A powerful graphing calculator built on the Desmos engine. Features include calculus (derivatives, integrals), complex numbers, polar & parametric curves, function analysis, and an AI agent for natural language math.",
+  keywords: [
+    "graphing calculator", 
+    "desmos alternative", 
+    "calculus", 
+    "derivatives", 
+    "integrals", 
+    "complex numbers", 
+    "math ai", 
+    "function analysis"
+  ],
+  icons: {
+    icon: "/logo.svg",
+    apple: "/logo.png",
+  },
+  openGraph: {
+    title: "Ozon Calculator",
+    description: "Advanced graphing with calculus, complex numbers, and AI capabilities.",
+    siteName: "Ozon",
+    type: "website",
+  }
 };
 
 export default function RootLayout({
