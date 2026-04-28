@@ -747,7 +747,10 @@ export const useExpressionLogic = (calculatorInstance: React.MutableRefObject<an
             // --- BRANCH A: Summation ---
             if (clean.startsWith("\\sum")) {
                 const bounds = parseBounds(4, clean);
-                if (bounds.min && bounds.max) {
+                // If it contains x, let the fallback branch handle it so it gets plotted natively by Desmos
+                const hasX = clean.replace(/\\[a-zA-Z]+/g, '').includes('x');
+                
+                if (bounds.min && bounds.max && !hasX) {
                     Calc.setExpression({
                         id: `val-${safeId}`,
                         latex: `S_{${safeId}} = ${clean}`,

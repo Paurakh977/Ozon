@@ -9,6 +9,7 @@ import { twMerge } from 'tailwind-merge';
 import { motion, AnimatePresence, type Variants, type Transition } from 'framer-motion';
 import { MathExpression } from "./calculator/types";
 import { authClient, useSession as useAuthSession } from "@/lib/auth-client";
+import { useRouter } from 'next/navigation';
 
 // --- Utility ---
 function cn(...inputs: ClassValue[]) {
@@ -142,6 +143,23 @@ const MAX_RECORD_MS = 2 * 60 * 1000; // 2 minutes
 
 const AgentContent = React.memo(function AgentContent({ content, isUser }: { content: string; isUser: boolean }) {
   const html = useMemo(() => renderContent(content), [content]);
+  const router = useRouter();
+
+  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    const link = target.closest('a');
+    if (link && link.href) {
+      e.preventDefault();
+      const url = new URL(link.href);
+      const isInternal = url.origin === window.location.origin;
+      if (isInternal) {
+        router.push(url.pathname + url.search + url.hash);
+      } else {
+        window.open(link.href, '_blank');
+      }
+    }
+  }, [router]);
+
   return (
     <div
       className={cn(
@@ -156,7 +174,7 @@ const AgentContent = React.memo(function AgentContent({ content, isUser }: { con
         '[&_table]:border-collapse [&_table]:my-0 [&_table]:text-[13px] [&_table]:w-full [&_table]:min-w-[max-content]',
         '[&_th]:border [&_th]:border-zinc-300 [&_th]:dark:border-zinc-600 [&_th]:px-3 [&_th]:py-2.5 [&_th]:bg-zinc-50 [&_th]:dark:bg-zinc-800 [&_th]:font-semibold [&_th]:text-left [&_th]:whitespace-nowrap',
         '[&_td]:border [&_td]:border-zinc-300 [&_td]:dark:border-zinc-600 [&_td]:px-3 [&_td]:py-2.5',
-        isUser
+         isUser
           ? 'prose-invert prose-p:text-white/90 prose-headings:text-white'
           : [
             'prose-zinc dark:prose-invert',
@@ -165,11 +183,15 @@ const AgentContent = React.memo(function AgentContent({ content, isUser }: { con
             'prose-headings:text-zinc-900 dark:prose-headings:text-zinc-100',
             'prose-code:text-violet-600 dark:prose-code:text-violet-400',
             'prose-strong:text-zinc-900 dark:prose-strong:text-zinc-100',
-            'prose-a:text-violet-600 dark:prose-a:text-violet-400',
+            'prose-a:text-blue-600 dark:prose-a:text-blue-400',
             'prose-blockquote:border-violet-400 dark:prose-blockquote:border-violet-500',
+            // Direct link styling (typography plugin may not be enabled)
+            '[&_a]:text-blue-600 [&_a]:dark:text-blue-400 [&_a]:underline [&_a]:font-semibold [&_a]:cursor-pointer',
+            '[&_a:hover]:text-blue-800 [&_a:hover]:dark:text-blue-300',
           ].join(' '),
       )}
       dangerouslySetInnerHTML={{ __html: html }}
+      onClick={handleClick}
     />
   );
 });
@@ -1202,7 +1224,7 @@ export function ChatModal({
         setStatus('connected');
         const isAnon = data.tier === 'anonymous';
         const defaultMsg = isAnon
-          ? 'Anonymous users can send 3 prompts per minute. [Sign in](/auth/sign-in) for higher limits.'
+          ? 'Anonymous users can send 3 prompts per minute. [Sign in](/auth) for higher limits.'
           : 'Please wait a moment before sending another message.';
         const serverMsg = typeof data.message === 'string' && data.message.trim().length > 0
           ? data.message.trim()
@@ -1562,7 +1584,7 @@ export function ChatModal({
               <div className="flex items-center gap-2 border-r border-zinc-200 dark:border-zinc-800 pr-3 mr-1">
                 <div className={cn("w-2 h-2 rounded-full", statusColor, status === 'connecting' && "animate-pulse")} />
                 <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-zinc-400 dark:text-zinc-500 select-none">
-                  Ozone AI
+                  Ozon AI
                 </span>
               </div>
 
@@ -1620,7 +1642,7 @@ export function ChatModal({
                   <span className={cn('relative w-2 h-2 rounded-full', statusColor)} />
                 </div>
                 <span className="text-[13px] font-semibold tracking-wide text-zinc-800 dark:text-zinc-200">
-                  Ozone Agent
+                  Ozon Agent
                 </span>
                 <select
                   value={reasoningEffort}
@@ -1687,15 +1709,18 @@ export function ChatModal({
                       </svg>
                     </div>
                     <h2 className="text-lg font-semibold tracking-tight mb-2 text-zinc-900 dark:text-zinc-100">
-                      Ozone Calculus Agent
+                      Ozon Agent
                     </h2>
                     <p className="text-[13px] text-zinc-500 dark:text-zinc-400 max-w-[250px] leading-relaxed mx-auto">
                       Ask me anything about math, calculus, or to explain functions.
                     </p>
                     <div className="mt-6 flex flex-col gap-2 w-full">
                       {[
-                        'Integrate sec³x dx',
-                        'Prove √2 is irrational'
+                        'Integrate xln(x) dx',
+                        'Draw me a flower',
+                        'What does the derivative of tanh(x) look like?',
+                        'Explain the concept of a limit',
+                        'What is the Taylor series expansion of sin(x)?'
                       ].map((s) => (
                         <button key={s}
                           onClick={() => { handleInputChange(s); textareaRef.current?.focus(); }}
