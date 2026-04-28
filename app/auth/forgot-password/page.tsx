@@ -32,9 +32,11 @@ export default function ForgotPasswordPage() {
           animate={{ opacity: 1, scale: 1 }} 
           className="relative z-10 bg-card/80 backdrop-blur-xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-2xl shadow-black/5 text-center"
         >
-          <div className="w-16 h-16 bg-white text-primary border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
-            <img src="/logo.svg" alt="Ozon" className="w-10 h-10 object-contain" />
-          </div>
+          <a href="/" style={{ textDecoration: 'none' }}>
+            <div className="w-16 h-16 bg-white text-primary border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+              <img src="/logo.svg" alt="Ozon" className="w-10 h-10 object-contain" />
+            </div>
+          </a>
           <h2 className="text-2xl font-semibold tracking-tight mb-3">Check your email</h2>
           <p className="text-muted-foreground text-[14px] leading-relaxed mb-8">
             If an account exists for <strong className="text-foreground">{email}</strong>, you will receive a reset link shortly.
@@ -56,9 +58,11 @@ export default function ForgotPasswordPage() {
         className="relative z-10 bg-card/80 backdrop-blur-xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[400px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
       >
         <div className="mb-8 text-center">
-          <div className="w-14 h-14 bg-white text-secondary-foreground border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
-            <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
-          </div>
+          <a href="/" style={{ textDecoration: 'none' }}>
+            <div className="w-14 h-14 bg-white text-secondary-foreground border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+              <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
+            </div>
+          </a>
           <h2 className="text-2xl font-bold tracking-tight mb-2">Reset Password</h2>
           <p className="text-[13px] text-muted-foreground">Enter your email and we'll send a link</p>
         </div>

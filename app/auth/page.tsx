@@ -162,9 +162,11 @@ export default function AuthPage() {
         className="relative z-10 bg-card/60 backdrop-blur-2xl border border-border/50 rounded-[28px] p-8 sm:p-10 w-full max-w-[420px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]"
       >
         <div className="mb-8 text-center">
-          <motion.div layoutId="logo" className="w-12 h-12 border border-border/60 bg-white rounded-xl flex items-center justify-center mx-auto mb-5 shadow-sm">
-            <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
-          </motion.div>
+          <a href="/" style={{ textDecoration: 'none' }}>
+            <motion.div layoutId="logo" className="w-12 h-12 border border-border/60 bg-white rounded-xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+              <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
+            </motion.div>
+          </a>
           <h1 className="text-2xl font-bold tracking-tight">
             {mode === "signin" ? "Welcome back" : "Create an account"}
           </h1>

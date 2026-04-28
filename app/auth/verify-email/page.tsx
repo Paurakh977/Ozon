@@ -43,20 +43,24 @@ function VerifyEmailContent() {
           )}
 
           {status === "success" && (
-            <motion.div key="success" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
-              <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
-                <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
-              </div>
-              <h2 className="text-xl font-bold tracking-tight text-foreground">Email verified!</h2>
-              <p className="text-muted-foreground text-sm mt-2">Redirecting you to the dashboard...</p>
-            </motion.div>
+              <motion.div key="success" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
+                <a href="/" style={{ textDecoration: 'none' }}>
+                  <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+                    <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
+                  </div>
+                </a>
+                <h2 className="text-xl font-bold tracking-tight">Email verified!</h2>
+                <p className="text-muted-foreground text-sm mt-2">Redirecting you to the dashboard...</p>
+              </motion.div>
           )}
 
           {status === "error" && (
             <motion.div key="error" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ type: "spring" }}>
-              <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
-                <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
-              </div>
+              <a href="/" style={{ textDecoration: 'none' }}>
+                <div className="w-20 h-20 bg-white border border-border/60 rounded-full flex items-center justify-center mx-auto mb-6 shadow-sm">
+                  <img src="/logo.svg" alt="Ozon" className="w-12 h-12 object-contain" />
+                </div>
+              </a>
               <h2 className="text-xl font-bold tracking-tight">Verification failed</h2>
               <p className="text-muted-foreground text-sm mt-2 mb-8 leading-relaxed">{message}</p>
               <a href="/auth" className="inline-block w-full py-2.5 bg-secondary text-secondary-foreground hover:bg-secondary/80 rounded-xl text-sm font-medium transition-all border border-border/50">

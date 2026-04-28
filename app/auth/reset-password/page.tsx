@@ -53,9 +53,11 @@ function ResetPasswordForm() {
 
       <div className="relative z-10 bg-card/80 backdrop-blur-2xl border border-border/50 rounded-[24px] p-8 sm:p-10 w-full max-w-[420px] shadow-[0_8px_30px_rgb(0,0,0,0.04)] dark:shadow-[0_8px_30px_rgb(0,0,0,0.2)]">
         <div className="mb-8 text-center">
-          <div className="w-12 h-12 bg-white border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
-            <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
-          </div>
+          <a href="/" style={{ textDecoration: 'none' }}>
+            <div className="w-12 h-12 bg-white border border-border/60 rounded-2xl flex items-center justify-center mx-auto mb-5 shadow-sm">
+              <img src="/logo.svg" alt="Ozon" className="w-8 h-8 object-contain" />
+            </div>
+          </a>
           <h2 className="text-2xl font-bold tracking-tight mb-2">Set Your Password</h2>
           <p className="text-[13px] text-muted-foreground">
             Create a password to enable two-factor authentication on your account.
