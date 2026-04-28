@@ -119,12 +119,12 @@ export default function DashboardPage() {
     <div className="min-h-screen bg-background text-foreground font-sans flex flex-col">
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-xl border-b border-border/40">
         <div className="max-w-[760px] mx-auto px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <a href="/" className="flex items-center gap-3 text-foreground no-underline">
             <div className="w-9 h-9 border border-border/80 bg-white rounded-xl flex items-center justify-center shadow-sm">
               <img src="/logo.svg" alt="Ozon" className="w-6 h-6 object-contain" />
             </div>
             <span className="font-bold text-[17px] tracking-tight">Ozon</span>
-          </div>
+          </a>
           <button 
             onClick={handleSignOut}
             className="text-[13px] font-medium text-muted-foreground hover:text-foreground transition-colors py-1.5 px-3 hover:bg-secondary/60 rounded-md"

@@ -743,12 +743,12 @@ export default function DocsPage() {
               <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
             </svg>
           </button>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <a href="/" style={{ display: 'flex', alignItems: 'center', gap: '8px', textDecoration: 'none', color: 'inherit' }}>
             <div style={{ background: 'white', borderRadius: '6px', padding: '3px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <img src="/logo.svg" alt="Ozon" className="w-5 h-5 object-contain" />
             </div>
             <span className="mobile-logo">Ozon</span>
-          </div>
+          </a>
           <button className="icon-btn" onClick={() => setSearch(true)} style={{ marginLeft: "auto" }} aria-label="Search">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
               <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
@@ -759,12 +759,14 @@ export default function DocsPage() {
         {/* ── SIDEBAR ── */}
         <aside className={`sidebar${drawerOpen ? " open" : ""}`}>
           <div className="sidebar-header">
-            <div className="sidebar-logo">
-              <div className="logo-mark">
-                <img src="/logo.svg" alt="Ozon" className="w-6 h-6 object-contain" />
+            <a href="/" style={{ textDecoration: "none", color: "inherit" }}>
+              <div className="sidebar-logo">
+                <div className="logo-mark">
+                  <img src="/logo.svg" alt="Ozon" className="w-6 h-6 object-contain" />
+                </div>
+                <span className="logo-name">Ozon</span>
               </div>
-              <span className="logo-name">Ozon</span>
-            </div>
+            </a>
             <span className="logo-sub">docs</span>
             <button
               onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -809,7 +811,7 @@ export default function DocsPage() {
           </nav>
 
           <div className="sidebar-footer">
-            <a href="/" className="open-btn">
+            <a href="/calculator" className="open-btn">
               Open Calculator
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
                 <path d="m9 18 6-6-6-6"/>
@@ -1414,7 +1416,7 @@ export default function DocsPage() {
                   <div style={{fontSize:"0.82rem",color:"var(--text-2)",marginBottom:4}}>Ready to start?</div>
                   <div style={{fontFamily:"'Syne',sans-serif",fontWeight:700,fontSize:"1rem",letterSpacing:"-0.02em",color:"var(--text-1)"}}>Open Ozon Calculator</div>
                 </div>
-                <a href="/" style={{
+                <a href="/calculator" style={{
                   display:"inline-flex",alignItems:"center",gap:8,
                   padding:"9px 18px",
                   background:"var(--text-1)",color:"var(--bg)",
