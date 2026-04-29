@@ -1580,27 +1580,28 @@ export function ChatModal({
             exit={{ y: 20, opacity: 0 }}
             className="fixed bottom-0 right-0 z-50 p-2"
           >
-            <div className="flex items-center gap-2 px-3 py-2 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-lg shadow-black/5">
-              <div className="flex items-center gap-2 border-r border-zinc-200 dark:border-zinc-800 pr-3 mr-1">
-                <div className={cn("w-2 h-2 rounded-full", statusColor, status === 'connecting' && "animate-pulse")} />
-                <span className="text-[10px] font-bold tracking-[0.15em] uppercase text-zinc-400 dark:text-zinc-500 select-none">
+            <div className="flex items-center gap-3 px-4 py-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-lg shadow-black/5">
+              <motion.button
+                onClick={() => setIsOpen(true)}
+                className="flex items-center gap-2 border-r border-zinc-200 dark:border-zinc-800 pr-3 mr-1 cursor-pointer"
+              >
+                <div className={cn("w-2.5 h-2.5 rounded-full", statusColor, status === 'connecting' && "animate-pulse")} />
+                <span className="text-[12px] font-bold tracking-wide text-zinc-700 dark:text-zinc-300 select-none">
                   Ozon AI
                 </span>
-              </div>
+              </motion.button>
 
               <motion.button
                 onClick={() => setIsOpen(true)}
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 className={cn(
-                  "w-9 h-9 rounded-lg flex items-center justify-center shadow-sm transition-all duration-300",
-                  "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900",
-                  "hover:shadow-md hover:bg-zinc-800 dark:hover:bg-white"
+                  "w-10 h-10 rounded-xl flex items-center justify-center shadow-sm transition-all duration-300 overflow-hidden",
+                  "bg-white dark:bg-zinc-100",
+                  "hover:shadow-md"
                 )}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" stroke="none" className="w-5 h-5">
-                  <path d="M12 2l2.4 7.6A2 2 0 0 0 16.4 12l7.6 2.4-7.6 2.4a2 2 0 0 0-2 2L12 22l-2.4-7.6a2 2 0 0 0-2-2L0 12l7.6-2.4a2 2 0 0 0 2-2z" />
-                </svg>
+                <img src="/logo.svg" alt="Ozon AI" className="w-8 h-8 object-contain" />
               </motion.button>
             </div>
           </motion.div>
@@ -1637,6 +1638,13 @@ export function ChatModal({
             {/* Header */}
             <div className="flex-none flex items-center justify-between px-4 py-3 bg-white/60 dark:bg-zinc-900/60 backdrop-blur-md border-b border-zinc-200/50 dark:border-zinc-800/50">
               <div className="flex items-center gap-2.5">
+                <motion.button
+                  onClick={() => setIsMaximized(!isMaximized)}
+                  className="flex items-center justify-center w-8 h-8 rounded-lg bg-white dark:bg-zinc-100 overflow-hidden cursor-pointer hover:opacity-80 transition-opacity"
+                  title={isMaximized ? "Minimize" : "Maximize"}
+                >
+                  <img src="/logo.svg" alt="Ozon Agent" className="w-6 h-6 object-contain" />
+                </motion.button>
                 <div className="relative flex items-center justify-center">
                   <span className={cn('absolute w-2 h-2 rounded-full', statusColor, status === 'connecting' && 'animate-ping')} />
                   <span className={cn('relative w-2 h-2 rounded-full', statusColor)} />
@@ -1700,13 +1708,8 @@ export function ChatModal({
                     exit={{ opacity: 0 }}
                     className="flex flex-col items-center justify-center min-h-[60%] text-center px-4 pt-10"
                   >
-                    <div className="w-12 h-12 mb-4 rounded-2xl flex items-center justify-center
-                      bg-gradient-to-br from-violet-100 to-indigo-50 dark:from-violet-900/30 dark:to-indigo-900/20
-                      ring-1 ring-violet-200/60 dark:ring-violet-700/30
-                      shadow-[0_4px_16px_rgba(109,40,217,0.08)]">
-                      <svg className="w-7 h-7 text-violet-500 dark:text-violet-400" viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M12 2l2.4 7.6A2 2 0 0 0 16.4 12l7.6 2.4-7.6 2.4a2 2 0 0 0-2 2L12 22l-2.4-7.6a2 2 0 0 0-2-2L0 12l7.6-2.4a2 2 0 0 0 2-2z" />
-                      </svg>
+                    <div className="w-12 h-12 mb-4 rounded-2xl flex items-center justify-center bg-white dark:bg-zinc-800 ring-1 ring-zinc-200 dark:ring-zinc-700 shadow-sm">
+                      <img src="/logo.svg" alt="Ozon Agent" className="w-9 h-9 object-contain" />
                     </div>
                     <h2 className="text-lg font-semibold tracking-tight mb-2 text-zinc-900 dark:text-zinc-100">
                       Ozon Agent

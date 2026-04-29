@@ -359,7 +359,7 @@ async def websocket_endpoint(websocket: WebSocket):
             )
             if not allowed:
                 if auth_result.tier == "anonymous":
-                    rl_msg = "Anonymous users can send 3 prompts per minute. Sign in for higher limits."
+                    rl_msg = "Anonymous users can send 3 prompts per minute. [Sign in](/auth) for higher limits."
                 else:
                     rl_msg = "Authenticated rate limit reached. Please wait a moment before sending another message."
                 await websocket.send_json({

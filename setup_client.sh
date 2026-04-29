@@ -14,10 +14,21 @@ fi
 echo "✅ Bun is installed: $(bun --version)"
 
 # Copy environment file
-if [ ! -f .env ] && [ -f .env.local.example ]; then
-    echo "📄 Copying .env.local.example to .env..."
-    cp .env.local.example .env
-    echo "⚠️  Please edit .env and fill in the required API keys:"
+if [ ! -f .env ]; then
+    if [ -f .env.local.example ]; then
+        echo "📄 Copying .env.local.example to .env..."
+        cp .env.local.example .env
+    elif [ -f .env.example ]; then
+        echo "📄 Copying .env.example to .env..."
+        cp .env.example .env
+    fi
+    echo "⚠️  Please verify .env has the correct values:"
+    echo "   Required variables:"
+    echo "   - NEXT_PUBLIC_APP_URL=http://localhost:3000"
+    echo "   - NEXT_PUBLIC_API_URL=http://localhost:3001"
+    echo "   - NEXT_PUBLIC_AGENT_WS_URL=ws://localhost:8000/ws"
+    echo "   - GRPC_SERVER_URL=localhost:50051"
+    echo "   API keys to fill in:"
     echo "   - DEEPGRAM_API_KEY"
     echo "   - MISTRAL_API_KEY"
 else
