@@ -5,8 +5,42 @@ This guide ensures environments map gracefully for independent component executi
 ## Step 1: External Database Setup
 Since you aren't deploying PostgreSQL or Redis through Docker Compose, you must provide your own locally hosted instances tracking explicitly against generic port parameters cleanly (`5432` for Postgres, `6379` for Redis). Ensure roles are defined natively.
 
-## Step 2: Environment Variables
-Local development expects explicit local ports tracking standard context logic smoothly bypassing Nginx. Ensure you populate variables according to `.env.local.example`.
+## Step 2: Automated Setup with Shell Scripts (Recommended)
+Instead of manually copying environment files and installing dependencies, you can use the provided shell scripts to automate the entire local setup process. All scripts support both `.env.local.example` and `.env.example` files, and validate that no placeholder values (e.g., `your_deepgram_key`) remain in your environment files.
+
+### Available Scripts
+| Script | Purpose |
+|--------|---------|
+| `local_setup.sh` | Main orchestrator for all services. Checks prerequisites (bun, pnpm, uv, PostgreSQL, Redis), copies all env files from examples, installs dependencies for all services, runs Prisma setup for NestJS, and validates env configurations. |
+| `setup_nextjs.sh` | Sets up the Next.js Client (root). Copies `.env` from example, installs Bun dependencies. |
+| `microservice/setup.sh` | Sets up the NestJS Microservice. Copies `.env` from example, installs pnpm dependencies, runs Prisma generate and db push. |
+| `server/setup.sh` | Sets up the FastAPI Agent Server. Copies `.env` from example, installs Python dependencies via `uv`. |
+| `service/setup.sh` | Sets up the gRPC Math Server. Copies `.env` from example, installs Python dependencies via `uv`. |
+
+### Quick Start (All Services)
+Run this command from the project root to set up everything automatically:
+```bash
+bash local_setup.sh
+```
+
+### Individual Service Setup
+To set up a specific service manually:
+```bash
+# Next.js Client
+bash setup_nextjs.sh
+
+# NestJS Microservice
+cd microservice && bash setup.sh && cd ..
+
+# FastAPI Agent
+cd server && bash setup.sh && cd ..
+
+# gRPC Server
+cd service && bash setup.sh && cd ..
+```
+
+## Step 3: Environment Variables (Manual Setup)
+If you prefer to set up environment variables manually instead of using the automated shell scripts, follow the steps below. Local development expects explicit local ports tracking standard context logic smoothly bypassing Nginx. Ensure you populate variables according to `.env.local.example`.
 
 ### A) Root `.env` (Next.js Application)
 Run `cp .env.local.example .env` in the root folder.
@@ -80,14 +114,14 @@ GRPC_SERVER_URL=localhost:50051
 GRPC_SERVER_PORT=50051
 ```
 
-## Step 3: OAuth Context Re-configuration
+## Step 4: OAuth Context Re-configuration
 You must map variables appropriately against Google/GitHub Developer controls strictly defining Local contexts omitting SSL requirements inherently capturing standard localhost tracking logic:
 - **Authorized JavaScript Origin:** `http://localhost:3000` & `http://localhost:3001`
 - **GitHub Callback:** `http://localhost:3001/api/auth/callback/github`
 - **Google Callback:** `http://localhost:3001/api/auth/callback/google`
 
-## Step 4: Connecting the Prisma Mapping
-Before starting your NestJS context gracefully, ensure Prisma logic has configured structural tables properly targeting the explicitly bound explicit Database natively.
+## Step 5: Connecting the Prisma Mapping
+Before starting your NestJS context gracefully, ensure Prisma logic has configured structural tables properly targeting the explicitly bound explicit Database natively. Note: The `local_setup.sh` automated script already runs these commands for you.
 ```bash
 cd microservice
 pnpm install
@@ -95,13 +129,30 @@ pnpm prisma db push
 pnpm prisma generate
 ```
 
-## Step 5: Booting Up Independent Servers
-Ensure you map four distinctive console instances maintaining application parity accurately tracking logic components natively bypassing container dependencies natively:
+## Step 6: Booting Up Independent Servers
+Ensure you map four distinctive console instances maintaining application parity accurately tracking logic components natively bypassing container dependencies natively. Note: Dependencies are automatically installed when using the provided shell scripts (`local_setup.sh` or individual service scripts). The scripts use `uv` (faster than `pip`) for Python dependencies.
 
-#### Terminal 1 - NestJS API
+#### Terminal1 - NestJS API
 ```bash
 cd microservice 
 pnpm run start:dev
+```
+
+#### Terminal2 - Next.js UI Context
+```bash
+bun run dev
+```
+
+#### Terminal3 - FastAPI AI Agent
+```bash
+cd server
+uv run fastapi dev main.py
+```
+
+#### Terminal4 - gRPC Mathematics Backend
+```bash
+cd service
+uv run python grpc_server.py
 ```
 
 #### Terminal 2 - Next.js UI Context
